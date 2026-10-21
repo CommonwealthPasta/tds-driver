@@ -97,6 +97,8 @@ that land will be documented here.
 - **Malformed values return errors instead of panicking**: a smalldatetime of
   1440+ minutes or a datetime past midnight, a sql_variant or decimal magnitude
   ≥ 2^127, a decimal scale > 38, and `Numeric` equality across a wide scale gap.
+- **A precision-typed column other than decimal/numeric is a protocol error**
+  instead of a `todo!()` panic; the decoder never builds one.
 - An empty `XmlData` parameter no longer corrupts the request (error 8009).
 - An RPC parameter name over 255 UTF-16 code units is an error instead of a
   wrapped length byte (a debug-build panic).

@@ -594,7 +594,13 @@ impl<'a> ColumnData<'a> {
                 VarLenType::Decimaln | VarLenType::Numericn => {
                     ColumnData::Numeric(Numeric::decode(src, *scale).await?)
                 }
-                _ => todo!(),
+                // Unreachable: `TypeInfo::decode` builds this variant for
+                // decimal/numeric only.
+                ty => {
+                    return Err(crate::Error::Protocol(
+                        format!("{ty:?} with precision and scale").into(),
+                    ))
+                }
             },
             TypeInfo::Xml { schema, size } => xml::decode(src, *size, schema.clone()).await?,
             TypeInfo::Udt(_) => udt::decode(src).await?,
@@ -2266,11 +2272,8 @@ mod tests {
         assert!(matches!(err, Error::BulkInput(_)), "got {:?}", err);
     }
 
-    // ----- decode: line 199 (VarLenSizedPrecision non-numeric -> todo!()) -----
-
     #[tokio::test]
-    #[should_panic]
-    async fn decode_varlen_sized_precision_unsupported_panics() {
+    async fn decode_varlen_sized_precision_non_decimal_is_an_error() {
         let ti = TypeInfo::VarLenSizedPrecision {
             ty: VarLenType::Money,
             size: 8,
@@ -2279,7 +2282,8 @@ mod tests {
         };
         let buf = BytesMut::new();
         let reader = &mut buf.into_sql_read_bytes();
-        let _ = ColumnData::decode(reader, &ti).await;
+        let res = ColumnData::decode(reader, &ti).await;
+        assert!(matches!(res, Err(Error::Protocol(_))), "{res:?}");
     }
 
     // ----- decode: line 202 (Udt) -----
