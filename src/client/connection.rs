@@ -5,7 +5,7 @@
 ))]
 use crate::client::{tls::TlsPreloginWrapper, tls_stream::create_tls_stream};
 use crate::{
-    client::{tls::MaybeTlsStream, AuthMethod, Config},
+    client::{tls::MaybeTlsStream, AuthMethod, CancelHandle, Config},
     tds::{
         codec::{
             self, Encode, LoginMessage, Packet, PacketCodec, PacketHeader, PacketStatus,
@@ -70,6 +70,21 @@ where
     /// the same connection fails cleanly instead of appending a second message
     /// after a half-sent one and silently desyncing the server.
     poisoned: bool,
+    /// Shared with the [`CancelHandle`]s handed out for this connection.
+    cancel: CancelHandle,
+    /// A request has been sent and `flush_stream` hasn't discarded the rest of
+    /// its response, so an Attention would cancel it.
+    awaiting_response: bool,
+    attention: Attention,
+}
+
+/// How far cancelling the request in flight has got.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Attention {
+    None,
+    /// Sent; the acknowledgement is still to be read.
+    Sent,
+    Acknowledged,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin + Send> Debug for Connection<S> {
@@ -131,6 +146,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
             flushed: false,
             buf: BytesMut::new(),
             poisoned: false,
+            cancel: CancelHandle::default(),
+            awaiting_response: false,
+            attention: Attention::None,
         };
 
         let fed_auth_required = matches!(config.auth, AuthMethod::AADToken(_));
@@ -219,6 +237,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
     {
         self.ensure_not_poisoned()?;
         self.flushed = false;
+        // A cancel requested before this request is not for it.
+        self.cancel.clear();
+        self.awaiting_response = true;
+        self.attention = Attention::None;
         let packet_size = (self.context.packet_size() as usize) - HEADER_BYTES;
 
         let mut payload = BytesMut::new();
@@ -342,12 +364,24 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
     /// The Attention message carries no payload, so it is written to the wire
     /// as a single end-of-message packet. Draining the acknowledgement leaves
     /// the connection clean and ready to be reused for further queries.
-    pub(crate) async fn cancel_request(&mut self) -> crate::Result<TokenDone> {
-        let id = self.context.next_packet_id();
-        let header = PacketHeader::attention(id);
+    pub(crate) async fn cancel_request(&mut self) -> crate::Result<()> {
+        // A `CancelHandle` may have sent the Attention already.
+        match self.attention {
+            Attention::Acknowledged => return Ok(()),
+            Attention::Sent => (),
+            Attention::None => {
+                let id = self.context.next_packet_id();
+                let header = PacketHeader::attention(id);
 
-        // Attention has an empty payload; send just the 8-byte header.
-        self.write_to_wire(header, BytesMut::new()).await?;
+                // Attention has an empty payload; send just the 8-byte header.
+                // Sent once queued: if this future is dropped before the flush
+                // below, the next request flushes it and reads the
+                // acknowledgement.
+                let attention = Packet::new(header, BytesMut::new());
+                self.transport.feed(attention).await?;
+                self.attention = Attention::Sent;
+            }
+        }
         self.flush_sink().await?;
 
         // The acknowledgement can arrive in a message of its own, after the
@@ -355,7 +389,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         // response's server error, if any, surfaces at its end; discard it.
         loop {
             match TokenStream::new(self).flush_done_attention().await {
-                Ok(Some(done)) => return Ok(done),
+                Ok(Some(_)) => return Ok(()),
                 Ok(None) | Err(crate::Error::Server(_)) => self.flushed = false,
                 Err(e) => return Err(e),
             }
@@ -374,6 +408,17 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         // already known-bad; fail fast rather than layering a new request on
         // top of it.
         self.ensure_not_poisoned()?;
+        self.awaiting_response = false;
+
+        // An Attention's acknowledgement may be in what is left of the
+        // response, so read up to it rather than discarding packets.
+        if self.attention == Attention::Sent {
+            if let Err(e) = self.cancel_request().await {
+                self.poisoned = true;
+                return Err(e);
+            }
+            return Ok(());
+        }
 
         // Discard any partially-consumed packet payload, then drain whole
         // packets up to the end-of-message marker. Truncating `buf` and
@@ -406,6 +451,45 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                     self.poisoned = true;
                     return Err(e);
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn cancel_handle(&self) -> CancelHandle {
+        self.cancel.clone()
+    }
+
+    /// Whether the request in flight has been cancelled.
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.attention != Attention::None
+    }
+
+    /// Called on reading a DONE token with the `DONE_ATTN` bit.
+    pub(crate) fn attention_acknowledged(&mut self) {
+        self.attention = Attention::Acknowledged;
+    }
+
+    /// Sends an Attention once a [`CancelHandle`] asks for one. Never waits
+    /// for the write, so the response carries on being read meanwhile.
+    fn poll_attention(&mut self, cx: &mut task::Context<'_>) -> crate::Result<()> {
+        if self.awaiting_response
+            && self.attention == Attention::None
+            && self.cancel.poll_requested(cx)
+        {
+            if let Poll::Ready(ready) = self.transport.poll_ready_unpin(cx) {
+                ready?;
+                let id = self.context.next_packet_id();
+                let attention = Packet::new(PacketHeader::attention(id), BytesMut::new());
+                self.transport.start_send_unpin(attention)?;
+                self.attention = Attention::Sent;
+            }
+        }
+
+        if self.attention == Attention::Sent {
+            if let Poll::Ready(Err(e)) = self.transport.poll_flush_unpin(cx) {
+                return Err(e);
             }
         }
 
@@ -758,6 +842,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                     flushed: false,
                     buf: BytesMut::new(),
                     poisoned: false,
+                    cancel: CancelHandle::default(),
+                    awaiting_response: false,
+                    attention: Attention::None,
                 })
             }
         }
@@ -838,6 +925,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Stream for Connection<S> {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
+
+        if let Err(e) = this.poll_attention(cx) {
+            return Poll::Ready(Some(Err(e)));
+        }
 
         match ready!(this.transport.try_poll_next_unpin(cx)) {
             Some(Ok(packet)) => {

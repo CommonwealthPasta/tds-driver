@@ -358,6 +358,15 @@ where
                 }
             };
 
+            if let ReceivedToken::Done(done)
+            | ReceivedToken::DoneProc(done)
+            | ReceivedToken::DoneInProc(done) = &token
+            {
+                if done.is_attention() {
+                    this.conn.attention_acknowledged();
+                }
+            }
+
             Ok(Some((token, this)))
         });
 

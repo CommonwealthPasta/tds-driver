@@ -1,4 +1,5 @@
 mod auth;
+mod cancel;
 mod config;
 mod connection;
 
@@ -11,6 +12,7 @@ mod tls;
 mod tls_stream;
 
 pub use auth::*;
+pub use cancel::CancelHandle;
 pub use config::*;
 pub(crate) use connection::*;
 
@@ -387,6 +389,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
             .into_iter()
             .filter(|column| column.base.flags.contains(ColumnFlag::Updateable))
             .collect();
+        self.bulk_not_cancelled().await?;
 
         // now start bulk upload
         self.connection.flush_stream().await?;
@@ -400,8 +403,19 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
 
         let ts = TokenStream::new(&mut self.connection);
         ts.flush_done().await?;
+        self.bulk_not_cancelled().await?;
 
         BulkLoadRequest::new(&mut self.connection, columns)
+    }
+
+    /// A cancel that stopped one of the requests a bulk insert makes before
+    /// the rows leaves the server expecting none, so the insert stops there.
+    async fn bulk_not_cancelled(&mut self) -> crate::Result<()> {
+        if !self.connection.is_cancelled() {
+            return Ok(());
+        }
+        self.connection.cancel_request().await?;
+        Err(crate::Error::BulkInput("cancelled".into()))
     }
 
     /// Retrieve the column metadata for a set of columns of a table, including
@@ -480,6 +494,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// batch or RPC and returning a `DONE` token with the `DONE_ATTN` status
     /// bit set. This method waits for that acknowledgement before returning,
     /// discarding any remaining rows or tokens from the cancelled request.
+    /// If a [`CancelHandle`] has already cancelled the request, it only waits
+    /// for the acknowledgement, and returns at once if that has been read.
     ///
     /// # Query cancellation and futures
     ///
@@ -491,14 +507,20 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// `cancel_query` on it. Because `cancel_query` borrows the client
     /// mutably, it can only be issued once the borrowing result stream has
     /// been dropped — typically from a separate task holding the client, or
-    /// after a cancelled/timed-out future has released its borrow.
+    /// after a cancelled/timed-out future has released its borrow. To cancel
+    /// without dropping it, use a [`CancelHandle`].
     ///
     /// [`query`]: #method.query
     /// [`execute`]: #method.execute
     /// [`simple_query`]: #method.simple_query
     pub async fn cancel_query(&mut self) -> crate::Result<()> {
-        self.connection.cancel_request().await?;
-        Ok(())
+        self.connection.cancel_request().await
+    }
+
+    /// A handle that cancels the request in flight on this connection from
+    /// outside the future awaiting it. See [`CancelHandle`].
+    pub fn cancel_handle(&self) -> CancelHandle {
+        self.connection.cancel_handle()
     }
 
     /// Closes this database connection explicitly.

@@ -25,6 +25,14 @@ questions and general discussion via
 [Discussions](https://github.com/MattJackson/tiberius-ng/discussions). Fixes
 that land will be documented here.
 
+### Added
+
+- **`CancelHandle` cancels a request while it is being awaited.**
+  `Client::cancel_handle` returns one, for use from another task or a `select!`
+  branch. Unlike `cancel_query`, it also stops a request the server hasn't
+  answered yet, such as a statement still sorting, aggregating or waiting on a
+  lock.
+
 ### Fixed
 
 - **`cancel_query` no longer desyncs the connection.** When SQL Server sent the
@@ -32,6 +40,11 @@ that land will be documented here.
   error and left the acknowledgement for the next query to read as its result.
   It now reads on to the acknowledgement, discarding the cancelled response,
   including any server error in it.
+- **Nor does a `cancel_query` future dropped partway.** Dropped while waiting
+  for the acknowledgement, as under a timeout, it left the acknowledgement for
+  the next request to read as its result. The next request now reads up to it
+  first, or, if the future was dropped partway through reading a token, fails
+  along with every later one.
 
 ## [0.13.1] - 2026-08-30
 
