@@ -13,7 +13,7 @@ version 0.12.3 reflect the history of the upstream project prior to the fork.
 
 ## [Unreleased]
 
-Nothing yet. **0.13.1 is a stable settling point** — the fork has cleared the
+**0.13.1 is a stable settling point** — the fork has cleared the
 security advisories, worked through the upstream backlog, and hardened the
 codebase (100% mutation score, ~93% line coverage against a live SQL Server in
 CI). No further releases are planned in the immediate term; the crate is
@@ -24,6 +24,14 @@ Bug reports and feature requests are welcome via
 questions and general discussion via
 [Discussions](https://github.com/MattJackson/tiberius-ng/discussions). Fixes
 that land will be documented here.
+
+### Fixed
+
+- **`cancel_query` no longer desyncs the connection.** When SQL Server sent the
+  Attention acknowledgement in a message of its own, `cancel_query` returned an
+  error and left the acknowledgement for the next query to read as its result.
+  It now reads on to the acknowledgement, discarding the cancelled response,
+  including any server error in it.
 
 ## [0.13.1] - 2026-08-30
 

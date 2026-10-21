@@ -350,7 +350,16 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         self.write_to_wire(header, BytesMut::new()).await?;
         self.flush_sink().await?;
 
-        TokenStream::new(self).flush_done_attention().await
+        // The acknowledgement can arrive in a message of its own, after the
+        // cancelled response (MS-TDS sections 3.2.5.9 and 4.19.2). That
+        // response's server error, if any, surfaces at its end; discard it.
+        loop {
+            match TokenStream::new(self).flush_done_attention().await {
+                Ok(Some(done)) => return Ok(done),
+                Ok(None) | Err(crate::Error::Server(_)) => self.flushed = false,
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     /// Cleans the packet stream from previous use. It is important to use the
