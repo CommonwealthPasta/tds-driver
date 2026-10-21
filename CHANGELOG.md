@@ -234,6 +234,8 @@ that land will be documented here.
   id, sequence), not 20.
 - **A server's ENCRYPT_CLIENT_CERT bit (0x80) is decoded** instead of failing
   the prelogin; with it, no encryption ends the connection.
+- **rustls offers TLS 1.3 under `Encrypt=Strict`;** TDS 7.x stays capped at TLS
+  1.2.
 - **JDBC URLs are split as mssql-jdbc splits them:** a bare `\` and non-ASCII
   values parse, `}}` in braces is `}`, names and unbraced values are trimmed,
   and the last of a property's synonyms wins.

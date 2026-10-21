@@ -22,7 +22,7 @@ use tokio_rustls::{
         crypto::aws_lc_rs,
         pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName, UnixTime},
         version, ClientConfig, ConfigBuilder, DigitallySignedStruct, Error as RustlsError,
-        RootCertStore, SignatureScheme, WantsVerifier,
+        RootCertStore, SignatureScheme, SupportedProtocolVersion, WantsVerifier,
     },
     TlsConnector,
 };
@@ -102,12 +102,24 @@ fn get_server_name(config: &Config) -> crate::Result<ServerName<'static>> {
     }
 }
 
+/// TLS 1.3 only under TDS 8.0 strict, which runs TLS straight over TCP: TDS
+/// 7.x carries the handshake in PRELOGIN packets, and TLS 1.3's
+/// post-handshake messages arrive after that framing ends.
+fn protocol_versions(config: &Config) -> &'static [&'static SupportedProtocolVersion] {
+    static STRICT: &[&SupportedProtocolVersion] = &[&version::TLS13, &version::TLS12];
+    static TDS7: &[&SupportedProtocolVersion] = &[&version::TLS12];
+    match config.encryption {
+        crate::EncryptionLevel::Strict => STRICT,
+        _ => TDS7,
+    }
+}
+
 impl<S: AsyncRead + AsyncWrite + Unpin + Send> TlsStream<S> {
     pub(super) async fn new(config: &Config, stream: S) -> crate::Result<Self> {
         event!(Level::DEBUG, "Performing a TLS handshake");
 
         let builder = ClientConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
-            .with_protocol_versions(&[&version::TLS12])
+            .with_protocol_versions(protocol_versions(config))
             .map_err(|e| crate::Error::Tls(e.to_string()))?;
 
         // First select the server-certificate verification strategy, yielding a
@@ -390,5 +402,32 @@ impl ConfigBuilderExt for ConfigBuilder<ClientConfig, WantsVerifier> {
         }
 
         Ok(self.with_root_certificates(roots))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::protocol_versions;
+    use crate::{Config, EncryptionLevel};
+    use tokio_rustls::rustls::ProtocolVersion::{TLSv1_2, TLSv1_3};
+
+    #[test]
+    fn tls13_only_under_strict() {
+        let versions = |level| {
+            let mut config = Config::new();
+            config.encryption(level);
+            protocol_versions(&config)
+                .iter()
+                .map(|v| v.version)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(versions(EncryptionLevel::Strict), [TLSv1_3, TLSv1_2]);
+        for level in [
+            EncryptionLevel::Off,
+            EncryptionLevel::On,
+            EncryptionLevel::Required,
+        ] {
+            assert_eq!(versions(level), [TLSv1_2], "{level:?}");
+        }
     }
 }
