@@ -109,6 +109,24 @@ fn numeric_round_trip() {
     assert_eq!(back.scale(), 2);
 }
 
+/// A scale over 38 would make `int_part`, `dec_part` and `Display` panic.
+#[test]
+fn numeric_scale_over_38_is_rejected() {
+    let json = serde_json::to_string(&Numeric::new_with_scale(1, 38)).unwrap();
+    let back: Numeric = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.to_string(), format!("0.{:038}", 1));
+
+    let bad = json.replace("38", "39");
+    assert!(serde_json::from_str::<Numeric>(&bad).is_err(), "{bad}");
+
+    let data = ColumnData::Numeric(Some(Numeric::new_with_scale(1, 38)));
+    let bad = serde_json::to_string(&data).unwrap().replace("38", "255");
+    assert!(
+        serde_json::from_str::<ColumnData<'static>>(&bad).is_err(),
+        "{bad}"
+    );
+}
+
 #[test]
 fn column_data_numeric_round_trip() {
     let value = ColumnData::Numeric(Some(Numeric::new_with_scale(12345, 3)));

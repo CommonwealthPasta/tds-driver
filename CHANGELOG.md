@@ -97,6 +97,8 @@ that land will be documented here.
 - **Malformed values return errors instead of panicking**: a smalldatetime of
   1440+ minutes or a datetime past midnight, a sql_variant or decimal magnitude
   ≥ 2^127, a decimal scale > 38, and `Numeric` equality across a wide scale gap.
+- **A deserialized `Numeric` with a scale over 38 is a serde error** instead of
+  a value that panics in `int_part`, `dec_part` and `Display`.
 - **A precision-typed column other than decimal/numeric is a protocol error**
   instead of a `todo!()` panic; the decoder never builds one.
 - An empty `XmlData` parameter no longer corrupts the request (error 8009).

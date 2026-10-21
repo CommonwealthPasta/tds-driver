@@ -19,9 +19,35 @@ use std::fmt::{self, Debug, Display, Formatter};
 /// `rust_decimal` feature and using its `Decimal` type instead.
 #[derive(Copy, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "NumericParts"))]
 pub struct Numeric {
     value: i128,
     scale: u8,
+}
+
+/// `Numeric`'s serde form, checked on the way in: the arithmetic in
+/// `int_part`, `dec_part` and `Display` assumes a scale of at most 38.
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+#[serde(rename = "Numeric")]
+struct NumericParts {
+    value: i128,
+    scale: u8,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<NumericParts> for Numeric {
+    type Error = String;
+
+    fn try_from(n: NumericParts) -> Result<Self, String> {
+        match n.scale {
+            0..=38 => Ok(Numeric {
+                value: n.value,
+                scale: n.scale,
+            }),
+            s => Err(format!("Numeric scale {s} is over 38")),
+        }
+    }
 }
 
 impl Numeric {
