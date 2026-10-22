@@ -1,10 +1,7 @@
-use std::{
-    borrow::{BorrowMut, Cow},
-    fmt::Display,
-};
+use std::{borrow::Cow, fmt::Display};
 
 use crate::{
-    tds::codec::{Encode, FixedLenType, TokenType, TypeInfo, VarLenType},
+    tds::codec::{put_b_varchar, Encode, FixedLenType, TokenType, TypeInfo, VarLenType},
     tds::Collation,
     Column, ColumnData, ColumnType, SqlReadBytes, VarLenContext,
 };
@@ -345,20 +342,7 @@ impl<'a> Encode<BytesMut> for MetaDataColumn<'a> {
             dst.put_u16_le(0);
         }
 
-        let len_pos = dst.len();
-        let mut length = 0u8;
-
-        dst.put_u8(length);
-
-        for chr in self.col_name.encode_utf16() {
-            length += 1;
-            dst.put_u16_le(chr);
-        }
-
-        let dst: &mut [u8] = dst.borrow_mut();
-        dst[len_pos] = length;
-
-        Ok(())
+        put_b_varchar(dst, &self.col_name, "column name")
     }
 }
 
@@ -1166,5 +1150,27 @@ mod tests {
         assert!(all.contains(ColumnFlag::Nullable));
         assert!(all.contains(ColumnFlag::NullableUnknown));
         assert_eq!(BitFlags::bits(all).count_ones(), 12);
+    }
+
+    #[test]
+    fn column_name_over_255_units_is_an_error() {
+        // 256 overflowed the u8 length: a debug-build panic, 0 in release.
+        let column = |name: String| MetaDataColumn {
+            base: BaseMetaDataColumn {
+                flags: ColumnFlag::Nullable.into(),
+                ty: TypeInfo::FixedLen(FixedLenType::Int4),
+            },
+            col_name: name.into(),
+        };
+
+        for name in ["a".repeat(256), "\u{1F600}".repeat(128)] {
+            let err = column(name).encode(&mut BytesMut::new()).unwrap_err();
+            assert!(matches!(err, crate::Error::Conversion(_)), "{err:?}");
+        }
+
+        // UserType, Flags, TYPE_INFO, then the name's length.
+        let mut buf = BytesMut::new();
+        column("a".repeat(255)).encode(&mut buf).unwrap();
+        assert_eq!(buf[7], 255);
     }
 }
