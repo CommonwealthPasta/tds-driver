@@ -6,7 +6,7 @@ use crate::{
     error::{Error, IoErrorKind},
 };
 pub(crate) use async_native_tls::TlsStream;
-use async_native_tls::{Certificate, Identity, TlsConnector};
+use async_native_tls::{Certificate, Identity, Protocol, TlsConnector};
 use futures_util::io::{AsyncRead, AsyncWrite};
 use std::fs;
 use tracing::{event, Level};
@@ -68,6 +68,10 @@ pub(crate) async fn create_tls_stream<S: AsyncRead + AsyncWrite + Unpin + Send>(
 
     if matches!(config.encryption, crate::EncryptionLevel::Strict) {
         builder = builder.request_alpns(&[super::TDS_ALPN_PROTOCOL_NAME]);
+    } else {
+        // TLS 1.3's post-handshake messages arrive after the PRELOGIN framing
+        // ends and break TDS 7.x.
+        builder = builder.max_protocol_version(Some(Protocol::Tlsv12));
     }
 
     if let Some(cert) = config.get_client_certificate() {

@@ -88,6 +88,9 @@ pub(crate) async fn create_tls_stream<S: AsyncRead + AsyncWrite + Unpin + Send>(
             Level::WARN,
             "OpenTLS does not support ALPN, so the TDS 8.0 ALPN protocol will not be requested. SQL Server will assume TDS 8.0."
         );
+    } else {
+        // TLS 1.3 breaks the TDS 7.x PRELOGIN framing (see native_tls_stream).
+        builder = builder.max_protocol_version(Some(opentls::Protocol::Tlsv12));
     }
 
     if let Some(cert) = config.get_client_certificate() {

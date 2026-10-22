@@ -122,6 +122,8 @@ that land will be documented here.
   error from `from_ado_string`/`from_jdbc_string` instead of panicking.
 - **JDBC `serverName`/`server`, `portNumber`/`port` and `instanceName`
   properties** are honoured instead of falling back to `localhost:1433`.
+- **TDS 7.x TLS is capped at TLS 1.2 under `native-tls`/`vendored-openssl`**;
+  TLS 1.3's post-handshake messages broke the connection.
 
 ### Changed
 
