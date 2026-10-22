@@ -81,6 +81,9 @@ where
     /// while it waited for the next packet) can be read again from its start.
     token_read: usize,
     token: TokenState,
+    /// The server is reading a bulk-load message that a dropped or failed
+    /// `BulkLoadRequest` never ended.
+    bulk_load_open: bool,
 }
 
 /// The most a token keeps for reading again. A larger one, a row holding
@@ -170,6 +173,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
             attention: Attention::None,
             token_read: 0,
             token: TokenState::Between,
+            bulk_load_open: false,
         };
 
         let fed_auth_required = matches!(config.auth, AuthMethod::AADToken(_));
@@ -404,6 +408,18 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
     /// as a single end-of-message packet. Draining the acknowledgement leaves
     /// the connection clean and ready to be reused for further queries.
     pub(crate) async fn cancel_request(&mut self) -> crate::Result<()> {
+        if self.bulk_load_open {
+            // SqlClient abandons a partly-sent message this way: EOM|IGNORE
+            // makes the server discard it, the Attention ends the INSERT BULK.
+            let mut header = PacketHeader::bulk_load(self.context.next_packet_id());
+            header.set_status(PacketStatus::IgnoreEvent);
+            self.transport
+                .feed(Packet::new(header, BytesMut::new()))
+                .await?;
+            self.bulk_load_open = false;
+            self.attention = Attention::None;
+        }
+
         // A `CancelHandle` may have sent the Attention already.
         match self.attention {
             Attention::Acknowledged => return Ok(()),
@@ -458,7 +474,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
 
         // An Attention's acknowledgement may be in what is left of the
         // response, so read up to it rather than discarding packets.
-        if self.attention == Attention::Sent {
+        if self.attention == Attention::Sent || self.bulk_load_open {
             if let Err(e) = self.cancel_request().await {
                 self.poisoned = true;
                 return Err(e);
@@ -518,6 +534,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         }
 
         Ok(())
+    }
+
+    /// Set while the server expects (the rest of) a bulk-load message.
+    pub(crate) fn set_bulk_load_open(&mut self, open: bool) {
+        self.bulk_load_open = open;
     }
 
     pub(crate) fn cancel_handle(&self) -> CancelHandle {
@@ -941,6 +962,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                     attention: Attention::None,
                     token_read: 0,
                     token: TokenState::Between,
+                    bulk_load_open: false,
                 })
             }
         }

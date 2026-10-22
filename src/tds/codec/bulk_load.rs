@@ -31,6 +31,9 @@ where
         connection: &'a mut Connection<S>,
         columns: Vec<MetaDataColumn<'a>>,
     ) -> crate::Result<Self> {
+        // The server now waits for the bulk-load message; until `finalize`
+        // ends it, the next request on the connection has to abandon it.
+        connection.set_bulk_load_open(true);
         let packet_id = connection.context_mut().next_packet_id();
         let mut buf = BytesMut::new();
 
@@ -53,6 +56,8 @@ where
     /// Adds a new row to the bulk insert, flushing only when having a full packet of data.
     ///
     /// A row that fails to encode is not sent, and the request stays usable.
+    /// Dropping the request without [`finalize`] cancels the bulk insert;
+    /// the connection stays usable.
     ///
     /// # Warning
     ///
@@ -94,6 +99,7 @@ where
         );
 
         self.connection.write_to_wire(header, data).await?;
+        self.connection.set_bulk_load_open(false);
         self.connection.flush_sink().await?;
 
         ExecuteResult::new(self.connection).await

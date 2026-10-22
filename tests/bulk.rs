@@ -374,6 +374,79 @@ where
 }
 
 #[test_on_runtimes]
+async fn bulk_load_dropped_mid_stream_cancels_it<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use tiberius::IntoRow;
+    let table = format!("##{}", random_table().await);
+    conn.simple_query(format!("CREATE TABLE {table} (id INT, s NVARCHAR(400))"))
+        .await?
+        .into_results()
+        .await?;
+
+    {
+        let mut req = conn.bulk_insert(&table).await?;
+        let s = "x".repeat(400);
+        // 16 KB: several packets are on the wire, the message is not ended.
+        for i in 0..20i32 {
+            req.send((i, s.as_str()).into_row()).await?;
+        }
+    }
+
+    assert_eq!(Some(42), select_int(&mut conn, "SELECT 42").await?);
+    let count = format!("SELECT COUNT(*) FROM {table}");
+    assert_eq!(Some(0), select_int(&mut conn, &count).await?);
+
+    let mut req = conn.bulk_insert(&table).await?;
+    req.send((1i32, "a").into_row()).await?;
+    assert_eq!(1, req.finalize().await?.total());
+
+    Ok(())
+}
+
+#[test_on_runtimes]
+async fn bulk_load_dropped_before_any_packet<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let table = format!("##{}", random_table().await);
+    conn.simple_query(format!("CREATE TABLE {table} (id INT)"))
+        .await?
+        .into_results()
+        .await?;
+
+    drop(conn.bulk_insert(&table).await?);
+
+    assert_eq!(Some(42), select_int(&mut conn, "SELECT 42").await?);
+
+    Ok(())
+}
+
+#[test_on_runtimes]
+async fn bulk_load_cancel_query_after_drop<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use tiberius::IntoRow;
+    let table = format!("##{}", random_table().await);
+    conn.simple_query(format!("CREATE TABLE {table} (id INT)"))
+        .await?
+        .into_results()
+        .await?;
+
+    {
+        let mut req = conn.bulk_insert(&table).await?;
+        req.send(1i32.into_row()).await?;
+    }
+    within(conn.cancel_query()).await?;
+
+    assert_eq!(Some(42), select_int(&mut conn, "SELECT 42").await?);
+
+    Ok(())
+}
+
+#[test_on_runtimes]
 async fn bulk_load_row_error_keeps_request_usable<S>(mut conn: tiberius::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
@@ -403,6 +476,29 @@ where
 
     let sum = format!("SELECT SUM(a) FROM {table}");
     assert_eq!(Some(3), select_int(&mut conn, &sum).await?);
+
+    Ok(())
+}
+
+#[test_on_runtimes]
+async fn bulk_load_row_error_then_drop<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let table = format!("##{}", random_table().await);
+    conn.simple_query(format!("CREATE TABLE {table} (s VARCHAR(10))"))
+        .await?
+        .into_results()
+        .await?;
+
+    {
+        let mut req = conn.bulk_insert(&table).await?;
+        let mut row = TokenRow::new();
+        row.push("longer than ten".into_sql());
+        assert!(req.send(row).await.is_err());
+    }
+
+    assert_eq!(Some(42), select_int(&mut conn, "SELECT 42").await?);
 
     Ok(())
 }

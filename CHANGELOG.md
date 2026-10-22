@@ -145,6 +145,8 @@ that land will be documented here.
   values out of the column's range are a `Conversion` error.
 - **A row that fails to encode no longer corrupts the bulk insert**; the request
   stays usable for further rows and `finalize`.
+- **Dropping a `BulkLoadRequest` without `finalize` cancels the bulk insert**;
+  the next request on the connection used to hang.
 
 ### Changed
 
