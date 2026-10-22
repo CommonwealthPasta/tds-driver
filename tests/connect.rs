@@ -1,15 +1,24 @@
 //! Connection setup against the test server: prelogin, TLS and login.
 
-use futures_util::io::{AsyncRead, AsyncWrite};
 use once_cell::sync::Lazy;
-use std::{
-    env, io,
-    pin::Pin,
-    task::{Context, Poll},
-};
-use tiberius::{error::Error, AuthMethod, Client, Config, EncryptionLevel, Result};
+use std::env;
+use tiberius::{error::Error, Client, Config, Result};
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
+use {
+    futures_util::io::{AsyncRead, AsyncWrite},
+    std::{
+        io,
+        pin::Pin,
+        task::{Context, Poll},
+    },
+    tiberius::{AuthMethod, EncryptionLevel},
+};
 
 static CONN_STR: Lazy<String> = Lazy::new(|| {
     env::var("TIBERIUS_TEST_CONNECTION_STRING").unwrap_or_else(|_| {
@@ -27,6 +36,11 @@ async fn connect(config: Config) -> Result<Client<Compat<TcpStream>>> {
     Client::connect(config, tcp.compat_write()).await
 }
 
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
 async fn encrypt_option<S: AsyncRead + AsyncWrite + Unpin + Send>(
     client: &mut Client<S>,
 ) -> Result<String> {
@@ -44,6 +58,11 @@ async fn encrypt_option<S: AsyncRead + AsyncWrite + Unpin + Send>(
 
 /// Under login-only encryption only the first packet of a multi-packet
 /// LOGIN7 is encrypted; the server drops the connection if all of it is.
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
 #[tokio::test]
 async fn multi_packet_login_with_login_only_encryption() -> Result<()> {
     for level in [EncryptionLevel::Off, EncryptionLevel::Required] {
@@ -61,6 +80,11 @@ async fn multi_packet_login_with_login_only_encryption() -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
 #[tokio::test]
 async fn login_only_encryption_leaves_the_session_unencrypted() -> Result<()> {
     let mut config = config();
@@ -109,6 +133,11 @@ async fn overlong_login_field_is_a_clear_error() {
     }
 }
 
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
 /// Accepts at most `max` bytes per read or write, and returns `Pending` on
 /// every other call.
 struct Choppy<S> {
@@ -118,6 +147,11 @@ struct Choppy<S> {
     flip_write: bool,
 }
 
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
 fn pending(flip: &mut bool, cx: &mut Context<'_>) -> bool {
     *flip = !*flip;
     if *flip {
@@ -126,6 +160,11 @@ fn pending(flip: &mut bool, cx: &mut Context<'_>) -> bool {
     *flip
 }
 
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
 impl<S: AsyncRead + Unpin> AsyncRead for Choppy<S> {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -141,6 +180,11 @@ impl<S: AsyncRead + Unpin> AsyncRead for Choppy<S> {
     }
 }
 
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
 impl<S: AsyncWrite + Unpin> AsyncWrite for Choppy<S> {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -165,6 +209,11 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Choppy<S> {
 }
 
 /// The TLS handshake survives partial writes and `Pending` on the transport.
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
 #[tokio::test]
 async fn tls_handshake_over_a_choppy_transport() -> Result<()> {
     for max in [1, 3, 7] {
