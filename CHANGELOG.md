@@ -96,6 +96,8 @@ that land will be documented here.
   2.2.6.9), so a transaction after a SERIALIZABLE one was SERIALIZABLE too. This
   matches SqlClient's `BeginTransaction()`. The `IsolationLevel` docs now say
   that a level outlives its transaction.
+- **`ColumnType` reports `Money4` and `Datetime4` for nullable `smallmoney` and
+  `smalldatetime`** (was `Money` and `Datetimen`).
 
 ### Breaking
 

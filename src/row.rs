@@ -140,8 +140,15 @@ impl From<&TypeInfo> for ColumnType {
                     8 => Self::Float8,
                     _ => Self::Floatn,
                 },
-                VarLenType::Money => Self::Money,
-                VarLenType::Datetimen => Self::Datetimen,
+                VarLenType::Money => match cx.len() {
+                    4 => Self::Money4,
+                    _ => Self::Money,
+                },
+                // 8 bytes stays `Datetimen`, which callers already match on.
+                VarLenType::Datetimen => match cx.len() {
+                    4 => Self::Datetime4,
+                    _ => Self::Datetimen,
+                },
                 #[cfg(feature = "tds73")]
                 VarLenType::Daten => Self::Daten,
                 #[cfg(feature = "tds73")]
@@ -627,7 +634,9 @@ mod tests {
             (VarLenType::Floatn, 4, ColumnType::Float4),
             (VarLenType::Floatn, 8, ColumnType::Float8),
             (VarLenType::Floatn, 2, ColumnType::Floatn),
+            (VarLenType::Money, 4, ColumnType::Money4),
             (VarLenType::Money, 8, ColumnType::Money),
+            (VarLenType::Datetimen, 4, ColumnType::Datetime4),
             (VarLenType::Datetimen, 8, ColumnType::Datetimen),
             (VarLenType::BigVarBin, 8000, ColumnType::BigVarBin),
             (VarLenType::BigVarChar, 8000, ColumnType::BigVarChar),
