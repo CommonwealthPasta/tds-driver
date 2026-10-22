@@ -217,6 +217,8 @@ that land will be documented here.
 - **A TLS handshake over OpenSSL survives a socket that can't take a flight at
   once.** OpenSSL fails the handshake on a flush that would block, which
   affected `native-tls` on Linux and `vendored-openssl`.
+- **`Data Source` takes `TCP:` in any case and spaces around the port;** `np:`,
+  `lpc:`, `admin:` and pipe paths are errors instead of host names.
 
 ### Changed
 

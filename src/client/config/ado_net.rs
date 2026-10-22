@@ -219,15 +219,26 @@ impl ConfigString for AdoNetConfig {
                 instance: None,
             });
         };
+        let unsupported = |what: &str| {
+            Err(crate::Error::Conversion(
+                format!("Connection string: {what} is not supported; use tcp:").into(),
+            ))
+        };
 
         let value = match value.split_once(':') {
             Some((protocol, rest)) => match protocol.trim().to_ascii_lowercase().as_str() {
                 "tcp" => rest,
+                "np" => return unsupported("named pipes (np:)"),
+                "lpc" => return unsupported("shared memory (lpc:)"),
+                "admin" => return unsupported("the dedicated admin connection (admin:)"),
                 // Not a protocol, such as an IPv6 address: all of it is the host.
                 _ => value,
             },
             None => value,
         };
+        if value.trim_start().starts_with(r"\\") {
+            return unsupported("a named pipe path");
+        }
 
         let mut parts = value.split(',');
         let mut host = parts.next().unwrap_or_default().split('\\');
@@ -931,5 +942,20 @@ mod tests {
             .unwrap();
         assert_eq!(server.host.as_deref(), Some("h"));
         assert_eq!(server.instance.as_deref(), Some("INST"));
+
+        for s in [
+            "server=np:h",
+            r"server=NP:h\INST",
+            "server=lpc:h",
+            "server=admin:h",
+            r"server=\\h\pipe\sql\query",
+        ] {
+            match crate::Config::from_ado_string(s) {
+                Err(crate::Error::Conversion(msg)) => {
+                    assert!(msg.contains("not supported"), "{s}: {msg}")
+                }
+                other => panic!("{s}: {other:?}"),
+            }
+        }
     }
 }
