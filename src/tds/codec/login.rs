@@ -247,7 +247,7 @@ impl<'a> LoginMessage<'a> {
             hostname: Self::get_hostname(),
             username: Default::default(),
             password: Default::default(),
-            app_name: "tiberius".into(),
+            app_name: "tds-driver".into(),
             server_name: Default::default(),
             db_name: Default::default(),
             fed_auth_ext: None,
@@ -813,6 +813,11 @@ mod tests {
         let decoded = LoginMessage::decode(&mut payload).expect("decode should succeed");
 
         assert_eq!(login, decoded);
+    }
+
+    #[test]
+    fn the_default_application_name_is_the_crate_name() {
+        assert_eq!(LoginMessage::new().app_name, "tds-driver");
     }
 
     #[test]

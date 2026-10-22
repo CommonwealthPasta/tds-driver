@@ -243,7 +243,7 @@ impl Config {
     /// Sets the application name to the connection, queryable with the
     /// `APP_NAME()` command.
     ///
-    /// - Defaults to no name specified.
+    /// - Defaults to `tds-driver`.
     pub fn application_name(&mut self, name: impl ToString) {
         self.application_name = Some(name.to_string());
     }
@@ -753,7 +753,7 @@ impl ConfigBuilder {
     /// Sets the application name to the connection, queryable with the
     /// `APP_NAME()` command.
     ///
-    /// - Defaults to no name specified.
+    /// - Defaults to `tds-driver`.
     pub fn application_name(mut self, name: impl ToString) -> Self {
         self.inner.application_name = Some(name.to_string());
         self

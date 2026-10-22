@@ -306,6 +306,8 @@ that land will be documented here.
 - **The crate is `tds-driver`, imported as `tds_driver`:** `use tiberius::…`
   becomes `use tds_driver::…`, tracing targets start with `tds_driver`, and the
   derive macros live in `tds-driver-macros`.
+- **The default application name is `tds-driver`**, not `tiberius`, as
+  `APP_NAME()` and `sys.dm_exec_sessions.program_name` report it.
 - **RETURN status is `i32`**: `CommandItem::ReturnStatus(i32)`,
   `CommandItem::as_return_status() -> Option<i32>`,
   `CommandResult::return_code() -> i32`. `RETURN -1` used to come back as
