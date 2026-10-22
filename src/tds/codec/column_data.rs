@@ -139,6 +139,110 @@ fn put_varbinary_max(dst: &mut BytesMut, bytes: Option<&[u8]>) {
 #[cfg(feature = "tds73")]
 const DAYS_YEAR_1_TO_1900: u32 = 693_595;
 
+fn not_null_error() -> crate::Error {
+    crate::Error::BulkInput("NULL for a NOT NULL column".into())
+}
+
+/// Bulk/TVP integers and floats go out at the column's width: the server
+/// reads the column's type from the bytes, so a narrower value is misread.
+fn encode_number(
+    data: &ColumnData<'_>,
+    ti: &TypeInfo,
+    dst: &mut BytesMutWithTypeInfo<'_>,
+) -> Option<crate::Result<()>> {
+    let (float, width, nullable) = match ti {
+        TypeInfo::FixedLen(FixedLenType::Int1) => (false, 1, false),
+        TypeInfo::FixedLen(FixedLenType::Int2) => (false, 2, false),
+        TypeInfo::FixedLen(FixedLenType::Int4) => (false, 4, false),
+        TypeInfo::FixedLen(FixedLenType::Int8) => (false, 8, false),
+        TypeInfo::FixedLen(FixedLenType::Float4) => (true, 4, false),
+        TypeInfo::FixedLen(FixedLenType::Float8) => (true, 8, false),
+        TypeInfo::VarLenSized(vlc) if vlc.r#type() == VarLenType::Intn => (false, vlc.len(), true),
+        TypeInfo::VarLenSized(vlc) if vlc.r#type() == VarLenType::Floatn => (true, vlc.len(), true),
+        _ => return None,
+    };
+
+    let bytes = if float {
+        let value = match *data {
+            ColumnData::F32(v) => v.map(f64::from),
+            ColumnData::F64(v) => v,
+            _ => return None,
+        };
+        value.map(|v| float_bytes(v, width))
+    } else {
+        let value = match *data {
+            ColumnData::U8(v) => v.map(i64::from),
+            ColumnData::I16(v) => v.map(i64::from),
+            ColumnData::I32(v) => v.map(i64::from),
+            ColumnData::I64(v) => v,
+            _ => return None,
+        };
+        value.map(|v| int_bytes(v, width))
+    };
+
+    Some(match bytes.transpose() {
+        Err(e) => Err(e),
+        Ok(None) if nullable => {
+            dst.put_u8(0);
+            Ok(())
+        }
+        Ok(None) => Err(not_null_error()),
+        Ok(Some(bytes)) => {
+            if nullable {
+                dst.put_u8(width as u8);
+            }
+            dst.extend_from_slice(&bytes[..width]);
+            Ok(())
+        }
+    })
+}
+
+fn int_bytes(value: i64, width: usize) -> crate::Result<[u8; 8]> {
+    let (name, fits) = match width {
+        1 => ("tinyint", (0..=255).contains(&value)),
+        2 => ("smallint", i16::try_from(value).is_ok()),
+        4 => ("int", i32::try_from(value).is_ok()),
+        8 => ("bigint", true),
+        _ => {
+            return Err(crate::Error::Protocol(
+                format!("integer column of {width} bytes").into(),
+            ))
+        }
+    };
+
+    if !fits {
+        return Err(crate::Error::Conversion(
+            format!("{value} is out of range for {name}").into(),
+        ));
+    }
+
+    Ok(value.to_le_bytes())
+}
+
+fn float_bytes(value: f64, width: usize) -> crate::Result<[u8; 8]> {
+    let mut bytes = [0u8; 8];
+
+    match width {
+        8 => bytes = value.to_le_bytes(),
+        4 => {
+            let narrowed = value as f32;
+            if value.is_finite() && narrowed.is_infinite() {
+                return Err(crate::Error::Conversion(
+                    format!("{value:e} is out of range for real").into(),
+                ));
+            }
+            bytes[..4].copy_from_slice(&narrowed.to_le_bytes());
+        }
+        _ => {
+            return Err(crate::Error::Protocol(
+                format!("float column of {width} bytes").into(),
+            ))
+        }
+    }
+
+    Ok(bytes)
+}
+
 /// Converts a [`DateTime2`] value into the legacy `datetime` ([`DateTime`])
 /// wire representation.
 ///
@@ -306,6 +410,12 @@ impl<'a> ColumnData<'a> {
 
 impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
     fn encode(self, dst: &mut BytesMutWithTypeInfo<'a>) -> crate::Result<()> {
+        if let Some(ti) = dst.type_info() {
+            if let Some(res) = encode_number(&self, ti, dst) {
+                return res;
+            }
+        }
+
         match (self, dst.type_info()) {
             (ColumnData::Bit(opt), Some(TypeInfo::VarLenSized(vlc)))
                 if vlc.r#type() == VarLenType::Bitn =>
@@ -333,38 +443,12 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     dst.put_u8(0);
                 }
             }
-            (ColumnData::U8(opt), Some(TypeInfo::VarLenSized(vlc)))
-                if vlc.r#type() == VarLenType::Intn =>
-            {
-                if let Some(val) = opt {
-                    dst.put_u8(1);
-                    dst.put_u8(val);
-                } else {
-                    dst.put_u8(0);
-                }
-            }
-            (ColumnData::U8(Some(val)), Some(TypeInfo::FixedLen(FixedLenType::Int1))) => {
-                dst.put_u8(val);
-            }
             (ColumnData::U8(opt), None) => {
                 let header = [VarLenType::Intn as u8, 1];
                 dst.extend_from_slice(&header);
                 if let Some(val) = opt {
                     dst.put_u8(1);
                     dst.put_u8(val);
-                } else {
-                    dst.put_u8(0);
-                }
-            }
-            (ColumnData::I16(Some(val)), Some(TypeInfo::FixedLen(FixedLenType::Int2))) => {
-                dst.put_i16_le(val);
-            }
-            (ColumnData::I16(opt), Some(TypeInfo::VarLenSized(vlc)))
-                if vlc.r#type() == VarLenType::Intn =>
-            {
-                if let Some(val) = opt {
-                    dst.put_u8(2);
-                    dst.put_i16_le(val);
                 } else {
                     dst.put_u8(0);
                 }
@@ -379,38 +463,12 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     dst.put_u8(0);
                 }
             }
-            (ColumnData::I32(Some(val)), Some(TypeInfo::FixedLen(FixedLenType::Int4))) => {
-                dst.put_i32_le(val);
-            }
-            (ColumnData::I32(opt), Some(TypeInfo::VarLenSized(vlc)))
-                if vlc.r#type() == VarLenType::Intn =>
-            {
-                if let Some(val) = opt {
-                    dst.put_u8(4);
-                    dst.put_i32_le(val);
-                } else {
-                    dst.put_u8(0);
-                }
-            }
             (ColumnData::I32(opt), None) => {
                 let header = [VarLenType::Intn as u8, 4];
                 dst.extend_from_slice(&header);
                 if let Some(val) = opt {
                     dst.put_u8(4);
                     dst.put_i32_le(val);
-                } else {
-                    dst.put_u8(0);
-                }
-            }
-            (ColumnData::I64(Some(val)), Some(TypeInfo::FixedLen(FixedLenType::Int8))) => {
-                dst.put_i64_le(val);
-            }
-            (ColumnData::I64(opt), Some(TypeInfo::VarLenSized(vlc)))
-                if vlc.r#type() == VarLenType::Intn =>
-            {
-                if let Some(val) = opt {
-                    dst.put_u8(8);
-                    dst.put_i64_le(val);
                 } else {
                     dst.put_u8(0);
                 }
@@ -425,38 +483,12 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     dst.put_u8(0);
                 }
             }
-            (ColumnData::F32(Some(val)), Some(TypeInfo::FixedLen(FixedLenType::Float4))) => {
-                dst.put_f32_le(val);
-            }
-            (ColumnData::F32(opt), Some(TypeInfo::VarLenSized(vlc)))
-                if vlc.r#type() == VarLenType::Floatn =>
-            {
-                if let Some(val) = opt {
-                    dst.put_u8(4);
-                    dst.put_f32_le(val);
-                } else {
-                    dst.put_u8(0);
-                }
-            }
             (ColumnData::F32(opt), None) => {
                 let header = [VarLenType::Floatn as u8, 4];
                 dst.extend_from_slice(&header);
                 if let Some(val) = opt {
                     dst.put_u8(4);
                     dst.put_f32_le(val);
-                } else {
-                    dst.put_u8(0);
-                }
-            }
-            (ColumnData::F64(Some(val)), Some(TypeInfo::FixedLen(FixedLenType::Float8))) => {
-                dst.put_f64_le(val);
-            }
-            (ColumnData::F64(opt), Some(TypeInfo::VarLenSized(vlc)))
-                if vlc.r#type() == VarLenType::Floatn =>
-            {
-                if let Some(val) = opt {
-                    dst.put_u8(8);
-                    dst.put_f64_le(val);
                 } else {
                     dst.put_u8(0);
                 }
@@ -2312,5 +2344,81 @@ mod tests {
             ColumnData::I32(Some(42)),
         )
         .await;
+    }
+
+    fn int_ti(len: usize) -> TypeInfo {
+        TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Intn, len, None))
+    }
+
+    fn float_ti(len: usize) -> TypeInfo {
+        TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Floatn, len, None))
+    }
+
+    async fn decode_with(ti: &TypeInfo, buf: BytesMut) -> ColumnData<'static> {
+        ColumnData::decode(&mut buf.into_sql_read_bytes(), ti)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn bulk_integer_is_written_at_the_column_width() {
+        let buf = encode_with_ti(&int_ti(8), ColumnData::I32(Some(-5))).unwrap();
+        assert_eq!(
+            &buf[..],
+            &[8, 0xfb, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]
+        );
+        assert_eq!(
+            decode_with(&int_ti(8), buf).await,
+            ColumnData::I64(Some(-5))
+        );
+
+        let ti = TypeInfo::FixedLen(FixedLenType::Int4);
+        let buf = encode_with_ti(&ti, ColumnData::I16(Some(-1))).unwrap();
+        assert_eq!(&buf[..], &[0xff; 4]);
+
+        let buf = encode_with_ti(&int_ti(1), ColumnData::I64(Some(200))).unwrap();
+        assert_eq!(
+            decode_with(&int_ti(1), buf).await,
+            ColumnData::U8(Some(200))
+        );
+
+        let buf = encode_with_ti(&int_ti(2), ColumnData::I32(None)).unwrap();
+        assert_eq!(&buf[..], &[0]);
+    }
+
+    #[test]
+    fn bulk_integer_out_of_the_column_range_errors() {
+        for (len, value) in [
+            (4, ColumnData::I64(Some(5_000_000_000))),
+            (2, ColumnData::I32(Some(70_000))),
+            (1, ColumnData::I32(Some(300))),
+            (1, ColumnData::I16(Some(-1))),
+        ] {
+            let err = encode_with_ti(&int_ti(len), value).unwrap_err();
+            assert!(matches!(err, Error::Conversion(_)), "got {err:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn bulk_float_is_written_at_the_column_width() {
+        let buf = encode_with_ti(&float_ti(8), ColumnData::F32(Some(1.5))).unwrap();
+        assert_eq!(
+            decode_with(&float_ti(8), buf).await,
+            ColumnData::F64(Some(1.5))
+        );
+
+        let ti = TypeInfo::FixedLen(FixedLenType::Float4);
+        let buf = encode_with_ti(&ti, ColumnData::F64(Some(1.5))).unwrap();
+        assert_eq!(&buf[..], &1.5f32.to_le_bytes());
+
+        let err = encode_with_ti(&float_ti(4), ColumnData::F64(Some(1e300))).unwrap_err();
+        assert!(matches!(err, Error::Conversion(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn bulk_null_into_not_null_column_errors() {
+        let ti = TypeInfo::FixedLen(FixedLenType::Int4);
+        let err = encode_with_ti(&ti, ColumnData::I32(None)).unwrap_err();
+        assert!(matches!(err, Error::BulkInput(_)), "got {err:?}");
     }
 }

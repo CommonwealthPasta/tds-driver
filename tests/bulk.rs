@@ -3,7 +3,9 @@ use names::{Generator, Name};
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
 use std::env;
+use std::future::Future;
 use std::sync::Once;
+use std::time::Duration;
 use tiberius::ColumnData;
 use tiberius::{IntoSql, Result, TokenRow};
 
@@ -350,3 +352,96 @@ test_bulk_columns!(ab_ba_override_default_columns(
     (&["a", "b", "c"], vec![(1i32, 1f64, 10i32); 100]),
     (&["b", "c", "a"], vec![(2f64, 20i32, 2i32); 100]),
 ));
+
+/// Fails rather than hangs when the connection is stuck.
+async fn within<T>(fut: impl Future<Output = Result<T>>) -> Result<T> {
+    use futures_util::future::{select, Either};
+    match select(Box::pin(fut), smol::Timer::after(Duration::from_secs(15))).await {
+        Either::Left((res, _)) => res,
+        Either::Right(_) => panic!("no response within 15s: the connection is stuck"),
+    }
+}
+
+/// Bulk inserts `value` into a one-column table `v {column}` and reads
+/// `readback`, an expression over `v`, back as text.
+async fn bulk_one<S>(
+    conn: &mut tiberius::Client<S>,
+    column: &str,
+    value: ColumnData<'static>,
+    readback: &str,
+) -> Result<Option<String>>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let table = format!("##{}", random_table().await);
+    conn.simple_query(format!("CREATE TABLE {table} (v {column})"))
+        .await?
+        .into_results()
+        .await?;
+
+    let mut req = conn.bulk_insert(&table).await?;
+    let mut row = TokenRow::new();
+    row.push(value);
+    req.send(row).await?;
+    within(req.finalize()).await?;
+
+    let row = conn
+        .simple_query(format!(
+            "SELECT CONVERT(nvarchar(200), {readback}) FROM {table}"
+        ))
+        .await?
+        .into_row()
+        .await?;
+
+    Ok(row.and_then(|r| r.get::<&str, _>(0).map(str::to_owned)))
+}
+
+async fn assert_bulk<S>(
+    conn: &mut tiberius::Client<S>,
+    cases: Vec<(&str, ColumnData<'static>, &str, &str)>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    for (column, value, readback, expected) in cases {
+        let got = bulk_one(conn, column, value.clone(), readback).await?;
+        assert_eq!(Some(expected), got.as_deref(), "{column} <- {value:?}");
+    }
+
+    Ok(())
+}
+
+#[test_on_runtimes]
+async fn bulk_load_converts_numbers_to_the_column_width<S>(
+    mut conn: tiberius::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    assert_bulk(
+        &mut conn,
+        vec![
+            ("BIGINT", (-5i32).into_sql(), "v", "-5"),
+            ("BIGINT", i32::MIN.into_sql(), "v", "-2147483648"),
+            ("INT", (-1i16).into_sql(), "v", "-1"),
+            ("BIGINT NOT NULL", (-5i32).into_sql(), "v", "-5"),
+            ("INT", 5i64.into_sql(), "v", "5"),
+            ("INT NOT NULL", 5i64.into_sql(), "v", "5"),
+            ("TINYINT", 7i32.into_sql(), "v", "7"),
+            ("FLOAT", (-2.5f32).into_sql(), "v", "-2.5"),
+            ("FLOAT NOT NULL", 0.5f32.into_sql(), "v", "0.5"),
+            ("REAL", 1.5f64.into_sql(), "v", "1.5"),
+        ],
+    )
+    .await?;
+
+    let err = bulk_one(&mut conn, "INT", 5_000_000_000i64.into_sql(), "v")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, tiberius::error::Error::Conversion(_)),
+        "{err:?}"
+    );
+
+    Ok(())
+}

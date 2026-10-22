@@ -140,6 +140,9 @@ that land will be documented here.
   split into 4 KB PRELOGIN packets.
 - **TDS 7.x TLS is capped at TLS 1.2 under `native-tls`/`vendored-openssl`**;
   TLS 1.3's post-handshake messages broke the connection.
+- **Bulk/TVP integers and floats are written at the column's width** (`-5i32`
+  into `bigint` was stored as 4294967291, `1.5f32` into `float` as 5.3e-315);
+  values out of the column's range are a `Conversion` error.
 
 ### Changed
 
