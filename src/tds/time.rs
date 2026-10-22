@@ -460,6 +460,10 @@ pub struct DateTimeOffset {
 #[cfg(feature = "tds73")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tds73")))]
 impl DateTimeOffset {
+    /// What a chrono offset with seconds converts to: `ToSql` cannot fail, so
+    /// the encoder rejects it.
+    pub(crate) const OFFSET_WITH_SECONDS: i16 = i16::MIN;
+
     /// Construct a new `DateTimeOffset` from a `datetime2`, offset marking
     /// number of minutes from UTC.
     pub fn new(datetime2: DateTime2, offset: i16) -> Self {
@@ -494,6 +498,12 @@ impl Encode<BytesMut> for DateTimeOffset {
         // MS-TDS 2.2.5.5.1.8: the offset MUST be within -840..=840 minutes.
         match self.offset {
             -840..=840 => {}
+            Self::OFFSET_WITH_SECONDS => {
+                return Err(crate::Error::Conversion(
+                    "datetimeoffset: the UTC offset has seconds; SQL Server stores whole minutes"
+                        .into(),
+                ))
+            }
             o => {
                 return Err(crate::Error::Conversion(
                     format!("datetimeoffset: offset of {o} minutes is outside -14:00 to +14:00")
@@ -735,7 +745,7 @@ mod tests {
     #[test]
     fn datetimeoffset_offsets_beyond_14_hours_are_encode_errors() {
         let dt2 = DateTime2::new(Date::new(1), Time::new(0, 7));
-        for offset in [-841, 841, i16::MAX] {
+        for offset in [-841, 841, i16::MAX, DateTimeOffset::OFFSET_WITH_SECONDS] {
             let err = DateTimeOffset::new(dt2, offset)
                 .encode(&mut BytesMut::new())
                 .unwrap_err();

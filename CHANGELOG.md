@@ -175,6 +175,9 @@ that land will be documented here.
 - **A chrono leap second is a `Conversion` error** instead of a time past
   23:59:59.9999999 (8023) or, at any other minute, the next second (12:34:60.5
   was stored as 12:35:00.5).
+- **A chrono `FixedOffset` with seconds is a `Conversion` error** instead of
+  being cut to whole minutes (+01:00:30 was stored as +01:00, its local time 30
+  s off). An offset beyond ±14:00 now fails before it is sent (was 8023).
 - **A TLS handshake over OpenSSL survives a socket that can't take a flight at
   once.** OpenSSL fails the handshake on a flush that would block, which
   affected `native-tls` on Linux and `vendored-openssl`.

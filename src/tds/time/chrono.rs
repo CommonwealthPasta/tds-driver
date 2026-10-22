@@ -163,9 +163,16 @@ fn to_datetime2(naive: NaiveDateTime) -> DateTime2 {
     )
 }
 
+/// datetimeoffset stores whole minutes: an offset with seconds becomes
+/// `DateTimeOffset::OFFSET_WITH_SECONDS` instead of being truncated.
 #[cfg(feature = "tds73")]
 fn to_datetimeoffset(dt: &chrono::DateTime<FixedOffset>) -> DateTimeOffset {
-    let offset = (dt.offset().local_minus_utc() / 60) as i16;
+    let secs = dt.offset().local_minus_utc();
+    let offset = match secs % 60 {
+        // A FixedOffset is under 24 hours: at most 1439 minutes.
+        0 => (secs / 60) as i16,
+        _ => DateTimeOffset::OFFSET_WITH_SECONDS,
+    };
 
     DateTimeOffset::new(to_datetime2(dt.naive_utc()), offset)
 }
@@ -493,6 +500,37 @@ mod tests {
 
         let last = NaiveTime::from_hms_nano_opt(23, 59, 59, 999_999_999).unwrap();
         encode(last.to_sql()).unwrap();
+    }
+
+    #[cfg(feature = "tds73")]
+    #[test]
+    fn offsets_with_seconds_are_encode_errors() {
+        use crate::ToSql;
+        use chrono::TimeZone;
+
+        let naive = NaiveDate::from_ymd_opt(2024, 5, 6)
+            .unwrap()
+            .and_hms_opt(1, 2, 3)
+            .unwrap();
+
+        for secs in [30, -30, 3600 + 1] {
+            let dto = FixedOffset::east_opt(secs)
+                .unwrap()
+                .from_local_datetime(&naive)
+                .unwrap();
+            for data in [dto.to_sql(), dto.into_sql()] {
+                let err = encode(data).unwrap_err();
+                assert!(matches!(err, crate::Error::Conversion(_)), "{dto}");
+            }
+        }
+
+        for secs in [-14 * 3600, -90 * 60, 14 * 3600] {
+            let dto = FixedOffset::east_opt(secs)
+                .unwrap()
+                .from_local_datetime(&naive)
+                .unwrap();
+            encode(dto.to_sql()).unwrap();
+        }
     }
 
     #[cfg(feature = "tds73")]
