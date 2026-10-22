@@ -137,108 +137,52 @@ from_sql!(
     })
 );
 
+/// 10^-7 s since midnight.
+#[cfg(feature = "tds73")]
+fn to_time(time: NaiveTime) -> Time {
+    use chrono::Timelike;
+
+    let increments = (u64::from(time.num_seconds_from_midnight()) * 1_000_000_000
+        + u64::from(time.nanosecond()))
+        / 100;
+
+    Time {
+        increments,
+        scale: 7,
+    }
+}
+
+#[cfg(feature = "tds73")]
+fn to_datetime2(naive: NaiveDateTime) -> DateTime2 {
+    DateTime2::new(
+        Date::from_signed_days(to_days(naive.date(), 1)),
+        to_time(naive.time()),
+    )
+}
+
+#[cfg(feature = "tds73")]
+fn to_datetimeoffset(dt: &chrono::DateTime<FixedOffset>) -> DateTimeOffset {
+    let offset = (dt.offset().local_minus_utc() / 60) as i16;
+
+    DateTimeOffset::new(to_datetime2(dt.naive_utc()), offset)
+}
+
 #[cfg(feature = "tds73")]
 to_sql!(self_,
         NaiveDate: (ColumnData::Date, Date::from_signed_days(to_days(*self_, 1)));
-        NaiveTime: (ColumnData::Time, {
-            use chrono::Timelike;
-
-            let nanos = self_.num_seconds_from_midnight() as u64 * 1e9 as u64 + self_.nanosecond() as u64;
-            let increments = nanos / 100;
-
-            Time {increments, scale: 7}
-        });
-        NaiveDateTime: (ColumnData::DateTime2, {
-            use chrono::Timelike;
-
-            let time = self_.time();
-            let nanos = time.num_seconds_from_midnight() as u64 * 1e9 as u64 + time.nanosecond() as u64;
-            let increments = nanos / 100;
-
-            let date = Date::from_signed_days(to_days(self_.date(), 1));
-            let time = Time {increments, scale: 7};
-
-            DateTime2::new(date, time)
-        });
-        chrono::DateTime<Utc>: (ColumnData::DateTime2, {
-            use chrono::Timelike;
-
-            let naive = self_.naive_utc();
-            let time = naive.time();
-            let nanos = time.num_seconds_from_midnight() as u64 * 1e9 as u64 + time.nanosecond() as u64;
-
-            let date = Date::from_signed_days(to_days(naive.date(), 1));
-            let time = Time {increments: nanos / 100, scale: 7};
-
-            DateTime2::new(date, time)
-        });
-        chrono::DateTime<FixedOffset>: (ColumnData::DateTimeOffset, {
-            use chrono::Timelike;
-
-            let naive = self_.naive_utc();
-            let time = naive.time();
-            let nanos = time.num_seconds_from_midnight() as u64 * 1e9 as u64 + time.nanosecond() as u64;
-
-            let date = Date::from_signed_days(to_days(naive.date(), 1));
-            let time = Time { increments: nanos / 100, scale: 7 };
-
-            let tz = self_.timezone();
-            let offset = (tz.local_minus_utc() / 60) as i16;
-
-            DateTimeOffset::new(DateTime2::new(date, time), offset)
-        });
+        NaiveTime: (ColumnData::Time, to_time(*self_));
+        NaiveDateTime: (ColumnData::DateTime2, to_datetime2(*self_));
+        chrono::DateTime<Utc>: (ColumnData::DateTime2, to_datetime2(self_.naive_utc()));
+        chrono::DateTime<FixedOffset>: (ColumnData::DateTimeOffset, to_datetimeoffset(self_));
 );
 
 #[cfg(feature = "tds73")]
 into_sql!(self_,
         NaiveDate: (ColumnData::Date, Date::from_signed_days(to_days(self_, 1)));
-        NaiveTime: (ColumnData::Time, {
-            use chrono::Timelike;
-
-            let nanos = self_.num_seconds_from_midnight() as u64 * 1e9 as u64 + self_.nanosecond() as u64;
-            let increments = nanos / 100;
-
-            Time {increments, scale: 7}
-        });
-        NaiveDateTime: (ColumnData::DateTime2, {
-            use chrono::Timelike;
-
-            let time = self_.time();
-            let nanos = time.num_seconds_from_midnight() as u64 * 1e9 as u64 + time.nanosecond() as u64;
-            let increments = nanos / 100;
-
-            let date = Date::from_signed_days(to_days(self_.date(), 1));
-            let time = Time {increments, scale: 7};
-
-            DateTime2::new(date, time)
-        });
-        chrono::DateTime<Utc>: (ColumnData::DateTime2, {
-            use chrono::Timelike;
-
-            let naive = self_.naive_utc();
-            let time = naive.time();
-            let nanos = time.num_seconds_from_midnight() as u64 * 1e9 as u64 + time.nanosecond() as u64;
-
-            let date = Date::from_signed_days(to_days(naive.date(), 1));
-            let time = Time {increments: nanos / 100, scale: 7};
-
-            DateTime2::new(date, time)
-        });
-        chrono::DateTime<FixedOffset>: (ColumnData::DateTimeOffset, {
-            use chrono::Timelike;
-
-            let naive = self_.naive_utc();
-            let time = naive.time();
-            let nanos = time.num_seconds_from_midnight() as u64 * 1e9 as u64 + time.nanosecond() as u64;
-
-            let date = Date::from_signed_days(to_days(naive.date(), 1));
-            let time = Time { increments: nanos / 100, scale: 7 };
-
-            let tz = self_.timezone();
-            let offset = (tz.local_minus_utc() / 60) as i16;
-
-            DateTimeOffset::new(DateTime2::new(date, time), offset)
-        });
+        NaiveTime: (ColumnData::Time, to_time(self_));
+        NaiveDateTime: (ColumnData::DateTime2, to_datetime2(self_));
+        chrono::DateTime<Utc>: (ColumnData::DateTime2, to_datetime2(self_.naive_utc()));
+        chrono::DateTime<FixedOffset>: (ColumnData::DateTimeOffset, to_datetimeoffset(&self_));
 );
 
 #[cfg(not(feature = "tds73"))]
