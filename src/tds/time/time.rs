@@ -146,12 +146,14 @@ to_sql!(self_,
             let tz = self_.offset();
             let offset = (tz.whole_seconds() / 60) as i16;
 
-            let utc_date = self_.to_offset(UtcOffset::UTC);
+            // From the timestamp: `to_offset(UTC)` panics when the UTC date
+            // passes year 9999.
+            const DAY_NANOS: i128 = 86_400_000_000_000;
+            const DAYS_TO_UNIX_EPOCH: i64 = 719_162;
+            let utc = self_.unix_timestamp_nanos();
 
-            let nanos: u64 = (utc_date.time() - Time::from_hms(0, 0, 0).unwrap()).whole_nanoseconds().try_into().unwrap();
-
-            let date = super::Date::from_signed_days(to_days(utc_date.date(), 1));
-            let time = super::Time { increments: nanos / 100, scale: 7 };
+            let date = super::Date::from_signed_days(DAYS_TO_UNIX_EPOCH + utc.div_euclid(DAY_NANOS) as i64);
+            let time = super::Time { increments: (utc.rem_euclid(DAY_NANOS) / 100) as u64, scale: 7 };
 
             super::DateTimeOffset::new(super::DateTime2::new(date, time), offset)
         });
@@ -422,8 +424,11 @@ mod tests {
         }
 
         // In range locally, out of range in UTC, which is what datetimeoffset
-        // stores.
-        let edges = [(1, Month::January, 1, 0, 30, 1)];
+        // stores. The upper one used to panic in `to_offset(UTC)`.
+        let edges = [
+            (1, Month::January, 1, 0, 30, 1),
+            (9999, Month::December, 31, 23, 30, -1),
+        ];
         for (y, m, d, h, min, offset_h) in edges {
             let local = PrimitiveDateTime::new(
                 Date::from_calendar_date(y, m, d).unwrap(),
@@ -432,6 +437,40 @@ mod tests {
             let dto = local.assume_offset(UtcOffset::from_hms(offset_h, 0, 0).unwrap());
             let err = encode(dto.to_sql()).unwrap_err();
             assert!(matches!(err, crate::Error::Conversion(_)), "{dto}: {err:?}");
+        }
+    }
+
+    #[cfg(feature = "tds73")]
+    #[test]
+    fn offset_date_time_to_sql_stores_the_utc_date_and_time() {
+        use crate::ToSql;
+
+        // Either side of the Unix epoch, with a negative and a positive offset.
+        let cases = [
+            ((2024, Month::March, 4), (5, 6, 7, 123_456_700), (-5, -45)),
+            ((1900, Month::January, 1), (0, 0, 0, 500_000_000), (14, 0)),
+        ];
+        for ((y, mo, d), (h, mi, s, ns), (oh, om)) in cases {
+            let local = PrimitiveDateTime::new(
+                Date::from_calendar_date(y, mo, d).unwrap(),
+                Time::from_hms_nano(h, mi, s, ns).unwrap(),
+            );
+            let offset = UtcOffset::from_hms(oh, om, 0).unwrap();
+            let dto = local.assume_offset(offset);
+            let utc = dto.to_offset(UtcOffset::UTC);
+            let utc_nanos: u64 = (utc.time() - Time::MIDNIGHT)
+                .whole_nanoseconds()
+                .try_into()
+                .unwrap();
+
+            match dto.to_sql() {
+                ColumnData::DateTimeOffset(Some(v)) => {
+                    assert_eq!(v.datetime2.date.days() as i64, to_days(utc.date(), 1));
+                    assert_eq!(v.datetime2.time.increments, utc_nanos / 100);
+                    assert_eq!(v.offset as i32, offset.whole_seconds() / 60);
+                }
+                other => panic!("unexpected: {:?}", other),
+            }
         }
     }
 

@@ -100,6 +100,9 @@ that land will be documented here.
 - `BigDecimal::to_sql`/`into_sql` no longer panic on values `decimal(38, s)`
   cannot hold exactly (`1/3`, `1e40`, `1e-39`); the query fails with
   `Error::Conversion` instead. Trailing zeros past scale 38 are dropped.
+- chrono and `time` dates before year 1 no longer panic in `to_sql`/`into_sql`,
+  nor does a `time::OffsetDateTime` whose UTC date passes 9999-12-31; dates
+  outside 0001-01-01..9999-12-31 fail the query with `Error::Conversion`.
 
 ### Changed
 
