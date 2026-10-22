@@ -491,6 +491,17 @@ impl DateTimeOffset {
 #[cfg_attr(docsrs, doc(cfg(feature = "tds73")))]
 impl Encode<BytesMut> for DateTimeOffset {
     fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
+        // MS-TDS 2.2.5.5.1.8: the offset MUST be within -840..=840 minutes.
+        match self.offset {
+            -840..=840 => {}
+            o => {
+                return Err(crate::Error::Conversion(
+                    format!("datetimeoffset: offset of {o} minutes is outside -14:00 to +14:00")
+                        .into(),
+                ))
+            }
+        }
+
         self.datetime2.encode(dst)?;
         dst.put_i16_le(self.offset);
 
@@ -715,6 +726,23 @@ mod tests {
         for scale in 0..=7 {
             let last = 86_400 * 10u64.pow(scale) - 1;
             Time::new(last, scale as u8)
+                .encode(&mut BytesMut::new())
+                .unwrap();
+        }
+    }
+
+    #[cfg(feature = "tds73")]
+    #[test]
+    fn datetimeoffset_offsets_beyond_14_hours_are_encode_errors() {
+        let dt2 = DateTime2::new(Date::new(1), Time::new(0, 7));
+        for offset in [-841, 841, i16::MAX] {
+            let err = DateTimeOffset::new(dt2, offset)
+                .encode(&mut BytesMut::new())
+                .unwrap_err();
+            assert!(matches!(err, crate::Error::Conversion(_)), "{offset}");
+        }
+        for offset in [-840, 0, 840] {
+            DateTimeOffset::new(dt2, offset)
                 .encode(&mut BytesMut::new())
                 .unwrap();
         }
