@@ -248,8 +248,6 @@ impl Decode<BytesMut> for PreloginMessage {
 
             // verify whether the server acts in accordance to what we requested
             // and if we can handle on what we seemingly agreed to
-            // Unrecognized (e.g. newer) pre-login option tokens are skipped;
-            // this is intentional forward-compatibility, not a bug.
             match token {
                 // version
                 PRELOGIN_VERSION => {
@@ -320,11 +318,8 @@ impl Decode<BytesMut> for PreloginMessage {
 
                     ret.nonce = Some(data);
                 }
-                _ => {
-                    return Err(Error::Protocol(
-                        format!("unsupported prelogin token: {}", token).into(),
-                    ))
-                }
+                // Options of newer TDS versions; offset and length let us skip them.
+                _ => {}
             }
 
             cursor.set_position(old_pos);
@@ -528,25 +523,37 @@ mod tests {
         }
     }
 
-    #[test]
-    fn decode_rejects_unsupported_token() {
-        // An unknown option token must produce a protocol error.
-        let mut buf = BytesMut::from(
-            &[
-                0x50, // unsupported token
-                0x00,
-                0x06,
-                0x00,
-                0x01,
-                PRELOGIN_TERMINATOR,
-                0x00,
-            ][..],
-        );
-
-        match PreloginMessage::decode(&mut buf) {
-            Err(Error::Protocol(_)) => {}
-            other => panic!("expected protocol error, got {other:?}"),
+    /// A server PRELOGIN answer built from `(token, data)` options.
+    fn response(opts: &[(u8, &[u8])]) -> BytesMut {
+        let mut table = Vec::new();
+        let mut data = Vec::new();
+        let mut offset = opts.len() * 5 + 1;
+        for (token, d) in opts {
+            table.push(*token);
+            table.extend_from_slice(&(offset as u16).to_be_bytes());
+            table.extend_from_slice(&(d.len() as u16).to_be_bytes());
+            offset += d.len();
+            data.extend_from_slice(d);
         }
+        table.push(PRELOGIN_TERMINATOR);
+        table.extend(data);
+        BytesMut::from(&table[..])
+    }
+
+    const VERSION: &[u8] = &[16, 0, 0x07, 0xd0, 0, 0];
+
+    #[test]
+    fn decode_skips_unknown_tokens() {
+        let mut buf = response(&[
+            (PRELOGIN_VERSION, VERSION),
+            (0x08, &[0xAA, 0xBB]),
+            (PRELOGIN_ENCRYPTION, &[EncryptionLevel::On as u8]),
+            (0x50, &[]),
+            (PRELOGIN_MARS, &[1]),
+        ]);
+        let decoded = PreloginMessage::decode(&mut buf).expect("unknown tokens are skipped");
+        assert_eq!(decoded.encryption, EncryptionLevel::On);
+        assert!(decoded.mars);
     }
 
     #[cfg(any(
