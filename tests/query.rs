@@ -3227,3 +3227,54 @@ where
 
     Ok(())
 }
+
+#[test_on_runtimes]
+async fn numeric_parameters_share_a_plan_across_precisions<S>(
+    mut conn: tiberius::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let tag = random_table().await;
+    let sql = format!("SELECT @P1 /* {tag} */");
+
+    // Same scale, 2, 3 and 7 digits.
+    for value in [15i128, 125, 1_234_567] {
+        let row = conn
+            .query(sql.as_str(), &[&Numeric::new_with_scale(value, 1)])
+            .await?
+            .into_row()
+            .await?
+            .unwrap();
+        assert_eq!(Some(Numeric::new_with_scale(value, 1)), row.get(0));
+    }
+
+    let row = conn
+        .query(
+            format!(
+                "SELECT COUNT(*) FROM sys.dm_exec_cached_plans cp \
+                 CROSS APPLY sys.dm_exec_sql_text(cp.plan_handle) st \
+                 WHERE st.text LIKE '%{tag}%' AND st.text NOT LIKE '%dm_exec_cached_plans%'"
+            ),
+            &[],
+        )
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+    assert_eq!(Some(1i32), row.get(0));
+
+    // 38 digits at either end of the scale range.
+    for (value, scale) in [(10i128.pow(38) - 1, 0u8), (10i128.pow(38) - 1, 38)] {
+        let n = Numeric::new_with_scale(value, scale);
+        let row = conn
+            .query("SELECT @P1", &[&n])
+            .await?
+            .into_row()
+            .await?
+            .unwrap();
+        assert_eq!(Some(n), row.get(0));
+    }
+
+    Ok(())
+}

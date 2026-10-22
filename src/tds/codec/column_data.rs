@@ -58,6 +58,9 @@ use uuid::Uuid;
 
 const MAX_NVARCHAR_SIZE: usize = 1 << 30;
 
+/// Precision of every numeric parameter: the server's maximum.
+const NUMERIC_PARAM_PRECISION: u8 = 38;
+
 /// Whether `s` fits `nvarchar(4000)`, whose limit is in UTF-16 code units.
 /// A UTF-8 byte is at most one unit and a unit at most three bytes, so only
 /// strings of 4001..=12000 bytes need counting.
@@ -174,8 +177,11 @@ impl<'a> ColumnData<'a> {
             ColumnData::Guid(_) => "uniqueidentifier".into(),
             ColumnData::Binary(Some(ref b)) if b.len() <= 8000 => "varbinary(8000)".into(),
             ColumnData::Binary(_) => "varbinary(max)".into(),
+            // Precision from the value would give each digit count its own
+            // cached plan; 38 holds every value. The scale still comes from
+            // the value, as in SqlClient, so each scale gets its own plan.
             ColumnData::Numeric(Some(ref n)) => {
-                format!("numeric({},{})", n.precision(), n.scale()).into()
+                format!("numeric({},{})", NUMERIC_PARAM_PRECISION, n.scale()).into()
             }
             ColumnData::Numeric(None) => "numeric".into(),
             ColumnData::Xml(_) => "xml".into(),
@@ -870,10 +876,12 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                 }
             }
             (ColumnData::Numeric(Some(num)), None) => {
+                // Matches `type_name`. 17 is the maximum length for precision
+                // 38; the value's own length byte may be shorter.
                 let headers = &[
                     VarLenType::Numericn as u8,
-                    num.len(),
-                    num.precision(),
+                    17,
+                    NUMERIC_PARAM_PRECISION,
                     num.scale(),
                 ];
 
@@ -990,6 +998,25 @@ mod tests {
             ColumnData::String(Some("a".repeat(4001).into())).type_name(),
             "nvarchar(max)"
         );
+    }
+
+    #[test]
+    fn numeric_parameters_are_declared_at_precision_38() {
+        for (value, scale) in [
+            (15i128, 1u8),
+            (123_455, 1),
+            (10i128.pow(38) - 1, 38),
+            (-7, 0),
+        ] {
+            let data = ColumnData::Numeric(Some(Numeric::new_with_scale(value, scale)));
+            assert_eq!(data.type_name(), format!("numeric(38,{scale})"));
+
+            // TYPE_INFO: type, max length, precision, scale.
+            let mut buf = BytesMut::new();
+            data.encode(&mut BytesMutWithTypeInfo::new(&mut buf))
+                .unwrap();
+            assert_eq!(&buf[..4], &[VarLenType::Numericn as u8, 17, 38, scale]);
+        }
     }
 
     #[test]

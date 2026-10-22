@@ -115,6 +115,10 @@ that land will be documented here.
 - `Query::MAX_PARAMETERS` is 2098, not 2100: `sp_executesql` takes two of the
   server's 2100. Binding more is now a client-side `Error::Conversion` before
   anything is sent.
+- Decimal parameters are declared `numeric(38, s)` with the value's scale,
+  instead of a precision taken from the value, so values of different digit
+  counts share a cached plan. A value of more than 38 digits is now a
+  client-side `Error::Conversion`.
 
 ### Breaking
 

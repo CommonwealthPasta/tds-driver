@@ -179,6 +179,13 @@ fn invalid_length(len: usize) -> Error {
 
 impl Encode<BytesMut> for Numeric {
     fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
+        // decimal(38, s) holds at most 38 digits whatever the scale.
+        if self.value.unsigned_abs() >= 10u128.pow(38) {
+            return Err(Error::Conversion(
+                "numeric value out of range: SQL Server's decimal holds at most 38 digits".into(),
+            ));
+        }
+
         // `len()` recomputes `precision()` via a division loop; compute it once.
         let len = self.len();
         dst.put_u8(len);
@@ -771,6 +778,18 @@ mod tests {
         round_trip(10i128.pow(20), 0).await; // len 13
         round_trip(-(10i128.pow(20)), 3).await; // negative, len 13
         round_trip(10i128.pow(30), 0).await; // len 17
+        round_trip(10i128.pow(38) - 1, 38).await; // 38 digits, the maximum
+        round_trip(-(10i128.pow(38) - 1), 0).await;
+    }
+
+    #[test]
+    fn encode_rejects_more_than_38_digits() {
+        for value in [10i128.pow(38), -(10i128.pow(38)), i128::MAX, -i128::MAX] {
+            let err = Numeric::new_with_scale(value, 0)
+                .encode(&mut BytesMut::new())
+                .unwrap_err();
+            assert!(matches!(err, Error::Conversion(_)), "{value}: {err:?}");
+        }
     }
 
     #[tokio::test]
