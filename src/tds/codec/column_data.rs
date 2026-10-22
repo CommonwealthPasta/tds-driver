@@ -374,6 +374,47 @@ fn rescale_time(time: Time, scale: u8) -> crate::Result<Time> {
     Ok(Time::new(increments, scale))
 }
 
+/// Puts a bulk/TVP decimal at its column's scale, rounding half away from
+/// zero as SqlDecimal.AdjustScale does, then checks it against the column's
+/// precision, as SqlBulkCopy.ConvertValue does (SqlBulkCopy.cs:1816-1823,
+/// dotnet/SqlClient@5394363): the server fails the whole insert (9803) on a
+/// value the column cannot hold.
+fn rescale_numeric(num: Numeric, precision: u8, scale: u8) -> crate::Result<Numeric> {
+    // Not `num`'s Display: a deserialized Numeric can have scale > 38.
+    let out_of_range = || {
+        crate::Error::Conversion(
+            format!(
+                "{} at scale {} is out of range for decimal({precision},{scale})",
+                num.value(),
+                num.scale()
+            )
+            .into(),
+        )
+    };
+
+    // At most 38 digits, as for parameters.
+    let magnitude = num.value().unsigned_abs();
+    if magnitude >= 10u128.pow(38) || scale > 38 {
+        return Err(out_of_range());
+    }
+
+    let magnitude = match scale.checked_sub(num.scale()) {
+        Some(up) => magnitude.checked_mul(10u128.pow(u32::from(up))),
+        None => 10u128
+            .checked_pow(u32::from(num.scale() - scale))
+            .map(|f| magnitude / f + u128::from(magnitude % f >= f / 2)),
+    }
+    .filter(|&m| m < 10u128.pow(u32::from(precision.min(38))))
+    .ok_or_else(out_of_range)?;
+
+    // Below 10^38, so within i128.
+    let value = magnitude as i128;
+    Ok(Numeric::new_with_scale(
+        if num.value() < 0 { -value } else { value },
+        scale,
+    ))
+}
+
 /// Largest value a column takes, in bytes. (max) columns declare 0xffff.
 fn column_limit(vlc: &VarLenContext) -> usize {
     if vlc.len() < 0xffff {
@@ -975,39 +1016,17 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     dst.put_u8(0);
                 }
             }
-            (ColumnData::Numeric(opt), Some(TypeInfo::VarLenSizedPrecision { ty, scale, .. }))
-                if ty == &VarLenType::Numericn || ty == &VarLenType::Decimaln =>
-            {
+            (
+                ColumnData::Numeric(opt),
+                Some(TypeInfo::VarLenSizedPrecision {
+                    ty,
+                    precision,
+                    scale,
+                    ..
+                }),
+            ) if ty == &VarLenType::Numericn || ty == &VarLenType::Decimaln => {
                 if let Some(num) = opt {
-                    // The value is sent at the column's scale (the scale lives in
-                    // the TYPE_INFO, not the value), so rescale when the client
-                    // value's scale differs from the target column's scale.
-                    let target_scale = *scale;
-                    let num = if target_scale == num.scale() {
-                        num
-                    } else if target_scale > num.scale() {
-                        // Scale up: multiply, checking for i128 overflow.
-                        let factor = 10i128.pow((target_scale - num.scale()) as u32);
-                        let value = num.value().checked_mul(factor).ok_or_else(|| {
-                            crate::Error::Conversion(
-                                "numeric value overflows when scaling to the column's scale".into(),
-                            )
-                        })?;
-                        Numeric::new_with_scale(value, target_scale)
-                    } else {
-                        // Scale down: divide, rounding half away from zero
-                        // (this loses precision beyond the column's scale).
-                        let factor = 10i128.pow((num.scale() - target_scale) as u32);
-                        let half = factor / 2;
-                        let v = num.value();
-                        let value = if v >= 0 {
-                            (v + half) / factor
-                        } else {
-                            (v - half) / factor
-                        };
-                        Numeric::new_with_scale(value, target_scale)
-                    };
-                    num.encode(&mut *dst)?;
+                    rescale_numeric(num, *precision, *scale)?.encode(&mut *dst)?;
                 } else {
                     dst.put_u8(0);
                 }
@@ -2380,6 +2399,50 @@ mod tests {
             nd,
             ColumnData::Numeric(Some(Numeric::new_with_scale(123, 2)))
         );
+    }
+
+    #[tokio::test]
+    async fn numeric_the_column_cannot_hold_is_an_error() {
+        let decimal = |precision, scale| TypeInfo::VarLenSizedPrecision {
+            ty: VarLenType::Decimaln,
+            size: 17,
+            precision,
+            scale,
+        };
+        let num = |v, s| ColumnData::Numeric(Some(Numeric::new_with_scale(v, s)));
+
+        // Rounding overflowed i128 on the first two; 999.995 rounds to
+        // 1000.00, which decimal(5,2) cannot hold, nor 12345 or 1234.56.
+        for (ti, data) in [
+            (decimal(38, 2), num(i128::MAX, 38)),
+            (decimal(38, 2), num(i128::MIN, 38)),
+            (decimal(5, 2), num(999_995, 3)),
+            (decimal(5, 2), num(-999_995, 3)),
+            (decimal(5, 2), num(12_345, 0)),
+            (decimal(5, 2), num(123_456, 2)),
+            (decimal(38, 0), num(10i128.pow(38), 0)),
+        ] {
+            let err = encode_with_ti(&ti, data.clone()).unwrap_err();
+            assert!(matches!(err, Error::Conversion(_)), "{data:?}: {err:?}");
+        }
+
+        for (ti, data, expected) in [
+            (decimal(5, 2), num(999_994, 3), (99_999, 2)),
+            (decimal(5, 2), num(-999_994, 3), (-99_999, 2)),
+            (decimal(5, 2), num(-999, 0), (-99_900, 2)),
+            (
+                decimal(38, 0),
+                num(10i128.pow(38) - 1, 0),
+                (10i128.pow(38) - 1, 0),
+            ),
+            (decimal(38, 37), num(-15, 38), (-2, 37)),
+        ] {
+            let buf = encode_with_ti(&ti, data).unwrap();
+            let nd = ColumnData::decode(&mut buf.into_sql_read_bytes(), &ti)
+                .await
+                .unwrap();
+            assert_eq!(nd, num(expected.0, expected.1));
+        }
     }
 
     // ----- SQL_VARIANT encode (lines 897-898) -----

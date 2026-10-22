@@ -588,6 +588,55 @@ where
 }
 
 #[test_on_runtimes]
+async fn bulk_load_decimal_the_column_cannot_hold_is_a_row_error<S>(
+    mut conn: tiberius::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use tiberius::numeric::Numeric;
+
+    let table = format!("##{}", random_table().await);
+    conn.simple_query(format!("CREATE TABLE {table} (v DECIMAL(5,2))"))
+        .await?
+        .into_results()
+        .await?;
+
+    let mut req = conn.bulk_insert(&table).await?;
+    let row = |v, s| {
+        let mut row = TokenRow::new();
+        row.push(Numeric::new_with_scale(v, s).into_sql());
+        row
+    };
+
+    // 999.995 rounds to 1000.00, which the server rejected with 9803 for
+    // the whole insert; the 39-digit value overflowed rounding.
+    for (v, s) in [(999_995, 3), (12_345, 0), (i128::MAX, 38)] {
+        let err = req.send(row(v, s)).await.unwrap_err();
+        assert!(
+            matches!(err, tiberius::error::Error::Conversion(_)),
+            "{err:?}"
+        );
+    }
+
+    req.send(row(999_994, 3)).await?;
+    req.send(row(-999_985, 3)).await?;
+    assert_eq!(2, within(req.finalize()).await?.total());
+
+    let rows = conn
+        .simple_query(format!(
+            "SELECT CONVERT(varchar(10), v) FROM {table} ORDER BY v"
+        ))
+        .await?
+        .into_first_result()
+        .await?;
+    let got: Vec<_> = rows.iter().map(|r| r.get::<&str, _>(0)).collect();
+    assert_eq!(vec![Some("-999.99"), Some("999.99")], got);
+
+    Ok(())
+}
+
+#[test_on_runtimes]
 async fn bulk_load_encodes_varchar_in_the_column_collation<S>(
     mut conn: tiberius::Client<S>,
 ) -> Result<()>

@@ -178,6 +178,10 @@ that land will be documented here.
 - **A chrono `FixedOffset` with seconds is a `Conversion` error** instead of
   being cut to whole minutes (+01:00:30 was stored as +01:00, its local time 30
   s off). An offset beyond ±14:00 now fails before it is sent (was 8023).
+- **A bulk/TVP decimal its column cannot hold is a `Conversion` error for that
+  row**, checked after rounding to the column's scale, as SqlBulkCopy does.
+  999.995 into `decimal(5,2)` failed the whole insert (9803), and a value of 39
+  digits panicked debug builds.
 - **A TLS handshake over OpenSSL survives a socket that can't take a flight at
   once.** OpenSSL fails the handshake on a flush that would block, which
   affected `native-tls` on Linux and `vendored-openssl`.
