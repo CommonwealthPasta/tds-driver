@@ -224,20 +224,22 @@ impl Encode<BytesMut> for Numeric {
 
 impl Debug for Numeric {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
-        write!(
-            f,
-            "{}{}.{:0pad$}",
-            if self.value() < 0 { "-" } else { "" },
-            self.int_part().abs(),
-            self.dec_part().abs(),
-            pad = self.scale as usize
-        )
+        write!(f, "{}", self)
     }
 }
 
 impl Display for Numeric {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
-        write!(f, "{:?}", self)
+        let sign = if self.value < 0 { "-" } else { "" };
+        let abs = self.value.unsigned_abs();
+
+        if self.scale == 0 {
+            return write!(f, "{sign}{abs}");
+        }
+
+        let pow = 10u128.pow(self.scale as u32);
+        let scale = self.scale as usize;
+        write!(f, "{sign}{}.{:0scale$}", abs / pow, abs % pow)
     }
 }
 
@@ -549,7 +551,7 @@ mod tests {
 
     #[test]
     fn numeric_to_string() {
-        assert_eq!(Numeric::new_with_scale(123, 0).to_string(), "123.0");
+        assert_eq!(Numeric::new_with_scale(123, 0).to_string(), "123");
         assert_eq!(Numeric::new_with_scale(123, 1).to_string(), "12.3");
         assert_eq!(Numeric::new_with_scale(123, 2).to_string(), "1.23");
         assert_eq!(Numeric::new_with_scale(123, 3).to_string(), "0.123");
@@ -562,7 +564,11 @@ mod tests {
             Numeric::new_with_scale(123, 37).to_string(),
             "0.0000000000000000000000000000000000123"
         );
-        assert_eq!(Numeric::new_with_scale(-123, 0).to_string(), "-123.0");
+        assert_eq!(Numeric::new_with_scale(-123, 0).to_string(), "-123");
+        assert_eq!(
+            Numeric::new_with_scale(i128::MIN, 0).to_string(),
+            "-170141183460469231731687303715884105728"
+        );
         assert_eq!(Numeric::new_with_scale(-123, 1).to_string(), "-12.3");
         assert_eq!(Numeric::new_with_scale(-123, 2).to_string(), "-1.23");
         assert_eq!(Numeric::new_with_scale(-123, 3).to_string(), "-0.123");

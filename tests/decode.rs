@@ -217,6 +217,40 @@ where
     Ok(())
 }
 
+#[test_on_runtimes]
+async fn numeric_precision_and_display<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let r = rows(
+        &mut conn,
+        "SELECT CAST(0.5 AS decimal(38,38)), \
+         CAST('-0.12345678901234567890123456789012345678' AS decimal(38,38)), \
+         CAST(123 AS decimal(10,0)), CAST(-0.5 AS decimal(5,1))",
+    )
+    .await?;
+
+    let a: Numeric = r[0].get(0).unwrap();
+    let b: Numeric = r[0].get(1).unwrap();
+    assert_eq!(a.precision(), 38);
+    assert_eq!(b.precision(), 38);
+
+    // A decimal(38,38) read from the server can be sent back.
+    let back = conn
+        .query("SELECT @P1, @P2", &[&a, &b])
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+    assert_eq!(back.get::<Numeric, _>(0), Some(a));
+    assert_eq!(back.get::<Numeric, _>(1), Some(b));
+
+    assert_eq!(r[0].get::<Numeric, _>(2).unwrap().to_string(), "123");
+    assert_eq!(r[0].get::<Numeric, _>(3).unwrap().to_string(), "-0.5");
+
+    Ok(())
+}
+
 #[cfg(feature = "rust_decimal")]
 #[test_on_runtimes]
 async fn rust_decimal_out_of_range<S>(mut conn: tiberius::Client<S>) -> Result<()>

@@ -85,6 +85,7 @@ that land will be documented here.
   as `.996666…`), for both chrono and time, as SqlClient does.
 - **A NULL `smalldatetime` decodes as `SmallDateTime(None)` in NBCROW rows too**
   (was `DateTime(None)`).
+- **`Numeric` displays a scale-0 value without `.0`** (`123`, not `123.0`).
 
 ### Changed
 
