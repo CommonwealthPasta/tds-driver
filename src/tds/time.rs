@@ -154,11 +154,24 @@ impl SmallDateTime {
     {
         let days = src.read_u16_le().await?;
         let seconds_fragments = src.read_u16_le().await?;
-
-        Ok(Self {
+        let dt = Self {
             days,
             seconds_fragments,
-        })
+        };
+
+        dt.minutes_of_day()
+            .map_err(|_| crate::Error::Protocol(format!("invalid smalldatetime {dt:?}").into()))?;
+        Ok(dt)
+    }
+
+    /// Minutes since midnight; the wire field (`seconds_fragments`) holds minutes.
+    pub(crate) fn minutes_of_day(self) -> crate::Result<u32> {
+        match self.seconds_fragments {
+            m @ 0..=1439 => Ok(m as u32),
+            m => Err(crate::Error::Conversion(
+                format!("smalldatetime: {m} minutes is past midnight").into(),
+            )),
+        }
     }
 }
 
@@ -500,6 +513,11 @@ mod tests {
         let mut buf = BytesMut::new();
         DateTime::new(0, 25920000).encode(&mut buf).unwrap();
         let err = DateTime::decode(&mut buf.into_sql_read_bytes()).await;
+        assert!(matches!(err, Err(crate::Error::Protocol(_))), "{err:?}");
+
+        let mut buf = BytesMut::new();
+        SmallDateTime::new(0, 1440).encode(&mut buf).unwrap();
+        let err = SmallDateTime::decode(&mut buf.into_sql_read_bytes()).await;
         assert!(matches!(err, Err(crate::Error::Protocol(_))), "{err:?}");
     }
 

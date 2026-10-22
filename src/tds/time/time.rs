@@ -50,10 +50,10 @@ fn from_datetime(dt: super::DateTime) -> crate::Result<PrimitiveDateTime> {
     Ok(from_days(dt.days() as i64, 1900).with_time(time))
 }
 
-#[inline]
 #[cfg(feature = "tds73")]
-fn from_secs(secs: u64) -> Time {
-    Time::from_hms(0, 0, 0).unwrap() + Duration::from_secs(secs)
+fn from_smalldatetime(dt: super::SmallDateTime) -> crate::Result<PrimitiveDateTime> {
+    let time = from_millis(dt.minutes_of_day()? * 60_000)?;
+    Ok(from_days(dt.days() as i64, 1900).with_time(time))
 }
 
 impl<'a> crate::FromSql<'a> for PrimitiveDateTime {
@@ -61,12 +61,7 @@ impl<'a> crate::FromSql<'a> for PrimitiveDateTime {
         match data {
             ColumnData::DateTime(dt) => dt.map(from_datetime).transpose(),
             #[cfg(feature = "tds73")]
-            ColumnData::SmallDateTime(dt) => Ok(dt.map(|dt| {
-                PrimitiveDateTime::new(
-                    from_days(dt.days as i64, 1900),
-                    from_secs(dt.seconds_fragments as u64 * 60),
-                )
-            })),
+            ColumnData::SmallDateTime(dt) => dt.map(from_smalldatetime).transpose(),
             #[cfg(feature = "tds73")]
             ColumnData::DateTime2(dt) => Ok(dt.map(|dt| {
                 let ns = nanos_from_increments(dt.time.increments, dt.time.scale);
@@ -224,13 +219,6 @@ mod tests {
         assert_eq!(from_days(-10_000_000, 1), Date::MIN);
     }
 
-    #[cfg(feature = "tds73")]
-    #[test]
-    fn from_secs_converts() {
-        // 3600 s past midnight == 01:00:00 (pins the `+` in `from_secs`).
-        assert_eq!(from_secs(3600), Time::from_hms(1, 0, 0).unwrap());
-    }
-
     #[test]
     fn datetime_rounds_to_the_millisecond() {
         let get = |ticks| {
@@ -251,7 +239,7 @@ mod tests {
 
     #[test]
     fn out_of_range_times_are_conversion_errors() {
-        use crate::tds::time::DateTime;
+        use crate::tds::time::{DateTime, SmallDateTime};
         use crate::{FromSql, FromSqlOwned};
 
         let dt = ColumnData::DateTime(Some(DateTime::new(0, 300 * 86_400)));
@@ -260,6 +248,10 @@ mod tests {
             Err(crate::Error::Conversion(_))
         ));
         assert!(PrimitiveDateTime::from_sql_owned(dt).is_err());
+
+        // Used to wrap silently to 00:00.
+        let sdt = ColumnData::SmallDateTime(Some(SmallDateTime::new(0, 1440)));
+        assert!(PrimitiveDateTime::from_sql(&sdt).is_err());
     }
 
     #[cfg(not(feature = "tds73"))]
@@ -358,6 +350,7 @@ mod tests {
         let data = ColumnData::SmallDateTime(Some(sdt));
         let decoded = PrimitiveDateTime::from_sql(&data).unwrap().unwrap();
         assert_eq!(decoded.date(), from_days(1, 1900));
+        assert_eq!(decoded.time(), Time::from_hms(0, 30, 0).unwrap());
 
         // DateTime path.
         let dt = crate::tds::time::DateTime::new(1, 0);

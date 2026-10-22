@@ -1524,7 +1524,7 @@ mod tests {
     async fn smalldatetime_with_varlen_datetimen() {
         test_round_trip(
             TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Datetimen, 4, None)),
-            ColumnData::SmallDateTime(Some(SmallDateTime::new(200, 3000))),
+            ColumnData::SmallDateTime(Some(SmallDateTime::new(200, 1439))),
         )
         .await;
     }
@@ -1542,7 +1542,7 @@ mod tests {
     async fn smalldatetime_with_fixedlen_datetime4() {
         test_round_trip(
             TypeInfo::FixedLen(FixedLenType::Datetime4),
-            ColumnData::SmallDateTime(Some(SmallDateTime::new(200, 3000))),
+            ColumnData::SmallDateTime(Some(SmallDateTime::new(200, 1439))),
         )
         .await;
     }

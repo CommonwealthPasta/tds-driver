@@ -50,10 +50,10 @@ fn from_datetime(dt: super::DateTime) -> crate::Result<NaiveDateTime> {
     Ok(NaiveDateTime::new(from_days(dt.days() as i64, 1900), time))
 }
 
-#[inline]
 #[cfg(feature = "tds73")]
-fn from_mins(mins: u32) -> NaiveTime {
-    NaiveTime::from_num_seconds_from_midnight_opt(mins, 0).unwrap()
+fn from_smalldatetime(dt: super::SmallDateTime) -> crate::Result<NaiveDateTime> {
+    let time = from_millis(dt.minutes_of_day()? * 60_000)?;
+    Ok(NaiveDateTime::new(from_days(dt.days() as i64, 1900), time))
 }
 
 impl<'a> crate::FromSql<'a> for NaiveDateTime {
@@ -61,12 +61,7 @@ impl<'a> crate::FromSql<'a> for NaiveDateTime {
         match data {
             ColumnData::DateTime(dt) => dt.map(from_datetime).transpose(),
             #[cfg(feature = "tds73")]
-            ColumnData::SmallDateTime(dt) => Ok(dt.map(|dt| {
-                NaiveDateTime::new(
-                    from_days(dt.days as i64, 1900),
-                    from_mins(dt.seconds_fragments as u32 * 60),
-                )
-            })),
+            ColumnData::SmallDateTime(dt) => dt.map(from_smalldatetime).transpose(),
             #[cfg(feature = "tds73")]
             ColumnData::DateTime2(dt) => Ok(dt.map(|dt| {
                 let ns = nanos_from_increments(dt.time.increments, dt.time.scale);
@@ -307,7 +302,7 @@ mod tests {
 
     #[test]
     fn out_of_range_times_are_conversion_errors() {
-        use crate::tds::time::DateTime;
+        use crate::tds::time::{DateTime, SmallDateTime};
         use crate::FromSqlOwned;
 
         let dt = ColumnData::DateTime(Some(DateTime::new(0, 300 * 86_400)));
@@ -316,13 +311,28 @@ mod tests {
             Err(crate::Error::Conversion(_))
         ));
         assert!(NaiveDateTime::from_sql_owned(dt).is_err());
+
+        let sdt = ColumnData::SmallDateTime(Some(SmallDateTime::new(0, 1440)));
+        #[cfg(feature = "tds73")]
+        assert!(matches!(
+            NaiveDateTime::from_sql(&sdt),
+            Err(crate::Error::Conversion(_))
+        ));
+        #[cfg(not(feature = "tds73"))]
+        assert!(NaiveDateTime::from_sql(&sdt).is_err());
     }
 
     #[cfg(feature = "tds73")]
     #[test]
-    fn from_mins_converts() {
-        // `from_mins` takes seconds-from-midnight; 3600 s == 01:00:00.
-        assert_eq!(from_mins(3600), NaiveTime::from_hms_opt(1, 0, 0).unwrap());
+    fn smalldatetime_converts() {
+        let cd = ColumnData::SmallDateTime(Some(crate::tds::time::SmallDateTime::new(1, 1439)));
+        assert_eq!(
+            NaiveDateTime::from_sql(&cd).unwrap(),
+            Some(NaiveDateTime::new(
+                NaiveDate::from_ymd_opt(1900, 1, 2).unwrap(),
+                NaiveTime::from_hms_opt(23, 59, 0).unwrap()
+            ))
+        );
     }
 
     #[cfg(not(feature = "tds73"))]

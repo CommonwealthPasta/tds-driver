@@ -651,7 +651,7 @@ mod tests {
 
         round_trip(ColumnData::DateTime(Some(DateTime::new(200, 3000)))).await;
         round_trip(ColumnData::SmallDateTime(Some(SmallDateTime::new(
-            200, 3000,
+            200, 1439,
         ))))
         .await;
     }
