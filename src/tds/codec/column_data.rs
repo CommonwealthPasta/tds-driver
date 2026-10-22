@@ -1083,6 +1083,12 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     dst.put_u64_le(0xffffffffffffffff_u64);
                 }
             }
+            // As SqlBulkCopy takes a string for xml; the column is declared
+            // nvarchar(max), see `MetaDataColumn::encode`.
+            (ColumnData::String(opt), Some(TypeInfo::Xml { .. })) => match opt {
+                Some(s) => put_plp_utf16(dst, &s)?,
+                None => dst.put_u64_le(PLP_NULL),
+            },
             (ColumnData::Xml(Some(xml)), None) => {
                 dst.put_u8(VarLenType::Xml as u8);
                 dst.put_u8(0);
@@ -2937,6 +2943,15 @@ mod tests {
             .map(drop)
             .unwrap_err();
         assert!(matches!(err, Error::BulkInput(_)), "{err:?}");
+
+        let xml = TypeInfo::Xml {
+            schema: None,
+            size: 0xfffffffffffffffe_usize,
+        };
+        let err = encode_with_ti(&xml, ColumnData::String(Some(s.as_str().into())))
+            .map(drop)
+            .unwrap_err();
+        assert!(matches!(err, Error::Conversion(_)), "{err:?}");
 
         let err = ColumnData::Xml(Some(Cow::Owned(XmlData::new(s))))
             .encode_rpc_param(&mut BytesMut::new(), false)

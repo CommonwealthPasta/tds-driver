@@ -1122,6 +1122,37 @@ where
     Ok(())
 }
 
+/// As SqlBulkCopy takes a string for an xml column; it was an error.
+#[test_on_runtimes]
+async fn bulk_load_string_into_xml<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let xml = "<a b=\"\u{3b1}\">\u{1F600}</a>";
+    let nul = "ISNULL(CONVERT(nvarchar(200), v), 'NULL')";
+
+    assert_bulk(
+        &mut conn,
+        vec![
+            ("XML", xml.into_sql(), "v", xml),
+            ("XML NOT NULL", String::new().into_sql(), "v", ""),
+            ("XML", None::<String>.into_sql(), nul, "NULL"),
+        ],
+    )
+    .await?;
+
+    // The server parses it: malformed XML fails the insert (9400).
+    let err = bulk_one(&mut conn, "XML", "<a>".into_sql(), "v")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, tiberius::error::Error::Server(ref e) if e.code() == 9400),
+        "{err:?}"
+    );
+
+    Ok(())
+}
+
 #[cfg(all(feature = "tds73", feature = "chrono"))]
 #[test_on_runtimes]
 async fn bulk_load_datetime_from_datetime2<S>(mut conn: tiberius::Client<S>) -> Result<()>
