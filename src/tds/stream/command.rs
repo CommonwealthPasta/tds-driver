@@ -185,8 +185,8 @@ pub enum CommandItem {
     Row(Row),
     /// Metadata describing the upcoming rows.
     Metadata(ResultMetadata),
-    /// The return status from the server.
-    ReturnStatus(u32),
+    /// The procedure's `RETURN` value. Signed: `RETURN -1` is `-1`.
+    ReturnStatus(i32),
     /// A return value, matching an OUT parameter.
     ReturnValue(CommandReturnValue),
     /// The number of rows an INSERT, UPDATE, DELETE or other non-SELECT
@@ -238,7 +238,7 @@ impl CommandItem {
     }
 
     /// Returns the return status, if the item is of a correct variant.
-    pub fn as_return_status(&self) -> Option<u32> {
+    pub fn as_return_status(&self) -> Option<i32> {
         match self {
             CommandItem::ReturnStatus(rs) => Some(*rs),
             _ => None,
@@ -410,10 +410,12 @@ mod tests {
             // `SELECT @v = ..` inside the procedure
             ReceivedToken::DoneInProc(count(SELECT, 1)),
             ReceivedToken::DoneInProc(count(UPDATE, 0)),
+            ReceivedToken::ReturnStatus(-1),
             ReceivedToken::DoneProc(TokenDone::new(BitFlags::empty(), 0xE0, 0)),
         ])
         .await;
         assert_eq!(res.rows_affected(), [2, 0]);
+        assert_eq!(res.return_code(), -1);
         assert_eq!(set_sizes(&res), [1]);
     }
 }

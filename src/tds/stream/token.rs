@@ -25,7 +25,7 @@ pub enum ReceivedToken {
     Done(TokenDone),
     DoneInProc(TokenDone),
     DoneProc(TokenDone),
-    ReturnStatus(u32),
+    ReturnStatus(i32),
     ReturnValue(TokenReturnValue),
     Order(TokenOrder),
     ColInfo(TokenColInfo),
@@ -208,7 +208,8 @@ where
     }
 
     async fn get_return_status(&mut self) -> crate::Result<ReceivedToken> {
-        let status = self.conn.read_u32_le().await?;
+        // MS-TDS 2.2.7.18: a LONG, signed (`RETURN -1`).
+        let status = self.conn.read_i32_le().await?;
         Ok(ReceivedToken::ReturnStatus(status))
     }
 

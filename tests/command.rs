@@ -260,6 +260,27 @@ where
 }
 
 #[test_on_runtimes]
+async fn command_negative_return_status<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let proc = format!("#{}", random_table().await);
+    conn.simple_query(format!("CREATE PROCEDURE {} AS RETURN -1", proc))
+        .await?
+        .into_results()
+        .await?;
+
+    let res = Command::new(&proc)
+        .exec(&mut conn)
+        .await?
+        .into_command_result()
+        .await?;
+    assert_eq!(-1, res.return_code());
+
+    Ok(())
+}
+
+#[test_on_runtimes]
 async fn command_rows_affected_skips_selects<S>(mut conn: tiberius::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,

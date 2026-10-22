@@ -155,7 +155,7 @@ impl IntoIterator for ExecuteResult {
 #[derive(Debug)]
 pub struct CommandResult {
     pub(crate) rows_affected: Vec<u64>,
-    pub(crate) return_code: u32,
+    pub(crate) return_code: i32,
     pub(crate) return_values: Vec<CommandReturnValue>,
     pub(crate) query_results: Vec<Vec<Row>>,
 }
@@ -167,8 +167,9 @@ impl<'a> CommandResult {
         self.rows_affected.as_slice()
     }
 
-    /// The return code of the command, as returned by the server.
-    pub fn return_code(&self) -> u32 {
+    /// The procedure's `RETURN` value; 0 if it returned none. Signed:
+    /// `RETURN -1` gives `-1`.
+    pub fn return_code(&self) -> i32 {
         self.return_code
     }
 

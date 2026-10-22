@@ -76,6 +76,13 @@ that land will be documented here.
   matches SqlClient's `BeginTransaction()`. The `IsolationLevel` docs now say
   that a level outlives its transaction.
 
+### Breaking
+
+- **RETURN status is `i32`**: `CommandItem::ReturnStatus(i32)`,
+  `CommandItem::as_return_status() -> Option<i32>`,
+  `CommandResult::return_code() -> i32`. `RETURN -1` used to come back as
+  4294967295.
+
 ## [0.13.1] - 2026-08-30
 
 A follow-up "polish" patch on top of the 0.13.0 release.
