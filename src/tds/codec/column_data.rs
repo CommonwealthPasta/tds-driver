@@ -639,6 +639,14 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     dst.put_u8(0);
                 }
             }
+            (
+                ColumnData::F64(Some(val)),
+                Some(TypeInfo::FixedLen(ty @ (FixedLenType::Money | FixedLenType::Money4))),
+            ) => put_fixed_money(dst, *ty, val)?,
+            (
+                ColumnData::Numeric(Some(num)),
+                Some(TypeInfo::FixedLen(ty @ (FixedLenType::Money | FixedLenType::Money4))),
+            ) => put_fixed_money(dst, *ty, f64::from(num))?,
             (ColumnData::Guid(opt), Some(TypeInfo::VarLenSized(vlc)))
                 if vlc.r#type() == VarLenType::Guid =>
             {
@@ -1078,6 +1086,22 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
 
         Ok(())
     }
+}
+
+/// NOT NULL money is Moneyn without its length byte.
+fn put_fixed_money(
+    dst: &mut BytesMutWithTypeInfo<'_>,
+    ty: FixedLenType,
+    val: f64,
+) -> crate::Result<()> {
+    let mut moneyn = BytesMut::new();
+    money::encode(
+        &mut moneyn,
+        if ty == FixedLenType::Money4 { 4 } else { 8 },
+        val,
+    )?;
+    dst.extend_from_slice(&moneyn[1..]);
+    Ok(())
 }
 
 /// The text pointer and timestamp SqlBulkCopy sends ahead of a text, ntext
@@ -2447,6 +2471,20 @@ mod tests {
         let ti = TypeInfo::FixedLen(FixedLenType::Int4);
         let err = encode_with_ti(&ti, ColumnData::I32(None)).unwrap_err();
         assert!(matches!(err, Error::BulkInput(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn bulk_not_null_money() {
+        let money = TypeInfo::FixedLen(FixedLenType::Money);
+        let money4 = TypeInfo::FixedLen(FixedLenType::Money4);
+        let exact = |v| ColumnData::Numeric(Some(Numeric::new_with_scale(v, 4)));
+
+        let buf = encode_with_ti(&money, ColumnData::F64(Some(-1234.5))).unwrap();
+        assert_eq!(decode_with(&money, buf).await, exact(-12_345_000));
+        let buf = encode_with_ti(&money4, ColumnData::F64(Some(1.25))).unwrap();
+        assert_eq!(decode_with(&money4, buf).await, exact(12_500));
+
+        assert!(encode_with_ti(&money4, ColumnData::F64(Some(300_000.0))).is_err());
     }
 
     /// `hh:mm:ss` plus 10^-7 s increments on 2024-05-06.

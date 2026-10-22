@@ -161,6 +161,9 @@ that land will be documented here.
   unsupported).
 - **`sql_variant` strings in bulk/TVP** carry the database collation (error
   8001).
+- **Bulk/TVP into `NOT NULL` `money`, `smallmoney`, `datetime` and
+  `smalldatetime` columns**, and `datetime2` values into `smalldatetime`
+  columns, which were written as `datetime`.
 - **`INSERT BULK` column names are quoted with `]` doubled** (a column named
   `we]ird` broke the statement).
 - **Bulk/TVP `datetime2` into `datetime` rounds to 1/300 s** as `CAST` does,

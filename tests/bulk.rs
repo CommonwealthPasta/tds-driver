@@ -854,6 +854,39 @@ where
 }
 
 #[test_on_runtimes]
+async fn bulk_load_not_null_money<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use tiberius::numeric::Numeric;
+
+    assert_bulk(
+        &mut conn,
+        vec![
+            (
+                "MONEY NOT NULL",
+                1.5f64.into_sql(),
+                "CONVERT(varchar(30), v, 2)",
+                "1.5000",
+            ),
+            (
+                "MONEY NOT NULL",
+                Numeric::new_with_scale(-15, 1).into_sql(),
+                "CONVERT(varchar(30), v, 2)",
+                "-1.5000",
+            ),
+            (
+                "SMALLMONEY NOT NULL",
+                (-1.25f64).into_sql(),
+                "CONVERT(varchar(30), v, 2)",
+                "-1.2500",
+            ),
+        ],
+    )
+    .await
+}
+
+#[test_on_runtimes]
 async fn bulk_load_escapes_column_names<S>(mut conn: tiberius::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
