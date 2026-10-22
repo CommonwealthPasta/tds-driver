@@ -148,11 +148,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         let transport = match config.encryption {
             EncryptionLevel::Strict => {
                 event!(Level::DEBUG, "Performing a TLS handshake (TDS 8.0 strict)");
-                let mut pre_login_stream = TlsPreloginWrapper::new(tcp_stream);
-                // No prelogin framing is used for the strict handshake; pass the
-                // raw TLS bytes straight through.
-                pre_login_stream.handshake_complete();
-                let stream = create_tls_stream(&config, pre_login_stream).await?;
+                let pre_login_stream = TlsPreloginWrapper::unframed(tcp_stream);
+                let mut stream = create_tls_stream(&config, pre_login_stream).await?;
+                stream.get_mut().handshake_complete();
                 event!(Level::DEBUG, "TLS handshake successful");
                 Framed::new(MaybeTlsStream::Tls(stream, 0), PacketCodec)
             }

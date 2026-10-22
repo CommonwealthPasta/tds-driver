@@ -161,6 +161,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for MaybeTlsStream<S> 
 pub(crate) struct TlsPreloginWrapper<S> {
     stream: Option<S>,
     pending_handshake: bool,
+    /// The handshake travels in PRELOGIN packets (TDS 7.x, not strict).
+    framed: bool,
 
     header_buf: [u8; HEADER_BYTES],
     header_pos: usize,
@@ -193,6 +195,7 @@ impl<S> TlsPreloginWrapper<S> {
         TlsPreloginWrapper {
             stream: Some(stream),
             pending_handshake: true,
+            framed: true,
 
             header_buf: [0u8; HEADER_BYTES],
             header_pos: 0,
@@ -204,8 +207,20 @@ impl<S> TlsPreloginWrapper<S> {
         }
     }
 
+    /// For TDS 8.0 strict, whose handshake is raw TLS.
+    pub fn unframed(stream: S) -> Self {
+        Self {
+            framed: false,
+            ..Self::new(stream)
+        }
+    }
+
     pub fn handshake_complete(&mut self) {
         self.pending_handshake = false;
+    }
+
+    fn framing(&self) -> bool {
+        self.pending_handshake && self.framed
     }
 
     /// Writes the framed packets still queued from a flush that would have
@@ -274,7 +289,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncRead for TlsPreloginWrapper<
 
         // Normal operation does not need any extra treatment, we handle packets
         // in the codec.
-        if !inner.pending_handshake {
+        if !inner.framing() {
             return Pin::new(inner.stream.as_mut().unwrap()).poll_read(cx, buf);
         }
 
@@ -350,7 +365,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for TlsPreloginWrapper
     ) -> Poll<io::Result<usize>> {
         // Normal operation does not need any extra treatment, we handle
         // packets in the codec.
-        if !self.pending_handshake {
+        if !self.framing() {
             let inner = self.get_mut();
             ready!(inner.poll_drain(cx))?;
             return Pin::new(inner.stream.as_mut().unwrap()).poll_write(cx, buf);
