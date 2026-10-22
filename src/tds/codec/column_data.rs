@@ -412,19 +412,8 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     || vlc.r#type() == VarLenType::BigVarChar =>
             {
                 if let Some(str) = opt {
-                    let mut encoder = vlc.collation().as_ref().unwrap().encoding()?.new_encoder();
-                    let len = encoder
-                        .max_buffer_length_from_utf8_without_replacement(str.len())
-                        .unwrap();
-                    let mut bytes = Vec::with_capacity(len);
-                    let (res, _) = encoder.encode_from_utf8_to_vec_without_replacement(
-                        str.as_ref(),
-                        &mut bytes,
-                        true,
-                    );
-                    if let encoding_rs::EncoderResult::Unmappable(_) = res {
-                        return Err(crate::Error::Encoding("unrepresentable character".into()));
-                    }
+                    let bytes =
+                        string::encode_varchar(str.as_ref(), vlc.collation().as_ref().unwrap())?;
 
                     if bytes.len() > vlc.len() {
                         return Err(crate::Error::BulkInput(
@@ -549,20 +538,10 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
 
                     if vlc.r#type() == VarLenType::Text {
                         // single-byte character data, encoded with the column collation
-                        let mut encoder =
-                            vlc.collation().as_ref().unwrap().encoding()?.new_encoder();
-                        let len = encoder
-                            .max_buffer_length_from_utf8_without_replacement(str.len())
-                            .unwrap();
-                        let mut bytes = Vec::with_capacity(len);
-                        let (res, _) = encoder.encode_from_utf8_to_vec_without_replacement(
+                        let bytes = string::encode_varchar(
                             str.as_ref(),
-                            &mut bytes,
-                            true,
-                        );
-                        if let encoding_rs::EncoderResult::Unmappable(_) = res {
-                            return Err(crate::Error::Encoding("unrepresentable character".into()));
-                        }
+                            vlc.collation().as_ref().unwrap(),
+                        )?;
 
                         dst.put_u32_le(bytes.len() as u32);
                         dst.extend_from_slice(bytes.as_slice());

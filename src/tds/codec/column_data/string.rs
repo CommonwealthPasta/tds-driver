@@ -50,6 +50,22 @@ pub(crate) fn decode_varchar(buf: Vec<u8>, collation: &Collation) -> crate::Resu
     }
 }
 
+/// Encodes `s` in the collation's code page; a character it lacks is an error.
+pub(crate) fn encode_varchar(s: &str, collation: &Collation) -> crate::Result<Vec<u8>> {
+    let mut encoder = collation.encoding()?.new_encoder();
+    let len = encoder
+        .max_buffer_length_from_utf8_without_replacement(s.len())
+        .ok_or_else(|| Error::Encoding("string too long to encode".into()))?;
+    let mut bytes = Vec::with_capacity(len);
+    let (res, _) = encoder.encode_from_utf8_to_vec_without_replacement(s, &mut bytes, true);
+    match res {
+        encoding_rs::EncoderResult::Unmappable(_) => {
+            Err(Error::Encoding("unrepresentable character".into()))
+        }
+        _ => Ok(bytes),
+    }
+}
+
 /// Decodes UTF-16LE bytes (even length) into a `String` allocated at its exact
 /// UTF-8 size. ASCII-only input is copied byte by byte without decoding.
 ///
