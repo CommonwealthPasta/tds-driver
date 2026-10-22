@@ -124,3 +124,68 @@ where
         Ok(())
     }
 }
+
+/// Asks for the collation names of the columns `SELECT TOP 0 {columns} FROM
+/// {table}` returns, in order (SQL Server 2012 and later).
+pub(crate) fn collation_names_query(select: &str) -> String {
+    format!(
+        "SELECT collation_name FROM sys.dm_exec_describe_first_result_set(N'{}', NULL, 0) ORDER BY column_ordinal",
+        select.replace('\'', "''")
+    )
+}
+
+/// One INSERT BULK column definition. As in SqlBulkCopy, it names the
+/// column's collation: without one the server reads non-Unicode bytes in the
+/// database default code page.
+pub(crate) fn insert_bulk_column(column: &MetaDataColumn<'_>, collation: Option<&str>) -> String {
+    match collation {
+        Some(collation) => format!("{column} COLLATE {collation}"),
+        None => column.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tds::codec::{BaseMetaDataColumn, ColumnFlag, FixedLenType, TypeInfo};
+    use crate::tds::Collation;
+    use crate::{VarLenContext, VarLenType};
+    use std::borrow::Cow;
+
+    fn column(name: &'static str, ty: TypeInfo) -> MetaDataColumn<'static> {
+        MetaDataColumn {
+            base: BaseMetaDataColumn {
+                flags: ColumnFlag::Nullable.into(),
+                ty,
+            },
+            col_name: Cow::Borrowed(name),
+        }
+    }
+
+    #[test]
+    fn insert_bulk_column_names_the_collation() {
+        let a = column(
+            "a",
+            TypeInfo::VarLenSized(VarLenContext::new(
+                VarLenType::BigVarChar,
+                10,
+                Some(Collation::new(0x00d0_0408, 0)),
+            )),
+        );
+        let b = column("b]", TypeInfo::FixedLen(FixedLenType::Int4));
+
+        assert_eq!(
+            insert_bulk_column(&a, Some("Greek_CI_AS")),
+            "[a] varchar(10) COLLATE Greek_CI_AS"
+        );
+        assert_eq!(insert_bulk_column(&b, None), "[b]]] int");
+    }
+
+    #[test]
+    fn collation_names_query_quotes_the_select() {
+        assert_eq!(
+            collation_names_query("SELECT TOP 0 * FROM [o'brien]"),
+            "SELECT collation_name FROM sys.dm_exec_describe_first_result_set(N'SELECT TOP 0 * FROM [o''brien]', NULL, 0) ORDER BY column_ordinal"
+        );
+    }
+}

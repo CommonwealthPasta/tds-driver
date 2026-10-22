@@ -180,6 +180,13 @@ impl BaseMetaDataColumn {
         self.flags.contains(ColumnFlag::Updateable)
     }
 
+    /// char, varchar or text: the server reads their bytes in the code page
+    /// of the collation INSERT BULK declares.
+    pub(crate) fn is_non_unicode_text(&self) -> bool {
+        matches!(&self.ty, TypeInfo::VarLenSized(cx)
+            if matches!(cx.r#type(), VarLenType::BigChar | VarLenType::BigVarChar | VarLenType::Text))
+    }
+
     pub(crate) fn null_value(&self) -> ColumnData<'static> {
         match &self.ty {
             TypeInfo::FixedLen(ty) => match ty {

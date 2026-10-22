@@ -381,19 +381,55 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
         table: &'a str,
         columns: &'a [&'a str],
     ) -> crate::Result<BulkLoadRequest<'a, S>> {
-        // Retrieve column metadata from the server, keeping only the updateable
-        // columns as bulk targets (identity/computed columns are skipped).
-        let columns: Vec<_> = self
-            .column_metadata(table, columns)
-            .await?
-            .into_iter()
-            .filter(|column| column.base.flags.contains(ColumnFlag::Updateable))
-            .collect();
+        let metadata = self.column_metadata(table, columns).await?;
         self.bulk_not_cancelled().await?;
+
+        // INSERT BULK has to name the collation of char/varchar/text columns.
+        let mut collations = Vec::new();
+        if metadata.iter().any(|c| c.base.is_non_unicode_text()) {
+            let select = format!("SELECT TOP 0 {} FROM {}", columns.join(", "), table);
+            let names = async {
+                let rows = self
+                    .simple_query(codec::collation_names_query(&select))
+                    .await?
+                    .into_first_result()
+                    .await?;
+                Ok::<_, crate::Error>(
+                    rows.iter()
+                        .map(|r| r.get::<&str, _>(0).map(str::to_owned))
+                        .collect(),
+                )
+            };
+            collations = match names.await {
+                Ok(names) => names,
+                // No sys.dm_exec_describe_first_result_set before SQL Server
+                // 2012: the server reads in the database default, as before.
+                Err(crate::Error::Server(_)) => Vec::new(),
+                Err(e) => return Err(e),
+            };
+            self.bulk_not_cancelled().await?;
+        }
+
+        // Only updateable columns are bulk targets (identity/computed columns
+        // are skipped).
+        let mut collations = collations.into_iter();
+        let (columns, collations): (Vec<_>, Vec<_>) = metadata
+            .into_iter()
+            .map(|column| {
+                let collation = collations.next().flatten();
+                let collation = collation.filter(|_| column.base.is_non_unicode_text());
+                (column, collation)
+            })
+            .filter(|(column, _)| column.base.flags.contains(ColumnFlag::Updateable))
+            .unzip();
 
         // now start bulk upload
         self.connection.flush_stream().await?;
-        let col_data = columns.iter().map(|c| format!("{}", c)).join(", ");
+        let col_data = columns
+            .iter()
+            .zip(&collations)
+            .map(|(c, collation)| codec::insert_bulk_column(c, collation.as_deref()))
+            .join(", ");
         let query = format!("INSERT BULK {} ({})", table, col_data);
 
         let req = BatchRequest::new(query, self.connection.context().transaction_descriptor());

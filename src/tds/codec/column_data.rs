@@ -2494,4 +2494,16 @@ mod tests {
         let buf = encode_with_ti(&ti, ColumnData::Binary(None)).unwrap();
         assert_eq!(&buf[..], &[0]);
     }
+
+    #[test]
+    fn bulk_varchar_uses_the_column_code_page() {
+        // Greek_CI_AS: windows-1253.
+        let ti = TypeInfo::VarLenSized(VarLenContext::new(
+            VarLenType::BigVarChar,
+            10,
+            Some(Collation::new(0x00d0_0408, 0)),
+        ));
+        let buf = encode_with_ti(&ti, ColumnData::String(Some("\u{3b1}\u{3b2}".into()))).unwrap();
+        assert_eq!(&buf[..], &[2, 0, 0xe1, 0xe2]);
+    }
 }

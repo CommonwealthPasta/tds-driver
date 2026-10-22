@@ -588,6 +588,73 @@ where
 }
 
 #[test_on_runtimes]
+async fn bulk_load_encodes_varchar_in_the_column_collation<S>(
+    mut conn: tiberius::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    // A local temp table: the collation lookup has to find it too.
+    let table = format!("#{}", random_table().await);
+    conn.simple_query(format!(
+        "CREATE TABLE {table} (g VARCHAR(10) COLLATE Greek_CI_AS, j CHAR(4) COLLATE Japanese_CI_AS, \
+         t TEXT COLLATE Japanese_CI_AS, n NVARCHAR(10) COLLATE Greek_CI_AS, d VARCHAR(10))"
+    ))
+    .await?
+    .into_results()
+    .await?;
+
+    let mut req = conn.bulk_insert(&table).await?;
+    let mut row = TokenRow::new();
+    for s in [
+        "\u{3b1}\u{3b2}",
+        "\u{65e5}\u{672c}",
+        "\u{65e5}\u{672c}",
+        "\u{3c9}",
+        "\u{e9}",
+    ] {
+        row.push(s.into_sql());
+    }
+    req.send(row).await?;
+
+    let mut unencodable = TokenRow::new();
+    for s in ["\u{65e5}", "", "", "", ""] {
+        unencodable.push(s.into_sql());
+    }
+    let err = req.send(unencodable).await.unwrap_err();
+    assert!(
+        matches!(err, tiberius::error::Error::Encoding(_)),
+        "{err:?}"
+    );
+
+    assert_eq!(1, within(req.finalize()).await?.total());
+
+    let row = conn
+        .simple_query(format!(
+            "SELECT CAST(g AS nvarchar(10)), CAST(j AS nvarchar(10)), \
+             CAST(CAST(t AS varchar(10)) AS nvarchar(10)), n, CAST(d AS nvarchar(10)) FROM {table}"
+        ))
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+
+    let got: Vec<_> = (0..5).map(|i| row.get::<&str, _>(i).unwrap()).collect();
+    assert_eq!(
+        got,
+        [
+            "\u{3b1}\u{3b2}",
+            "\u{65e5}\u{672c}",
+            "\u{65e5}\u{672c}",
+            "\u{3c9}",
+            "\u{e9}"
+        ]
+    );
+
+    Ok(())
+}
+
+#[test_on_runtimes]
 async fn bulk_load_max_values_over_64k<S>(mut conn: tiberius::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
