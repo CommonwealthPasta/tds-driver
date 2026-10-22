@@ -11,9 +11,31 @@ impl FromStr for AdoNetConfig {
     type Err = crate::error::Error;
 
     fn from_str(s: &str) -> crate::Result<Self> {
-        let dict = parse(s, |key| Ok(key.to_lowercase()))?;
+        let dict = parse(s, |key| match keyword(&key.to_lowercase()) {
+            Some(keyword) => Ok(keyword.to_owned()),
+            None => Ok(key.to_lowercase()),
+        })?;
         Ok(Self { dict })
     }
+}
+
+/// The keyword `key` (lowercase) is stored under, for keys with synonyms:
+/// SqlClient's (SqlConnectionOptions' keyword map, DbConnectionStringKeywords,
+/// DbConnectionStringSynonyms) and the crate's older spellings. Keys are
+/// stored by keyword, so the last of a set of synonyms wins.
+fn keyword(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "application name" | "applicationname" => "application name",
+        "connect timeout" | "connection timeout" | "timeout" => "connect timeout",
+        "data source" | "server" => "data source",
+        "hostnameincertificate" | "hostname in certificate" => "hostnameincertificate",
+        "initial catalog" | "database" | "databasename" => "initial catalog",
+        "integrated security" | "integratedsecurity" => "integrated security",
+        "password" | "pwd" => "password",
+        "user id" | "uid" | "user" | "username" => "user id",
+        "workstation id" | "workstationid" => "workstation id",
+        _ => return None,
+    })
 }
 
 /// Splits an ADO.NET connection string into its pairs, each stored under
@@ -200,7 +222,7 @@ impl ConfigString for AdoNetConfig {
     /// `Connect Timeout` and its synonyms: seconds, 0 for none, 15 by default
     /// (SqlClient).
     fn connect_timeout(&self) -> crate::Result<Option<Duration>> {
-        match self.first(&["connect timeout", "connection timeout", "timeout"]) {
+        match self.get("connect timeout") {
             None => Ok(Some(super::DEFAULT_CONNECT_TIMEOUT)),
             Some(v) => match v.trim().parse::<i32>() {
                 Ok(0) => Ok(None),
@@ -217,7 +239,7 @@ impl ConfigString for AdoNetConfig {
     /// SniProxy.netcore.cs): an optional protocol prefix, case-insensitive,
     /// then `host[\instance][,port]`, every part trimmed.
     fn server(&self) -> crate::Result<ServerDefinition> {
-        let Some(value) = self.first(&["server", "data source"]) else {
+        let Some(value) = self.get("data source") else {
             return Ok(ServerDefinition {
                 host: None,
                 port: None,
@@ -816,9 +838,14 @@ mod tests {
         Ok(())
     }
 
+    /// The value `key` gets from the key/value grammar alone.
     fn value(s: &str, key: &str) -> Option<String> {
-        let ado: AdoNetConfig = s.parse().unwrap();
-        ado.get(key).map(str::to_owned)
+        let pairs = raw(s).unwrap();
+        pairs.get(key).map(|v| v.as_str().to_owned())
+    }
+
+    fn raw(s: &str) -> crate::Result<HashMap<String, Zeroizing<String>>> {
+        parse(s, |key| Ok(key.to_lowercase()))
     }
 
     #[test]
@@ -862,7 +889,7 @@ mod tests {
             "pass\u{1}word=x",     // control character in a key
             "server=x;\u{7}pwd=y", // control character before a key
         ] {
-            assert!(s.parse::<AdoNetConfig>().is_err(), "{s:?} parsed");
+            assert!(raw(s).is_err(), "{s:?} parsed");
         }
     }
 
@@ -926,6 +953,31 @@ mod tests {
         assert!(t("Connect Timeout=soon").is_err());
         assert!(t("Connect Timeout=2147483648").is_err());
         Ok(())
+    }
+
+    fn config(s: &str) -> crate::Config {
+        crate::Config::from_ado_string(s).unwrap_or_else(|e| panic!("{s:?}: {e}"))
+    }
+
+    #[test]
+    fn last_of_synonyms_wins() {
+        assert_eq!(config("Server=a;Data Source=b").get_host(), "b");
+        assert_eq!(
+            config("uid=a;User ID=b;pwd=x;Password=y").auth,
+            AuthMethod::sql_server("b", "y")
+        );
+        assert_eq!(
+            config("User=a;uid=b;Password=x;pwd=y").auth,
+            AuthMethod::sql_server("b", "y")
+        );
+        assert_eq!(
+            config("Initial Catalog=a;Database=b").database.as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            config("Timeout=1;Connect Timeout=2").connect_timeout(),
+            Some(Duration::from_secs(2))
+        );
     }
 
     #[test]
