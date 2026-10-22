@@ -6,7 +6,7 @@ use std::env;
 use std::sync::Once;
 
 use runtimes_macro::test_on_runtimes;
-use tiberius::{numeric::Numeric, Result, Row};
+use tiberius::{numeric::Numeric, ColumnData, ColumnType, Result, Row};
 
 // This is used in the testing macro :)
 #[allow(dead_code)]
@@ -112,6 +112,47 @@ where
             .to_string(),
         "-922337203685477.5808"
     );
+
+    Ok(())
+}
+
+/// A wide all-NULL row makes the server send NBCROW; a one-column SELECT gets ROW.
+#[test_on_runtimes]
+async fn nullable_money_and_smalldatetime<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let pad: Vec<String> = (0..20).map(|i| format!("p{i} int NULL")).collect();
+    conn.simple_query(format!(
+        "CREATE TABLE #n (sm smallmoney NULL, m money NULL, sdt smalldatetime NULL, \
+         dt datetime NULL, {}); INSERT #n DEFAULT VALUES",
+        pad.join(", ")
+    ))
+    .await?
+    .into_results()
+    .await?;
+
+    let expected = [
+        ("sm", ColumnType::Money4, ColumnData::Numeric(None)),
+        ("m", ColumnType::Money, ColumnData::Numeric(None)),
+        (
+            "sdt",
+            ColumnType::Datetime4,
+            ColumnData::SmallDateTime(None),
+        ),
+        ("dt", ColumnType::Datetimen, ColumnData::DateTime(None)),
+    ];
+
+    let wide = rows(&mut conn, "SELECT * FROM #n").await?;
+    for (i, (name, ty, null)) in expected.iter().enumerate() {
+        assert_eq!(wide[0].columns()[i].column_type(), *ty, "{name}");
+        assert_eq!(wide[0].get_column_data(i)?, null, "{name} (NBCROW)");
+
+        let narrow = rows(&mut conn, &format!("SELECT {name} FROM #n")).await?;
+        assert_eq!(narrow[0].get_column_data(0)?, null, "{name} (ROW)");
+    }
+
+    assert_eq!(wide[0].get::<f64, _>(0), None);
 
     Ok(())
 }

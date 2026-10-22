@@ -83,6 +83,8 @@ that land will be documented here.
   parameter.
 - **`datetime` is rounded to the millisecond, not truncated** (`.997` was read
   as `.996666…`), for both chrono and time, as SqlClient does.
+- **A NULL `smalldatetime` decodes as `SmallDateTime(None)` in NBCROW rows too**
+  (was `DateTime(None)`).
 
 ### Changed
 

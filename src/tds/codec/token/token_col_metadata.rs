@@ -209,7 +209,11 @@ impl BaseMetaDataColumn {
                     _ => ColumnData::F64(None),
                 },
                 VarLenType::Money => ColumnData::Numeric(None),
-                VarLenType::Datetimen => ColumnData::DateTime(None),
+                // Must match `datetimen::decode` (ROW) for NBCROW nulls.
+                VarLenType::Datetimen => match cx.len() {
+                    4 => ColumnData::SmallDateTime(None),
+                    _ => ColumnData::DateTime(None),
+                },
                 #[cfg(feature = "tds73")]
                 VarLenType::Daten => ColumnData::Date(None),
                 #[cfg(feature = "tds73")]
@@ -963,6 +967,7 @@ mod tests {
         assert_eq!(vsize_null(Numericn, 17), ColumnData::Numeric(None));
         assert_eq!(vsize_null(Money, 4), ColumnData::Numeric(None));
         assert_eq!(vsize_null(Money, 8), ColumnData::Numeric(None));
+        assert_eq!(vsize_null(Datetimen, 4), ColumnData::SmallDateTime(None));
         assert_eq!(vsize_null(Datetimen, 8), ColumnData::DateTime(None));
         assert_eq!(vsize_null(BigVarBin, 100), ColumnData::Binary(None));
         assert_eq!(vsize_null(BigVarChar, 100), ColumnData::String(None));
