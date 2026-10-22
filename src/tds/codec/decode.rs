@@ -24,7 +24,7 @@ impl Decoder for PacketCodec {
         let length = header.length() as usize;
 
         if src.len() < length {
-            src.reserve(length);
+            src.reserve(length - src.len());
             return Ok(None);
         }
 
