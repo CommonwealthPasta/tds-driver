@@ -9,7 +9,7 @@ use std::{
 };
 use tiberius::{Client, Config, EncryptionLevel, Result};
 use tokio::net::TcpStream;
-use tokio_util::compat::TokioAsyncWriteCompatExt;
+use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 static CONN_STR: Lazy<String> = Lazy::new(|| {
     env::var("TIBERIUS_TEST_CONNECTION_STRING").unwrap_or_else(|_| {
@@ -19,6 +19,12 @@ static CONN_STR: Lazy<String> = Lazy::new(|| {
 
 fn config() -> Config {
     Config::from_ado_string(&CONN_STR).unwrap()
+}
+
+async fn connect(config: Config) -> Result<Client<Compat<TcpStream>>> {
+    let tcp = TcpStream::connect(config.get_addr()).await?;
+    tcp.set_nodelay(true)?;
+    Client::connect(config, tcp.compat_write()).await
 }
 
 async fn encrypt_option<S: AsyncRead + AsyncWrite + Unpin + Send>(
@@ -34,6 +40,17 @@ async fn encrypt_option<S: AsyncRead + AsyncWrite + Unpin + Send>(
         .await?
         .unwrap();
     Ok(row.get::<&str, _>(0).unwrap().to_owned())
+}
+
+/// An explicit port wins over the instance name.
+#[tokio::test]
+async fn instance_name_with_explicit_port() -> Result<()> {
+    let mut config = config();
+    config.instance_name("NOSUCHINSTANCE");
+    assert!(config.get_addr().ends_with(":1433"));
+    let mut client = connect(config).await?;
+    client.simple_query("SELECT 1").await?.into_row().await?;
+    Ok(())
 }
 
 /// Accepts at most `max` bytes per read or write, and returns `Pending` on

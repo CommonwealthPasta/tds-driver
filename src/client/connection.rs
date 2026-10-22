@@ -174,12 +174,16 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
 
         let fed_auth_required = matches!(config.auth, AuthMethod::AADToken(_));
 
+        // An explicit port wins and the instance name is ignored, as the
+        // mssql-jdbc connection URL documents: `host\INST,port` connects to
+        // `port` whatever runs there.
+        let instance_name = config
+            .instance_name
+            .clone()
+            .filter(|_| config.port.is_none());
+
         let prelogin = connection
-            .prelogin(
-                config.encryption,
-                fed_auth_required,
-                config.instance_name.clone(),
-            )
+            .prelogin(config.encryption, fed_auth_required, instance_name)
             .await?;
 
         let encryption = prelogin.negotiated_encryption(config.encryption)?;
