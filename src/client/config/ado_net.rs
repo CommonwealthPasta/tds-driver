@@ -11,11 +11,13 @@ impl FromStr for AdoNetConfig {
     type Err = crate::error::Error;
 
     fn from_str(s: &str) -> crate::Result<Self> {
-        Ok(Self { dict: parse(s)? })
+        let dict = parse(s, |key| Ok(key.to_lowercase()))?;
+        Ok(Self { dict })
     }
 }
 
-/// Splits an ADO.NET connection string into its pairs, keys lowercased.
+/// Splits an ADO.NET connection string into its pairs, each stored under
+/// `keyword(key)`. An error from `keyword` is returned as it is.
 ///
 /// - Pairs are `key=value`, separated by `;`. Whitespace and `;` before a key
 ///   are skipped.
@@ -33,7 +35,10 @@ impl FromStr for AdoNetConfig {
 /// A syntax error gives the byte index where the offending pair, or the
 /// offending character, starts. Each value is copied once, into a
 /// [`Zeroizing`] buffer that never grows.
-fn parse(input: &str) -> crate::Result<HashMap<String, Zeroizing<String>>> {
+fn parse(
+    input: &str,
+    keyword: impl Fn(&str) -> crate::Result<String>,
+) -> crate::Result<HashMap<String, Zeroizing<String>>> {
     // What follows a NUL is padding, not pairs.
     let (text, padding) = input.split_at(input.find('\0').unwrap_or(input.len()));
     let mut pairs = HashMap::new();
@@ -48,7 +53,7 @@ fn parse(input: &str) -> crate::Result<HashMap<String, Zeroizing<String>>> {
             Some(quote) => Some(cursor.quoted(quote).ok_or_else(malformed)?),
             None => cursor.unquoted().ok_or_else(malformed)?,
         };
-        let key = key.to_lowercase();
+        let key = keyword(&key)?;
         // An unquoted value has already stopped at a `;`, the end or a stray
         // control character, which the next round rejects at its own index.
         if quote.is_some() && !cursor.at_pair_end() {
