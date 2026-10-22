@@ -1,5 +1,5 @@
 use super::{ConfigString, ServerDefinition};
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, str::FromStr, time::Duration};
 
 /// An ADO.NET connection string, split with SqlClient's rules.
 pub(crate) struct AdoNetConfig {
@@ -188,6 +188,22 @@ impl<'a> Cursor<'a> {
 impl ConfigString for AdoNetConfig {
     fn get(&self, key: &str) -> Option<&str> {
         self.dict.get(key).map(|v| v.as_str())
+    }
+
+    /// `Connect Timeout` and its synonyms: seconds, 0 for none, 15 by default
+    /// (SqlClient).
+    fn connect_timeout(&self) -> crate::Result<Option<Duration>> {
+        match self.first(&["connect timeout", "connection timeout", "timeout"]) {
+            None => Ok(Some(super::DEFAULT_CONNECT_TIMEOUT)),
+            Some(v) => match v.trim().parse::<i32>() {
+                Ok(0) => Ok(None),
+                Ok(secs) if secs > 0 => Ok(Some(Duration::from_secs(secs as u64))),
+                _ => Err(crate::Error::Conversion(
+                    "Connection string: Connect Timeout must be an integer from 0 to 2147483647"
+                        .into(),
+                )),
+            },
+        }
     }
 
     fn server(&self) -> crate::Result<ServerDefinition> {
@@ -886,6 +902,21 @@ mod tests {
         }
         let ado: AdoNetConfig = "encrypt=sometimes".parse()?;
         assert!(ado.encrypt().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn connect_timeout_parsing() -> crate::Result<()> {
+        use std::time::Duration;
+        let t = |s: &str| s.parse::<AdoNetConfig>().unwrap().connect_timeout();
+        assert_eq!(t("")?, Some(Duration::from_secs(15)));
+        assert_eq!(t("Connect Timeout=30")?, Some(Duration::from_secs(30)));
+        assert_eq!(t("connection timeout= 5 ")?, Some(Duration::from_secs(5)));
+        assert_eq!(t("Timeout=7")?, Some(Duration::from_secs(7)));
+        assert_eq!(t("Connect Timeout=0")?, None);
+        assert!(t("Connect Timeout=-1").is_err());
+        assert!(t("Connect Timeout=soon").is_err());
+        assert!(t("Connect Timeout=2147483648").is_err());
         Ok(())
     }
 }

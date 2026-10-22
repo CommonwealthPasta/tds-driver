@@ -32,6 +32,9 @@ that land will be documented here.
   branch. Unlike `cancel_query`, it also stops a request the server hasn't
   answered yet, such as a statement still sorting, aggregating or waiting on a
   lock.
+- **`Config::connect_timeout`** carries `Connect Timeout` / `Connection Timeout`
+  / `Timeout` (ADO.NET, 0 = none, default 15 s) and `loginTimeout` /
+  `connectTimeout` (JDBC); wrap TCP connect and `Client::connect` in it.
 
 ### Fixed
 

@@ -1,7 +1,10 @@
 use super::{ConfigString, ServerDefinition};
 use crate::error::Error;
 use connection_string::JdbcString;
-use std::str::FromStr;
+use std::{str::FromStr, time::Duration};
+
+/// `loginTimeout` default of mssql-jdbc 11.2 and later.
+const JDBC_DEFAULT_LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) struct JdbcConfig {
     config: JdbcString,
@@ -19,6 +22,21 @@ impl FromStr for JdbcConfig {
 impl ConfigString for JdbcConfig {
     fn get(&self, key: &str) -> Option<&str> {
         self.config.properties().get(key).map(|v| v.as_str())
+    }
+
+    /// `loginTimeout` (alias `connectTimeout`): seconds, 0..=65535, where 0
+    /// means the driver default (mssql-jdbc).
+    fn connect_timeout(&self) -> crate::Result<Option<Duration>> {
+        match self.first(&["logintimeout", "connecttimeout"]) {
+            None => Ok(Some(JDBC_DEFAULT_LOGIN_TIMEOUT)),
+            Some(v) => match v.trim().parse::<u16>() {
+                Ok(0) => Ok(Some(JDBC_DEFAULT_LOGIN_TIMEOUT)),
+                Ok(secs) => Ok(Some(Duration::from_secs(secs.into()))),
+                Err(_) => Err(Error::Conversion(
+                    "Connection string: loginTimeout must be an integer from 0 to 65535".into(),
+                )),
+            },
+        }
     }
 
     /// The `serverName`, `instanceName` and `portNumber` properties override
@@ -390,6 +408,28 @@ mod tests {
             "jdbc:sqlserver://;serverName=db.example.com;portNumber=2345",
         )?;
         assert_eq!("db.example.com:2345", config.get_addr());
+        Ok(())
+    }
+
+    #[test]
+    fn login_timeout_parsing() -> crate::Result<()> {
+        use std::time::Duration;
+        let t = |s: &str| s.parse::<JdbcConfig>().unwrap().connect_timeout();
+        assert_eq!(t("jdbc:sqlserver://h")?, Some(Duration::from_secs(30)));
+        assert_eq!(
+            t("jdbc:sqlserver://h;loginTimeout=5")?,
+            Some(Duration::from_secs(5))
+        );
+        assert_eq!(
+            t("jdbc:sqlserver://h;connectTimeout=6")?,
+            Some(Duration::from_secs(6))
+        );
+        assert_eq!(
+            t("jdbc:sqlserver://h;loginTimeout=0")?,
+            Some(Duration::from_secs(30))
+        );
+        assert!(t("jdbc:sqlserver://h;loginTimeout=65536").is_err());
+        assert!(t("jdbc:sqlserver://h;loginTimeout=-1").is_err());
         Ok(())
     }
 }

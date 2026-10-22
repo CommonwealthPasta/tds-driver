@@ -2,11 +2,15 @@ mod ado_net;
 mod jdbc;
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use super::AuthMethod;
 use crate::EncryptionLevel;
 use ado_net::*;
 use jdbc::*;
+
+/// SqlClient's `Connect Timeout` default.
+const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Debug)]
 /// The `Config` struct contains all configuration information
@@ -42,6 +46,7 @@ pub struct Config {
     pub(crate) hostname_in_certificate: Option<String>,
     pub(crate) client_name: Option<String>,
     pub(crate) multi_subnet_failover: bool,
+    pub(crate) connect_timeout: Option<Duration>,
     #[cfg(any(
         feature = "rustls",
         feature = "native-tls",
@@ -147,6 +152,7 @@ impl Default for Config {
             hostname_in_certificate: None,
             client_name: None,
             multi_subnet_failover: false,
+            connect_timeout: Some(DEFAULT_CONNECT_TIMEOUT),
             #[cfg(any(
                 feature = "rustls",
                 feature = "native-tls",
@@ -340,6 +346,45 @@ impl Config {
     /// Returns whether multi-subnet failover is enabled.
     pub fn get_multi_subnet_failover(&self) -> bool {
         self.multi_subnet_failover
+    }
+
+    /// How long establishing a connection may take: TCP connect, the SQL
+    /// Browser lookup, TLS and login. `None` means no limit.
+    ///
+    /// The crate is runtime-agnostic and owns no timer, so it doesn't enforce
+    /// this itself: wrap the TCP connect and [`Client::connect`] in your
+    /// runtime's timeout.
+    ///
+    /// ```no_run
+    /// # use tiberius::{Client, Config};
+    /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
+    /// # #[tokio::main]
+    /// # async fn main() -> anyhow::Result<()> {
+    /// let config = Config::from_ado_string("server=tcp:db,1433;Connect Timeout=10")?;
+    /// let connect = async {
+    ///     let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
+    ///     tcp.set_nodelay(true)?;
+    ///     Ok::<_, anyhow::Error>(Client::connect(config.clone(), tcp.compat_write()).await?)
+    /// };
+    /// let client = match config.connect_timeout() {
+    ///     Some(limit) => tokio::time::timeout(limit, connect).await??,
+    ///     None => connect.await?,
+    /// };
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// - Defaults to 15 seconds, as in SqlClient. Set from a connection
+    ///   string's `Connect Timeout` (ADO.NET, 0 = no limit) or `loginTimeout`
+    ///   (JDBC, 0 = the 30-second JDBC default).
+    ///
+    /// [`Client::connect`]: crate::Client::connect
+    pub fn connect_timeout(&self) -> Option<Duration> {
+        self.connect_timeout
+    }
+
+    /// Sets the value returned by [`connect_timeout`](Config::connect_timeout).
+    pub fn set_connect_timeout(&mut self, timeout: Option<Duration>) {
+        self.connect_timeout = timeout;
     }
 
     /// Supplies a client certificate and private key used to authenticate the
@@ -552,6 +597,7 @@ impl Config {
             builder.client_name(client_name);
         }
         builder.multi_subnet_failover(s.multi_subnet_failover()?);
+        builder.set_connect_timeout(s.connect_timeout()?);
 
         Ok(builder)
     }
@@ -692,6 +738,12 @@ impl ConfigBuilder {
         self
     }
 
+    /// Sets the connect timeout; see [`Config::connect_timeout`].
+    pub fn connect_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.inner.connect_timeout = timeout;
+        self
+    }
+
     /// Supplies a client certificate and private key for mutual TLS.
     ///
     /// See [`Config::client_certificate`] for details and backend support.
@@ -766,6 +818,8 @@ pub(crate) trait ConfigString {
     }
 
     fn server(&self) -> crate::Result<ServerDefinition>;
+
+    fn connect_timeout(&self) -> crate::Result<Option<Duration>>;
 
     fn authentication(&self) -> crate::Result<AuthMethod> {
         let user = self.first(&["uid", "username", "user", "user id"]);
@@ -1243,5 +1297,28 @@ mod tests {
             "jdbc:sqlserver://h:1433;trustServerCertificate=true;TrustServerCertificateCA=ca.pem",
         );
         assert!(matches!(res, Err(crate::Error::Conversion(_))));
+    }
+
+    #[test]
+    fn connect_timeout_defaults_and_setters() {
+        use std::time::Duration;
+        assert_eq!(
+            Config::new().connect_timeout(),
+            Some(Duration::from_secs(15))
+        );
+
+        let mut config = Config::new();
+        config.set_connect_timeout(None);
+        assert_eq!(config.connect_timeout(), None);
+
+        let config = Config::builder()
+            .connect_timeout(Some(Duration::from_secs(3)))
+            .build();
+        assert_eq!(config.connect_timeout(), Some(Duration::from_secs(3)));
+
+        let config = Config::from_ado_string("server=tcp:h,1433;Connect Timeout=0").unwrap();
+        assert_eq!(config.connect_timeout(), None);
+        let config = Config::from_jdbc_string("jdbc:sqlserver://h;loginTimeout=9").unwrap();
+        assert_eq!(config.connect_timeout(), Some(Duration::from_secs(9)));
     }
 }
