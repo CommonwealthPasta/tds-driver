@@ -891,15 +891,16 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                 if vlc.r#type() == VarLenType::Text || vlc.r#type() == VarLenType::NText =>
             {
                 if let Some(str) = opt {
-                    put_text_pointer(dst);
-
                     if vlc.r#type() == VarLenType::Text {
                         let bytes = encode_in_collation(&str, vlc)?;
+                        let len = lob_len(bytes.len()).ok_or_else(|| too_long(bytes.len()))?;
 
-                        dst.put_u32_le(bytes.len() as u32);
+                        put_text_pointer(dst);
+                        dst.put_u32_le(len);
                         dst.extend_from_slice(bytes.as_slice());
                     } else {
                         // NTEXT: UCS-2/UTF-16LE data
+                        put_text_pointer(dst);
                         let len_pos = dst.len();
                         dst.put_u32_le(0u32);
 
@@ -1195,6 +1196,13 @@ fn put_fixed_money(
     encode(&mut moneyn, if ty == FixedLenType::Money4 { 4 } else { 8 })?;
     dst.extend_from_slice(&moneyn[1..]);
     Ok(())
+}
+
+/// A text, ntext or image value of `len` bytes, over the 2^31 - 1 they hold.
+fn too_long(len: usize) -> crate::Error {
+    crate::Error::BulkInput(
+        format!("Encoded length {len} exceeds the column limit {}", i32::MAX).into(),
+    )
 }
 
 /// The text pointer and timestamp SqlBulkCopy sends ahead of a text, ntext
@@ -2935,5 +2943,17 @@ mod tests {
                 .unwrap_err();
             assert!(matches!(err, Error::Conversion(_)), "{out}: {err:?}");
         }
+    }
+
+    #[test]
+    #[ignore = "allocates 4 GiB"]
+    fn text_over_2_gib_is_an_error() {
+        let utf8 = Some(Collation::new(0x0400_0409, 0));
+        let text = TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Text, 0x7fff_ffff, utf8));
+        let s = "a".repeat(1 << 31);
+        let err = encode_with_ti(&text, ColumnData::String(Some(s.into())))
+            .map(drop)
+            .unwrap_err();
+        assert!(matches!(err, Error::BulkInput(_)), "{err:?}");
     }
 }
