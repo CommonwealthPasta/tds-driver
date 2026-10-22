@@ -47,6 +47,12 @@ enum AllHeaderTy {
 
 pub struct PacketCodec;
 
+/// The longest message [`collect_from`] takes. Its one use is the PRELOGIN
+/// answer, which SqlClient reads from a single packet of at most 32768 bytes
+/// (`TdsParser.ConsumePreLoginHandshake`); without a cap a server could grow
+/// the buffer without end.
+const MAX_COLLECTED: usize = 32768;
+
 pub(crate) async fn collect_from<S, T>(stream: &mut S) -> crate::Result<T>
 where
     T: Decode<BytesMut> + Sized,
@@ -57,6 +63,12 @@ where
     while let Some(packet) = stream.try_next().await? {
         let is_last = packet.is_last();
         let (_, payload) = packet.into_parts();
+        if buf.len() + payload.len() > MAX_COLLECTED {
+            return Err(crate::Error::Protocol(
+                format!("a message over {MAX_COLLECTED} bytes where one packet was expected")
+                    .into(),
+            ));
+        }
         buf.extend(payload);
 
         if is_last {
@@ -65,4 +77,42 @@ where
     }
 
     T::decode(&mut buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::stream;
+
+    fn packet(payload: &[u8], last: bool) -> crate::Result<Packet> {
+        let mut header = PacketHeader::pre_login(0);
+        header.set_status(match last {
+            true => PacketStatus::EndOfMessage,
+            false => PacketStatus::NormalMessage,
+        });
+        Ok(Packet::new(header, BytesMut::from(payload)))
+    }
+
+    /// A PRELOGIN answer that is only its terminator, padded to `len` bytes.
+    async fn collect(len: usize) -> crate::Result<PreloginMessage> {
+        let mut packets = vec![packet(&[0xff], false)];
+        let pad = vec![0; 4096];
+        let mut rest = len - 1;
+        while rest > 0 {
+            let n = rest.min(pad.len());
+            packets.push(packet(&pad[..n], false));
+            rest -= n;
+        }
+        packets.push(packet(&[], true));
+        collect_from(&mut stream::iter(packets)).await
+    }
+
+    #[tokio::test]
+    async fn collect_from_caps_the_message() {
+        assert!(collect(MAX_COLLECTED).await.is_ok());
+        match collect(MAX_COLLECTED + 1).await {
+            Err(crate::Error::Protocol(msg)) => assert!(msg.contains("32768"), "{msg}"),
+            other => panic!("expected a protocol error, got {other:?}"),
+        }
+    }
 }
