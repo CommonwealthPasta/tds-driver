@@ -138,7 +138,7 @@ impl TokenEnvChange {
                     *item = buf.read_u16::<LittleEndian>()?;
                 }
 
-                let new_value = String::from_utf16(&bytes[..])?;
+                let new_value = String::from_utf16_lossy(&bytes[..]);
 
                 let len = buf.read_u8()? as usize;
                 let mut bytes = vec![0; len];
@@ -147,7 +147,7 @@ impl TokenEnvChange {
                     *item = buf.read_u16::<LittleEndian>()?;
                 }
 
-                let old_value = String::from_utf16(&bytes[..])?;
+                let old_value = String::from_utf16_lossy(&bytes[..]);
 
                 TokenEnvChange::Database(new_value, old_value)
             }
@@ -159,7 +159,7 @@ impl TokenEnvChange {
                     *item = buf.read_u16::<LittleEndian>()?;
                 }
 
-                let new_value = String::from_utf16(&bytes[..])?;
+                let new_value = String::from_utf16_lossy(&bytes[..]);
 
                 let len = buf.read_u8()? as usize;
                 let mut bytes = vec![0; len];
@@ -168,7 +168,7 @@ impl TokenEnvChange {
                     *item = buf.read_u16::<LittleEndian>()?;
                 }
 
-                let old_value = String::from_utf16(&bytes[..])?;
+                let old_value = String::from_utf16_lossy(&bytes[..]);
 
                 TokenEnvChange::PacketSize(new_value.parse()?, old_value.parse()?)
             }
@@ -242,7 +242,7 @@ impl TokenEnvChange {
                     *item = buf.read_u16::<LittleEndian>()?;
                 }
 
-                let host = String::from_utf16(&bytes[..])?;
+                let host = String::from_utf16_lossy(&bytes[..]);
 
                 TokenEnvChange::Routing { host, port }
             }
@@ -254,7 +254,7 @@ impl TokenEnvChange {
                     *item = buf.read_u16::<LittleEndian>()?;
                 }
 
-                let mirror_name = String::from_utf16(&bytes[..])?;
+                let mirror_name = String::from_utf16_lossy(&bytes[..]);
 
                 TokenEnvChange::ChangeMirror(mirror_name)
             }
@@ -325,6 +325,25 @@ mod tests {
             TokenEnvChange::Database(new, old) => {
                 assert_eq!(new, "newdb");
                 assert_eq!(old, "olddb");
+            }
+            other => panic!("unexpected variant: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn decode_database_with_a_lone_surrogate() {
+        // new = "d" + U+D800, old = "" (a database name may hold one).
+        let payload = [2u8, b'd', 0, 0x00, 0xd8, 0];
+
+        let buf = envchange_buf(EnvChangeTy::Database as u8, &payload);
+        let decoded = TokenEnvChange::decode(&mut buf.into_sql_read_bytes())
+            .await
+            .unwrap();
+
+        match decoded {
+            TokenEnvChange::Database(new, old) => {
+                assert_eq!(new, "d\u{FFFD}");
+                assert_eq!(old, "");
             }
             other => panic!("unexpected variant: {:?}", other),
         }

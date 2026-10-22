@@ -98,9 +98,8 @@ impl TokenTabName {
                     pos += 2;
                 }
 
-                let part = String::from_utf16(&units).map_err(|_| {
-                    Error::Protocol("TABNAME token part is not valid UTF-16".into())
-                })?;
+                // Lossy, like `string::decode_utf16le`.
+                let part = String::from_utf16_lossy(&units);
 
                 parts.push(part);
             }
@@ -167,6 +166,13 @@ mod tests {
             token.tables()[1].parts(),
             &["dbo".to_string(), "Products".to_string()]
         );
+    }
+
+    #[test]
+    fn parse_lone_surrogate_is_replaced() {
+        let data = [1u8, 2, 0, b't', 0, 0x00, 0xd8];
+        let token = TokenTabName::parse(&data).expect("must parse");
+        assert_eq!(token.tables()[0].parts(), &["t\u{FFFD}".to_string()]);
     }
 
     #[test]

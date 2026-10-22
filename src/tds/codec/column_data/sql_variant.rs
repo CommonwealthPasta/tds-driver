@@ -138,8 +138,7 @@ where
                 return Err(Error::Protocol("sql_variant: invalid nchar length".into()));
             }
 
-            let buf: Vec<u16> = buf.chunks(2).map(LittleEndian::read_u16).collect();
-            ColumnData::String(Some(String::from_utf16(&buf)?.into()))
+            ColumnData::String(Some(super::string::decode_utf16le(&buf).into()))
         }
         VarLenType::BigBinary | VarLenType::BigVarBin => {
             // propData = max length (2 bytes)
@@ -926,6 +925,15 @@ mod tests {
 
         let err = decode(&mut variant_reader(&payload)).await.unwrap_err();
         assert!(matches!(err, Error::Protocol(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn decode_nvarchar_with_a_lone_surrogate() {
+        let mut payload = vec![VarLenType::NVarchar as u8, 7, 0, 0, 0, 0, 0, 40, 0];
+        payload.extend_from_slice(&[b'a', 0, 0x00, 0xd8]);
+
+        let data = decode(&mut variant_reader(&payload)).await.unwrap();
+        assert_eq!(data, ColumnData::String(Some("a\u{FFFD}".into())));
     }
 
     // A string whose UTF-16 encoding exceeds MAX_VARIANT_PAYLOAD is rejected.

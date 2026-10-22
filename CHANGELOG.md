@@ -66,6 +66,9 @@ that land will be documented here.
   `Error::Server` still carries the first error; `TokenError::other_errors` and
   `TokenError::info_messages` (new) return the rest of the response's ERROR and
   INFO tokens.
+- **An unpaired UTF-16 surrogate decodes as U+FFFD instead of failing the result
+  set**, in values (nvarchar, nchar, ntext, xml, sql_variant) and in
+  column/table names, messages and ENVCHANGEs.
 
 ### Changed
 

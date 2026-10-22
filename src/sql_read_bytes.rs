@@ -58,13 +58,10 @@ macro_rules! varchar_reader {
                 let len = me.length.unwrap();
                 let buf = me.buf.as_mut().unwrap();
 
-                // Everything's read, we can return the string.
+                // Everything's read, we can return the string. Lossy, like
+                // `string::decode_utf16le`: SQL Server allows unpaired surrogates.
                 if *me.read == len {
-                    let s = String::from_utf16(&buf).map_err(|_| {
-                        io::Error::new(io::ErrorKind::InvalidData, "Invalid UTF-16 data.")
-                    })?;
-
-                    return Poll::Ready(Ok(s));
+                    return Poll::Ready(Ok(String::from_utf16_lossy(buf)));
                 }
 
                 // Read the utf-16 data
@@ -81,12 +78,7 @@ macro_rules! varchar_reader {
                     }
                 }
 
-                // Everything's read, we can return the string.
-                let s = String::from_utf16(&buf).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidData, "Invalid UTF-16 data.")
-                })?;
-
-                return Poll::Ready(Ok(s));
+                return Poll::Ready(Ok(String::from_utf16_lossy(buf)));
             }
         }
     };
@@ -442,14 +434,25 @@ mod tests {
         assert!(buf.into_sql_read_bytes().read_b_varchar().await.is_err());
     }
 
-    // A lone UTF-16 surrogate makes `String::from_utf16` fail — exercises the
-    // invalid-UTF-16 error mapping at the end of the varchar reader.
+    // An unpaired surrogate (legal in SQL Server names and messages) becomes U+FFFD.
     #[tokio::test]
-    async fn b_varchar_invalid_utf16_error() {
+    async fn varchar_lone_surrogate_is_replaced() {
         let mut buf = BytesMut::new();
-        buf.put_u8(1);
-        buf.put_u16_le(0xD800); // unpaired high surrogate
-        assert!(buf.into_sql_read_bytes().read_b_varchar().await.is_err());
+        buf.put_u8(2);
+        buf.put_u16_le(b'x' as u16);
+        buf.put_u16_le(0xD800);
+        assert_eq!(
+            buf.into_sql_read_bytes().read_b_varchar().await.unwrap(),
+            "x\u{FFFD}"
+        );
+
+        let mut buf = BytesMut::new();
+        buf.put_u16_le(1);
+        buf.put_u16_le(0xDC00);
+        assert_eq!(
+            buf.into_sql_read_bytes().read_us_varchar().await.unwrap(),
+            "\u{FFFD}"
+        );
     }
 
     // `debug_buffer` for the test reader is a `todo!()`; calling it must panic.

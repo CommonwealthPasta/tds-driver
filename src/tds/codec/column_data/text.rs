@@ -25,7 +25,7 @@ where
         // TEXT
         Some(collation) => super::string::decode_varchar(buf, &collation)?,
         // NTEXT
-        None => super::string::decode_utf16le(&buf)?,
+        None => super::string::decode_utf16le(&buf),
     };
 
     Ok(ColumnData::String(Some(text.into())))

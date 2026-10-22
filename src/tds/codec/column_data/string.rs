@@ -27,7 +27,7 @@ where
                 return Err(Error::Protocol("nvarchar: invalid plp length".into()));
             }
 
-            Ok(Some(decode_utf16le(&buf)?.into()))
+            Ok(Some(decode_utf16le(&buf).into()))
         }
         _ => Ok(None),
     }
@@ -52,12 +52,17 @@ pub(crate) fn decode_varchar(buf: Vec<u8>, collation: &Collation) -> crate::Resu
 
 /// Decodes UTF-16LE bytes (even length) into a `String` allocated at its exact
 /// UTF-8 size. ASCII-only input is copied byte by byte without decoding.
-pub(crate) fn decode_utf16le(buf: &[u8]) -> crate::Result<String> {
-    let pairs = buf.as_chunks::<2>().0;
+///
+/// An unpaired surrogate becomes U+FFFD. SQL Server stores them (it treats
+/// nvarchar as UCS-2) and SqlClient returns them as-is in a UTF-16 .NET
+/// string; a Rust `String` cannot hold one, and failing would lose the whole
+/// result set.
+pub(crate) fn decode_utf16le(buf: &[u8]) -> String {
+    let (pairs, _) = buf.as_chunks::<2>();
     let units = pairs.iter().map(|&pair| u16::from_le_bytes(pair));
 
-    // A surrogate half counts 2, so a valid pair counts 4. Unpaired halves
-    // fail below anyway.
+    // A surrogate half counts 2, so a valid pair counts 4; an unpaired half
+    // becomes 3 bytes and may make the String grow once.
     let mut utf8_len = 0usize;
     let mut ascii = true;
     for u in units.clone() {
@@ -70,16 +75,13 @@ pub(crate) fn decode_utf16le(buf: &[u8]) -> crate::Result<String> {
     }
 
     if ascii {
-        let bytes: Vec<u8> = pairs.iter().map(|pair| pair[0]).collect();
-        return String::from_utf8(bytes)
-            .map_err(|_| Error::Protocol("nvarchar: invalid UTF-16 sequence".into()));
+        let bytes: Vec<u8> = pairs.iter().map(|&[lo, _]| lo).collect();
+        return String::from_utf8(bytes).expect("ASCII is UTF-8");
     }
 
     let mut s = String::with_capacity(utf8_len);
-    for c in char::decode_utf16(units) {
-        s.push(c.map_err(|_| Error::Protocol("nvarchar: invalid UTF-16 sequence".into()))?);
-    }
-    Ok(s)
+    s.extend(char::decode_utf16(units).map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER)));
+    s
 }
 
 #[cfg(test)]
@@ -92,18 +94,40 @@ mod tests {
 
     #[test]
     fn decode_utf16le_ascii_and_multibyte() {
-        assert_eq!(decode_utf16le(&utf16le("")).unwrap(), "");
-        assert_eq!(decode_utf16le(&utf16le("hello")).unwrap(), "hello");
+        assert_eq!(decode_utf16le(&utf16le("")), "");
+        assert_eq!(decode_utf16le(&utf16le("hello")), "hello");
         let s = "åäö €𝄞 ascii";
-        let decoded = decode_utf16le(&utf16le(s)).unwrap();
+        let decoded = decode_utf16le(&utf16le(s));
         assert_eq!(decoded, s);
         assert_eq!(decoded.capacity(), s.len());
     }
 
     #[test]
-    fn decode_utf16le_rejects_an_unpaired_surrogate() {
-        let err = decode_utf16le(&[0x00, 0xd8, b'a', 0]).unwrap_err();
-        assert!(matches!(err, Error::Protocol(_)));
+    fn decode_utf16le_replaces_unpaired_surrogates() {
+        // Lone high, lone low, reversed pair, then a valid pair.
+        let units = [0xd800, b'a' as u16, 0xdc00, 0xde00, 0xd83d, 0xd83d, 0xde00];
+        let buf: Vec<u8> = units.iter().flat_map(|u| u.to_le_bytes()).collect();
+        assert_eq!(decode_utf16le(&buf), "\u{FFFD}a\u{FFFD}\u{FFFD}\u{FFFD}😀");
+    }
+
+    #[tokio::test]
+    async fn decode_nvarchar_with_a_lone_surrogate() {
+        use crate::sql_read_bytes::test_utils::IntoSqlReadBytes;
+        use bytes::{BufMut, BytesMut};
+
+        let mut buf = BytesMut::new();
+        buf.put_u16_le(4);
+        buf.put_u16_le(b'x' as u16);
+        buf.put_u16_le(0xdbff);
+        let s = decode(
+            &mut buf.into_sql_read_bytes(),
+            VarLenType::NVarchar,
+            8000,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(s.as_deref(), Some("x\u{FFFD}"));
     }
 
     #[test]
