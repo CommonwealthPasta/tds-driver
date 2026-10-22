@@ -320,7 +320,15 @@ where
                 }
             }
 
-            let token = this.read_token().await?;
+            this.conn.begin_token()?;
+            let token = match this.read_token().await {
+                Ok(token) => token,
+                Err(e) => {
+                    this.conn.abandon_token();
+                    return Err(e);
+                }
+            };
+            this.conn.end_token();
 
             if let ReceivedToken::Done(done)
             | ReceivedToken::DoneProc(done)

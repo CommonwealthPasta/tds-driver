@@ -76,6 +76,25 @@ where
     /// its response, so an Attention would cancel it.
     awaiting_response: bool,
     attention: Attention,
+    /// Bytes of `buf` the token being read has used so far. They are kept
+    /// until the token ends, so a token abandoned partway (its stream dropped
+    /// while it waited for the next packet) can be read again from its start.
+    token_read: usize,
+    token: TokenState,
+}
+
+/// The most a token keeps for reading again. A larger one, a row holding
+/// large values, can't be read again if abandoned partway.
+const MAX_TOKEN_REPLAY: usize = 1 << 20;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TokenState {
+    Between,
+    Reading,
+    /// Reading a token whose start is no longer kept, because it passed
+    /// `MAX_TOKEN_REPLAY` or failed to decode. If it doesn't end, the rest of
+    /// the message can't be parsed.
+    Unrecoverable,
 }
 
 /// How far cancelling the request in flight has got.
@@ -149,6 +168,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
             cancel: CancelHandle::default(),
             awaiting_response: false,
             attention: Attention::None,
+            token_read: 0,
+            token: TokenState::Between,
         };
 
         let fed_auth_required = matches!(config.auth, AuthMethod::AADToken(_));
@@ -368,6 +389,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         // A `CancelHandle` may have sent the Attention already.
         match self.attention {
             Attention::Acknowledged => return Ok(()),
+            _ if self.token == TokenState::Unrecoverable => {
+                self.poisoned = true;
+                return Err(crate::Error::Protocol(
+                    "a cancelled response was abandoned partway through a token too large to read again; open a new connection"
+                        .into(),
+                ));
+            }
             Attention::Sent => (),
             Attention::None => {
                 let id = self.context.next_packet_id();
@@ -426,6 +454,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         // if a previous result stream was dropped part-way through a value
         // (the lost bytes belonged to a packet we are discarding anyway).
         self.buf.truncate(0);
+        self.token_read = 0;
+        self.token = TokenState::Between;
 
         if self.flushed {
             return Ok(());
@@ -464,6 +494,34 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
     /// Whether the request in flight has been cancelled.
     pub(crate) fn is_cancelled(&self) -> bool {
         self.attention != Attention::None
+    }
+
+    /// Called before reading a token. Rewinds to the start of one abandoned
+    /// partway.
+    pub(crate) fn begin_token(&mut self) -> crate::Result<()> {
+        if self.token == TokenState::Unrecoverable {
+            return Err(crate::Error::Protocol(
+                "lost track of the response after a token was abandoned partway".into(),
+            ));
+        }
+        self.token_read = 0;
+        self.token = TokenState::Reading;
+        Ok(())
+    }
+
+    /// Called once a token has been read in full.
+    pub(crate) fn end_token(&mut self) {
+        self.buf.advance(self.token_read);
+        self.token_read = 0;
+        self.token = TokenState::Between;
+    }
+
+    /// Called when a token fails to decode, leaving the rest of the message
+    /// unparseable.
+    pub(crate) fn abandon_token(&mut self) {
+        self.buf.advance(self.token_read);
+        self.token_read = 0;
+        self.token = TokenState::Unrecoverable;
     }
 
     /// Called on reading a DONE token with the `DONE_ATTN` bit.
@@ -845,6 +903,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                     cancel: CancelHandle::default(),
                     awaiting_response: false,
                     attention: Attention::None,
+                    token_read: 0,
+                    token: TokenState::Between,
                 })
             }
         }
@@ -950,14 +1010,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> futures_util::io::AsyncRead for C
         let mut this = self.get_mut();
         let size = buf.len();
 
-        if this.buf.len() < size {
+        if this.buf.len() - this.token_read < size {
             while let Some(item) = ready!(Pin::new(&mut this).try_poll_next(cx)) {
                 match item {
                     Ok(packet) => {
                         let (_, payload) = packet.into_parts();
                         this.buf.extend_from_slice(&payload);
 
-                        if this.buf.len() >= size {
+                        if this.buf.len() - this.token_read >= size {
                             break;
                         }
                     }
@@ -971,7 +1031,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> futures_util::io::AsyncRead for C
             }
 
             // Got EOF before having all the data.
-            if this.buf.len() < size {
+            if this.buf.len() - this.token_read < size {
                 return Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
                     "No more packets in the wire",
@@ -979,8 +1039,19 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> futures_util::io::AsyncRead for C
             }
         }
 
-        buf.copy_from_slice(&this.buf[..size]);
-        this.buf.advance(size);
+        let start = this.token_read;
+        buf.copy_from_slice(&this.buf[start..start + size]);
+
+        match this.token {
+            TokenState::Reading if start + size <= MAX_TOKEN_REPLAY => this.token_read += size,
+            TokenState::Reading => {
+                this.buf.advance(start + size);
+                this.token_read = 0;
+                this.token = TokenState::Unrecoverable;
+            }
+            TokenState::Between | TokenState::Unrecoverable => this.buf.advance(size),
+        }
+
         Poll::Ready(Ok(size))
     }
 }

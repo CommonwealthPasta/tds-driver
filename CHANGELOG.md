@@ -43,8 +43,8 @@ that land will be documented here.
 - **Nor does a `cancel_query` future dropped partway.** Dropped while waiting
   for the acknowledgement, as under a timeout, it left the acknowledgement for
   the next request to read as its result. The next request now reads up to it
-  first, or, if the future was dropped partway through reading a token, fails
-  along with every later one.
+  first, or, if the future was dropped partway through reading a token over 1
+  MiB, fails along with every later one.
 
 ### Changed
 
