@@ -1,4 +1,4 @@
-# cargo-deny configuration — supply-chain / advisory gate for tiberius.
+# cargo-deny configuration — supply-chain / advisory gate for tds-driver.
 #
 # Run locally with:  cargo deny check advisories bans sources licenses
 # CI runs the same via .github/workflows/security.yml.

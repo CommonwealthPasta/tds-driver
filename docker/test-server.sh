@@ -18,7 +18,7 @@
 set -euo pipefail
 
 ENGINE="${ENGINE:-$(command -v podman >/dev/null 2>&1 && echo podman || echo docker)}"
-NAME="${NAME:-tiberius-test-mssql}"
+NAME="${NAME:-tds-driver-test-mssql}"
 PORT="${PORT:-1433}"
 IMAGE="${IMAGE:-azure-sql-edge}"
 PASSWORD='<YourStrong@Passw0rd>'

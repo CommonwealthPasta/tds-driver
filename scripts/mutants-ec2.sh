@@ -17,13 +17,13 @@
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
-REPO_URL="${MUTANTS_REPO_URL:-https://github.com/MattJackson/tiberius-ng.git}"
+REPO_URL="${MUTANTS_REPO_URL:-https://github.com/CommonwealthPasta/tds-driver.git}"
 cmd="${1:-run}"
 REF="${2:-$(git rev-parse HEAD)}"
 N="${3:-8}"
 ITYPE="${4:-c6i.2xlarge}"
-TAG="tiberius-mutants"
-BUCKET="tiberius-mutants-${RANDOM}${RANDOM}"
+TAG="tds-driver-mutants"
+BUCKET="tds-driver-mutants-${RANDOM}${RANDOM}"
 
 log() { printf '\033[36m[mutants-ec2]\033[0m %s\n' "$*" >&2; }
 
