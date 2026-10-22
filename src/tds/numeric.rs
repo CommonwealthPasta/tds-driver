@@ -5,7 +5,6 @@ use crate::{sql_read_bytes::SqlReadBytes, Error};
 #[cfg(feature = "bigdecimal")]
 #[cfg_attr(docsrs, doc(cfg(feature = "bigdecimal")))]
 pub use bigdecimal::{num_bigint::BigInt, BigDecimal};
-use byteorder::{ByteOrder, LittleEndian};
 use bytes::{BufMut, BytesMut};
 #[cfg(feature = "rust_decimal")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rust_decimal")))]
@@ -93,70 +92,50 @@ impl Numeric {
     where
         R: SqlReadBytes + Unpin,
     {
-        fn decode_d128(buf: &[u8]) -> u128 {
-            let low_part = LittleEndian::read_u64(&buf[0..]) as u128;
-
-            if !buf[8..].iter().any(|x| *x != 0) {
-                return low_part;
-            }
-
-            let high_part = match buf.len() {
-                12 => LittleEndian::read_u32(&buf[8..]) as u128,
-                16 => LittleEndian::read_u64(&buf[8..]) as u128,
-                _ => unreachable!(),
-            };
-
-            // `byteorder::LittleEndian` already yields the correct host-native
-            // integer regardless of target endianness, so `low_part`/`high_part`
-            // need no further swapping (a previous `cfg(target_endian = "big")`
-            // swap here corrupted large decimals on big-endian hosts).
-            let high_part = high_part * (u64::MAX as u128 + 1);
-            low_part + high_part
-        }
-
-        let len = src.read_u8().await?;
-
+        let len = src.read_u8().await? as usize;
         if len == 0 {
-            Ok(None)
-        } else {
-            let sign = match src.read_u8().await? {
-                0 => -1i128,
-                1 => 1i128,
-                _ => return Err(Error::Protocol("decimal: invalid sign".into())),
-            };
-
-            let value = match len {
-                5 => src.read_u32_le().await? as i128 * sign,
-                9 => src.read_u64_le().await? as i128 * sign,
-                13 => {
-                    let mut bytes = [0u8; 12]; //u96
-                    futures_util::io::AsyncReadExt::read_exact(src, &mut bytes).await?;
-                    decode_d128(&bytes) as i128 * sign
-                }
-                17 => {
-                    let mut bytes = [0u8; 16];
-                    futures_util::io::AsyncReadExt::read_exact(src, &mut bytes).await?;
-                    let magnitude = decode_d128(&bytes);
-                    // A legal `decimal(38, s)` magnitude is < 10^38 < i128::MAX,
-                    // so any 16-byte magnitude that does not fit in i128 is
-                    // malformed. Reject it rather than letting `as i128` wrap to
-                    // a negative value (and `i128::MIN * -1` overflow-panic).
-                    if magnitude > i128::MAX as u128 {
-                        return Err(Error::Protocol(
-                            "decimal/numeric: magnitude exceeds the representable range".into(),
-                        ));
-                    }
-                    magnitude as i128 * sign
-                }
-                x => {
-                    return Err(Error::Protocol(
-                        format!("decimal/numeric: invalid length of {} received", x).into(),
-                    ))
-                }
-            };
-
-            Ok(Some(Numeric::new_with_scale(value, scale)))
+            return Ok(None);
         }
+
+        if !matches!(len, 5 | 9 | 13 | 17) {
+            return Err(invalid_length(len));
+        }
+
+        let mut buf = [0u8; 17];
+        futures_util::io::AsyncReadExt::read_exact(src, &mut buf[..len]).await?;
+
+        Self::from_wire(&buf[..len], scale).map(Some)
+    }
+
+    /// Builds a value from its wire form: a sign byte (0 negative, 1 positive)
+    /// then a 4, 8, 12 or 16 byte little-endian magnitude.
+    pub(crate) fn from_wire(bytes: &[u8], scale: u8) -> crate::Result<Self> {
+        if scale > 38 {
+            return Err(Error::Protocol(
+                format!("decimal/numeric: invalid scale {scale}").into(),
+            ));
+        }
+
+        let (&sign, magnitude) = bytes.split_first().ok_or_else(|| invalid_length(0))?;
+        if !matches!(magnitude.len(), 4 | 8 | 12 | 16) {
+            return Err(invalid_length(bytes.len()));
+        }
+
+        let mut le = [0u8; 16];
+        le[..magnitude.len()].copy_from_slice(magnitude);
+
+        // A legal decimal(38, s) magnitude is below 10^38 < i128::MAX.
+        let value = i128::try_from(u128::from_le_bytes(le)).map_err(|_| {
+            Error::Protocol("decimal/numeric: magnitude exceeds the representable range".into())
+        })?;
+
+        let value = match sign {
+            0 => -value,
+            1 => value,
+            _ => return Err(Error::Protocol("decimal/numeric: invalid sign".into())),
+        };
+
+        Ok(Numeric { value, scale })
     }
 
     /// The nearest `f64`. Exact operands make one division correctly rounded;
@@ -192,6 +171,10 @@ impl Numeric {
                 .expect("Display is a float literal"),
         }
     }
+}
+
+fn invalid_length(len: usize) -> Error {
+    Error::Protocol(format!("decimal/numeric: invalid length of {len} received").into())
 }
 
 impl Encode<BytesMut> for Numeric {
@@ -651,6 +634,20 @@ mod tests {
             money_max.to_f32(),
             "922337203685477.5807".parse::<f32>().unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn decode_rejects_a_scale_over_38() {
+        use crate::sql_read_bytes::test_utils::IntoSqlReadBytes;
+
+        let mut buf = BytesMut::new();
+        buf.put_u8(5);
+        buf.put_u8(1);
+        buf.put_u32_le(1);
+        let err = Numeric::decode(&mut buf.into_sql_read_bytes(), 39)
+            .await
+            .expect_err("scale 39 must error, not panic");
+        assert!(matches!(err, Error::Protocol(_)));
     }
 
     #[cfg(all(feature = "rust_decimal", feature = "tds73"))]

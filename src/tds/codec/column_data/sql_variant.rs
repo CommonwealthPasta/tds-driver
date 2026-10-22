@@ -21,7 +21,6 @@
 
 use std::convert::TryFrom;
 
-use byteorder::{ByteOrder, LittleEndian};
 use bytes::{BufMut, BytesMut};
 
 use crate::{
@@ -111,7 +110,9 @@ where
             let _precision = src.read_u8().await?;
             let scale = src.read_u8().await?;
 
-            decode_numeric(src, data_len, scale).await?
+            // No length byte: sign + magnitude fill the value.
+            let bytes = read_bytes(src, data_len).await?;
+            ColumnData::Numeric(Some(Numeric::from_wire(&bytes, scale)?))
         }
         VarLenType::BigChar | VarLenType::BigVarChar => {
             // propData = collation (5 bytes) + max length (2 bytes)
@@ -200,63 +201,6 @@ where
     let sort_id = src.read_u8().await?;
 
     Ok(Collation::new(info, sort_id))
-}
-
-/// Decodes the value part of a `numeric`/`decimal` sql_variant. Unlike a
-/// regular column, the value has no leading length byte; it is a single sign
-/// byte followed by the little-endian magnitude, filling `data_len` bytes.
-async fn decode_numeric<R>(
-    src: &mut R,
-    data_len: usize,
-    scale: u8,
-) -> crate::Result<ColumnData<'static>>
-where
-    R: SqlReadBytes + Unpin,
-{
-    if data_len == 0 {
-        return Err(Error::Protocol("sql_variant: empty numeric value".into()));
-    }
-
-    // The scale byte is server-controlled; Numeric::new_with_scale requires
-    // scale <= 38 (and would otherwise panic).
-    if scale > 38 {
-        return Err(Error::Protocol(
-            format!("sql_variant: invalid numeric scale {scale}").into(),
-        ));
-    }
-
-    let sign = match src.read_u8().await? {
-        0 => -1i128,
-        1 => 1i128,
-        _ => return Err(Error::Protocol("sql_variant: invalid numeric sign".into())),
-    };
-
-    let magnitude = read_bytes(src, data_len - 1).await?;
-
-    let value = match magnitude.len() {
-        4 => LittleEndian::read_u32(&magnitude) as i128,
-        8 => LittleEndian::read_u64(&magnitude) as i128,
-        12 => {
-            let low = LittleEndian::read_u64(&magnitude[0..8]) as i128;
-            let high = LittleEndian::read_u32(&magnitude[8..12]) as i128;
-            low + high * (1i128 << 64)
-        }
-        16 => {
-            let low = LittleEndian::read_u64(&magnitude[0..8]) as i128;
-            let high = LittleEndian::read_u64(&magnitude[8..16]) as i128;
-            low + high * (1i128 << 64)
-        }
-        n => {
-            return Err(Error::Protocol(
-                format!("sql_variant: invalid numeric magnitude length {}", n).into(),
-            ))
-        }
-    };
-
-    Ok(ColumnData::Numeric(Some(Numeric::new_with_scale(
-        value * sign,
-        scale,
-    ))))
 }
 
 /// The maximum length in bytes of the character/binary payload a `sql_variant`
@@ -921,6 +865,18 @@ mod tests {
 
         let err = decode(&mut variant_reader(&payload)).await.unwrap_err();
         assert!(matches!(err, Error::Protocol(_)), "got {err:?}");
+    }
+
+    // 2^127 as a 16-byte magnitude: overflowed i128 (a panic in debug builds).
+    #[tokio::test]
+    async fn decode_numeric_magnitude_over_i128_max_errors() {
+        for sign in [0u8, 1] {
+            let mut payload = vec![VarLenType::Numericn as u8, 2, 38, 0, sign];
+            payload.extend_from_slice(&(1u128 << 127).to_le_bytes());
+
+            let err = decode(&mut variant_reader(&payload)).await.unwrap_err();
+            assert!(matches!(err, Error::Protocol(_)), "got {err:?}");
+        }
     }
 
     #[tokio::test]
