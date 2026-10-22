@@ -62,6 +62,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn decode_text_with_an_invalid_sequence_is_lossy() {
+        let mut buf = BytesMut::new();
+        buf.put_u8(1);
+        buf.put_u8(0xAA);
+        buf.put_i32_le(0);
+        buf.put_u32_le(0);
+        buf.put_u32_le(3);
+        buf.put_slice(&[b'A', 0x82, 0x20]);
+
+        let collation = crate::tds::Collation::new(0x0411, 0); // Japanese_CI_AS
+        let data = decode(&mut buf.into_sql_read_bytes(), Some(collation))
+            .await
+            .unwrap();
+        assert_eq!(data, ColumnData::String(Some("A\u{FFFD} ".into())));
+    }
+
+    #[tokio::test]
     async fn decode_text_uses_collation_encoding() {
         let mut buf = BytesMut::new();
         buf.put_u8(1); // ptr_len

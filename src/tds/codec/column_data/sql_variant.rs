@@ -957,6 +957,18 @@ mod tests {
         assert_eq!(data, ColumnData::String(Some("Øx".into())));
     }
 
+    #[tokio::test]
+    async fn decode_varchar_with_an_invalid_sequence_is_lossy() {
+        let mut payload = vec![VarLenType::BigVarChar as u8, 7];
+        payload.extend_from_slice(&0x0411u32.to_le_bytes()); // Japanese_CI_AS
+        payload.push(0);
+        payload.extend_from_slice(&10u16.to_le_bytes());
+        payload.extend_from_slice(&[b'A', 0x82, 0x20]);
+
+        let data = decode(&mut variant_reader(&payload)).await.unwrap();
+        assert_eq!(data, ColumnData::String(Some("A\u{FFFD} ".into())));
+    }
+
     // A string whose UTF-16 encoding exceeds MAX_VARIANT_PAYLOAD is rejected.
     // Covers 381-390.
     #[tokio::test]

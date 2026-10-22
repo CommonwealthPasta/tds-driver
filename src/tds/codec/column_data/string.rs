@@ -38,17 +38,19 @@ where
     }
 }
 
-/// Decodes `buf` in the collation's code page.
+/// Decodes `buf` in the collation's code page. An invalid sequence becomes
+/// U+FFFD, as in [`decode_utf16le`]: SQL Server stores bytes its code page
+/// can't map (0x82 0x20 in a Japanese_CI_AS column), and failing would lose
+/// the whole result set. SqlClient decodes with .NET's
+/// `Encoding.GetEncoding(codePage)`, whose best-fit fallback substitutes `?`
+/// instead.
 pub(crate) fn decode_varchar(buf: Vec<u8>, collation: &Collation) -> crate::Result<String> {
     let encoder = match collation.charset()? {
         Charset::Encoding(encoder) => encoder,
         Charset::Oem(table) => return Ok(decode_oem(table, &buf)),
     };
-    let decoded = encoder
-        .decode_without_bom_handling_and_without_replacement(&buf)
-        .ok_or_else(|| Error::Encoding("invalid sequence".into()))?;
 
-    match decoded {
+    match encoder.decode_without_bom_handling(&buf).0 {
         // Borrowed means the bytes are valid UTF-8 as they are, so keep them
         // instead of copying.
         Cow::Borrowed(_) => {
@@ -201,6 +203,21 @@ mod tests {
             "héllo 日😀"
         );
         assert_eq!(encode_varchar("héllo", &utf8).unwrap(), "héllo".as_bytes());
+    }
+
+    #[test]
+    fn invalid_code_page_sequences_are_replaced() {
+        let sjis = Collation::new(0x0411, 0); // Japanese_CI_AS
+        let utf8 = Collation::new(0x0409 | 0x0400_0000, 0);
+        // A lead byte before an invalid trail, then one at the end.
+        assert_eq!(
+            decode_varchar(vec![b'A', 0x82, 0x20, 0x82, 0xa0, 0x82], &sjis).unwrap(),
+            "A\u{FFFD} あ\u{FFFD}"
+        );
+        assert_eq!(
+            decode_varchar(vec![b'a', 0xff, 0xe6, 0x97], &utf8).unwrap(),
+            "a\u{FFFD}\u{FFFD}"
+        );
     }
 
     #[test]

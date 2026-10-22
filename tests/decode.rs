@@ -227,6 +227,35 @@ where
     Ok(())
 }
 
+/// 0x82 0x20, a Shift-JIS lead byte with an invalid trail byte, is stored as
+/// it is; it decodes as U+FFFD, then the space.
+#[test_on_runtimes]
+async fn invalid_code_page_sequences_decode_lossily<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let r = rows(
+        &mut conn,
+        "CREATE TABLE #j (v varchar(10) COLLATE Japanese_CI_AS, c char(4) COLLATE Japanese_CI_AS, \
+         t text COLLATE Japanese_CI_AS, m varchar(max) COLLATE Japanese_CI_AS, s sql_variant); \
+         INSERT #j (v, c) VALUES (CAST(0x418220 AS varbinary(10)), CAST(0x418220 AS varbinary(10))); \
+         UPDATE #j SET t = v, m = v, s = v; \
+         SELECT v, c, t, m, s, CAST(v AS varbinary(10)) FROM #j",
+    )
+    .await?;
+
+    assert_eq!(r[0].get::<&[u8], _>(5), Some(&[0x41, 0x82, 0x20][..]));
+    for i in [0, 2, 3, 4] {
+        assert_eq!(r[0].get::<&str, _>(i), Some("A\u{FFFD} "), "column {i}");
+    }
+    assert_eq!(r[0].get::<&str, _>(1), Some("A\u{FFFD}  "));
+
+    let r = rows(&mut conn, "SELECT 42").await?;
+    assert_eq!(r[0].get::<i32, _>(0), Some(42));
+
+    Ok(())
+}
+
 #[test_on_runtimes]
 async fn numeric_precision_and_display<S>(mut conn: tiberius::Client<S>) -> Result<()>
 where
