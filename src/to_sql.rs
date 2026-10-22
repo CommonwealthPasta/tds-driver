@@ -46,6 +46,10 @@ use uuid::Uuid;
 ///
 /// See the [`time`] module for more information about the date and time structs.
 ///
+/// A [`BigDecimal`] that `decimal(38, s)` cannot hold exactly still converts,
+/// and the query using it fails with [`Error::Conversion`].
+///
+/// [`Error::Conversion`]: crate::error::Error::Conversion
 /// [`Client#query`]: struct.Client.html#method.query
 /// [`Client#execute`]: struct.Client.html#method.execute
 /// [`time`]: time/index.html

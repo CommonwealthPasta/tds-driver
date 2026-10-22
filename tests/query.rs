@@ -2062,6 +2062,26 @@ mod bigdecimal {
 
         Ok(())
     }
+
+    #[test_on_runtimes]
+    async fn bigdecimal_too_precise_for_decimal_38_is_an_error<S>(
+        mut conn: tiberius::Client<S>,
+    ) -> Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send,
+    {
+        use tiberius::numeric::BigDecimal;
+
+        // 100 significant digits.
+        let third = BigDecimal::from(1) / BigDecimal::from(3);
+        let err = conn.query("SELECT @P1", &[&third]).await.unwrap_err();
+        assert!(
+            matches!(err, tiberius::error::Error::Conversion(_)),
+            "{err:?}"
+        );
+
+        Ok(())
+    }
 }
 
 #[cfg(all(not(feature = "tds73"), feature = "chrono"))]

@@ -353,8 +353,7 @@ mod decimal {
 mod bigdecimal_ {
     use super::{BigDecimal, BigInt, Numeric};
     use crate::ColumnData;
-    use num_traits::ToPrimitive;
-    use std::convert::TryFrom;
+    use num_traits::{Signed, ToPrimitive, Zero};
 
     #[cfg(feature = "tds73")]
     from_sql!(BigDecimal: ColumnData::Numeric(ref num) => num.map(|num| {
@@ -363,53 +362,60 @@ mod bigdecimal_ {
         BigDecimal::new(int, num.scale() as i64)
     }));
 
+    /// `ToSql` cannot fail, so a value `decimal(38, s)` cannot hold exactly
+    /// becomes a 39-digit `Numeric`, which the encoder rejects. Rounding is
+    /// left to the caller (`with_scale_round`).
+    fn to_numeric(value: &BigDecimal) -> Numeric {
+        // value = int * 10^-exp
+        let (int, exp) = value.as_bigint_and_exponent();
+
+        if int.is_zero() {
+            return Numeric::new_with_scale(0, exp.clamp(0, 38) as u8);
+        }
+
+        let max = if int.is_negative() {
+            -i128::MAX
+        } else {
+            i128::MAX
+        };
+        let out_of_range = || Numeric::new_with_scale(max, 0);
+
+        let (int, scale) = if exp < 0 {
+            // The server has no negative scale: 9e3 is sent as 9000. Checked
+            // before expanding, as the exponent can be huge.
+            if value.digits().saturating_add(exp.unsigned_abs()) > 38 {
+                return out_of_range();
+            }
+            (int * BigInt::from(10u8).pow(exp.unsigned_abs() as u32), 0)
+        } else if exp > 38 {
+            // Exact only if the digits past scale 38 are trailing zeros.
+            let excess = exp - 38;
+            if excess.unsigned_abs() >= value.digits() {
+                return out_of_range();
+            }
+            let divisor = BigInt::from(10u8).pow(excess as u32);
+            if !(&int % &divisor).is_zero() {
+                return out_of_range();
+            }
+            (int / divisor, 38)
+        } else {
+            (int, exp as u8)
+        };
+
+        match int.to_i128() {
+            Some(v) if v.unsigned_abs() < 10u128.pow(38) => Numeric::new_with_scale(v, scale),
+            _ => out_of_range(),
+        }
+    }
+
     #[cfg(feature = "tds73")]
     to_sql!(self_,
-            BigDecimal: (ColumnData::Numeric, {
-                let (int, exp) = self_.as_bigint_and_exponent();
-                // SQL Server cannot store negative scales, so we have
-                // to convert the number to the correct exponent
-                // before storing.
-                //
-                // E.g. `Decimal(9, -3)` would be stored as
-                // `Decimal(9000, 0)`.
-                let (int, exp) = if exp < 0 {
-                    self_.with_scale(0).into_bigint_and_exponent()
-                } else {
-                    (int, exp)
-                };
-
-                let value = int.to_i128().expect("Given BigDecimal overflowing the maximum accepted value.");
-
-                let scale = u8::try_from(std::cmp::max(exp, 0))
-                    .expect("Given BigDecimal exponent overflowing the maximum accepted scale (255).");
-
-                Numeric::new_with_scale(value, scale)
-            });
+            BigDecimal: (ColumnData::Numeric, to_numeric(self_));
     );
 
     #[cfg(feature = "tds73")]
     into_sql!(self_,
-            BigDecimal: (ColumnData::Numeric, {
-                let (int, exp) = self_.as_bigint_and_exponent();
-                // SQL Server cannot store negative scales, so we have
-                // to convert the number to the correct exponent
-                // before storing.
-                //
-                // E.g. `Decimal(9, -3)` would be stored as
-                // `Decimal(9000, 0)`.
-                let (int, exp) = if exp < 0 {
-                    self_.with_scale(0).into_bigint_and_exponent()
-                } else {
-                    (int, exp)
-                };
-                let value = int.to_i128().expect("Given BigDecimal overflowing the maximum accepted value.");
-
-                let scale = u8::try_from(std::cmp::max(exp, 0))
-                    .expect("Given BigDecimal exponent overflowing the maximum accepted scale (255).");
-
-                Numeric::new_with_scale(value, scale)
-            });
+            BigDecimal: (ColumnData::Numeric, to_numeric(&self_));
     );
 }
 
@@ -849,6 +855,79 @@ mod tests {
             .await
             .expect_err("invalid length must error");
         assert!(matches!(err, Error::Protocol(_)));
+    }
+
+    #[cfg(all(feature = "bigdecimal", feature = "tds73"))]
+    fn bigdecimal_to_numeric(value: &BigDecimal) -> Numeric {
+        use crate::{ColumnData, IntoSql, ToSql};
+
+        let by_ref = match value.to_sql() {
+            ColumnData::Numeric(Some(n)) => n,
+            other => panic!("{other:?}"),
+        };
+        let by_value = match value.clone().into_sql() {
+            ColumnData::Numeric(Some(n)) => n,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            (by_ref.value(), by_ref.scale()),
+            (by_value.value(), by_value.scale())
+        );
+        by_ref
+    }
+
+    #[test]
+    #[cfg(all(feature = "bigdecimal", feature = "tds73"))]
+    fn bigdecimal_out_of_range_is_an_encode_error() {
+        use std::str::FromStr;
+
+        let mut values = vec![BigDecimal::from(1) / BigDecimal::from(3)];
+        for s in [
+            "1e40",
+            "-1e40",
+            "1e38",
+            "1e-39",
+            "-1e-39",
+            "0.1234567890123456789012345678901234567890",
+            "1e-1000000000",
+            "1e1000000000",
+            "1e-9223372036854775807",
+        ] {
+            values.push(BigDecimal::from_str(s).unwrap());
+        }
+
+        for value in values {
+            let err = bigdecimal_to_numeric(&value)
+                .encode(&mut BytesMut::new())
+                .unwrap_err();
+            assert!(matches!(err, Error::Conversion(_)), "{value}: {err:?}");
+        }
+    }
+
+    #[test]
+    #[cfg(all(feature = "bigdecimal", feature = "tds73"))]
+    fn bigdecimal_exact_values_keep_value_and_scale() {
+        use std::str::FromStr;
+
+        let nines = |n: usize| "9".repeat(n);
+        let cases = [
+            ("1.5e3".to_string(), 1500, 0),
+            ("1e-3".to_string(), 1, 3),
+            ("-12.345".to_string(), -12345, 3),
+            (nines(38), 10i128.pow(38) - 1, 0),
+            (format!("0.{}", nines(38)), 10i128.pow(38) - 1, 38),
+            (format!("-{}e-38", nines(38)), -(10i128.pow(38) - 1), 38),
+            // Scale 41, but the three digits past 38 are zeros.
+            (format!("0.15{}", "0".repeat(39)), 15 * 10i128.pow(36), 38),
+            ("0e-50".to_string(), 0, 38),
+            ("0e50".to_string(), 0, 0),
+        ];
+
+        for (s, value, scale) in cases {
+            let n = bigdecimal_to_numeric(&BigDecimal::from_str(&s).unwrap());
+            assert_eq!((n.value(), n.scale()), (value, scale), "{s}");
+            n.encode(&mut BytesMut::new()).unwrap();
+        }
     }
 
     #[test]

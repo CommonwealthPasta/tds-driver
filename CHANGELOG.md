@@ -97,6 +97,9 @@ that land will be documented here.
 - String parameters choose `nvarchar(4000)` or `nvarchar(max)` by UTF-16 length,
   not UTF-8 byte length, so 1334–4000 non-ASCII characters no longer get a
   second cached plan.
+- `BigDecimal::to_sql`/`into_sql` no longer panic on values `decimal(38, s)`
+  cannot hold exactly (`1/3`, `1e40`, `1e-39`); the query fails with
+  `Error::Conversion` instead. Trailing zeros past scale 38 are dropped.
 
 ### Changed
 
