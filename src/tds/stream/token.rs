@@ -88,6 +88,17 @@ impl ServerMessages {
     }
 }
 
+/// Decodes LOGINACK and records the negotiated TDS version, which later
+/// DONE, ERROR and INFO tokens are laid out by.
+async fn decode_login_ack<R>(src: &mut R) -> crate::Result<TokenLoginAck>
+where
+    R: SqlReadBytes + Unpin,
+{
+    let ack = TokenLoginAck::decode(src).await?;
+    src.context_mut().set_version(ack.tds_version);
+    Ok(ack)
+}
+
 pub(crate) struct TokenStream<'a, S: AsyncRead + AsyncWrite + Unpin + Send> {
     conn: &'a mut Connection<S>,
     messages: ServerMessages,
@@ -328,7 +339,7 @@ where
     }
 
     async fn get_login_ack(&mut self) -> crate::Result<ReceivedToken> {
-        let ack = TokenLoginAck::decode(self.conn).await?;
+        let ack = decode_login_ack(self.conn).await?;
         event!(Level::DEBUG, "{} version {}", ack.prog_name, ack.version);
         Ok(ReceivedToken::LoginAck(ack))
     }
@@ -447,6 +458,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sql_read_bytes::test_utils::IntoSqlReadBytes;
+    use crate::tds::codec::{DoneStatus, FeatureLevel};
+    use bytes::{BufMut, BytesMut};
 
     fn error(code: u32, message: &str) -> TokenError {
         TokenError {
@@ -520,5 +534,29 @@ mod tests {
         };
         assert_eq!(err.other_errors().len(), MAX_RELATED_MESSAGES);
         assert_eq!(err.info_messages().len(), MAX_RELATED_MESSAGES);
+    }
+
+    #[tokio::test]
+    async fn login_ack_version_sets_done_row_count_width() {
+        let mut buf = BytesMut::new();
+        buf.put_u16_le(0); // LOGINACK length, ignored
+        buf.put_u8(1);
+        buf.put_u32(FeatureLevel::SqlServer2000Sp1 as u32);
+        buf.put_u8(0); // empty ProgName
+        buf.put_u32_le(0x0800_07D0);
+        // TDS 7.1 DONE: 4-byte DoneRowCount.
+        buf.put_u16_le(DoneStatus::Count as u16);
+        buf.put_u16_le(0xC3);
+        buf.put_u32_le(7);
+        // What a 7.2+ decode would take as the high half of the count.
+        buf.put_u32_le(0xFFFF_FFFF);
+
+        let mut src = buf.into_sql_read_bytes();
+        let ack = decode_login_ack(&mut src).await.unwrap();
+        assert_eq!(ack.tds_version, FeatureLevel::SqlServer2000Sp1);
+        assert_eq!(src.context().version(), FeatureLevel::SqlServer2000Sp1);
+
+        let done = TokenDone::decode(&mut src).await.unwrap();
+        assert_eq!(done.records_affected(), Some(7));
     }
 }

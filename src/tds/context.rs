@@ -70,9 +70,8 @@ impl Context {
         self.transaction_desc = desc;
     }
 
-    /// Overrides the negotiated protocol version. Used by tests to exercise
-    /// version-dependent decode paths (e.g. the pre-2005 4-byte DONE rowcount).
-    #[cfg(test)]
+    /// Set from LOGINACK. Until then the version requested in LOGIN7 is
+    /// assumed, so login-time INFO tokens decode by 7.4 rules.
     pub(crate) fn set_version(&mut self, version: FeatureLevel) {
         self.version = version;
     }

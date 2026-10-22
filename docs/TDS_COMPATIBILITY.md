@@ -15,7 +15,7 @@ Legend: ✅ full · 🟡 partial · ❌ missing · N/A not applicable.
 | **7.4** | 2012–2019 | ✅ Full | Login (`FeatureLevel::SqlServerN`), routing ENVCHANGE, `fReadOnlyIntent`, FedAuth prelogin option + FeatureExt, FEATUREEXTACK, FEDAUTHINFO (0xEE), SESSIONSTATE (0xE4). The only deferral is *transparent reconnect* — SESSIONSTATE is decoded and stored, but not yet replayed to silently re-establish a dropped session. |
 | **7.3 A/B** | 2008 / R2 | ✅ Full (`tds73`) | date / time / datetime2 / datetimeoffset types, NBCROW. |
 | **7.2** | 2005 | ✅ Full | PLP / varchar(max), XML, MARS / transaction-descriptor headers, SQL_VARIANT (read + write), UDT (0xF0) raw-value decode. |
-| **7.1** | 2000 | ✅ Full | Collation, UCS-2 strings, `n`-prefixed var-len types, LOGIN7 layout. |
+| **7.1** | 2000 | ❌ None | Not supported, and never tested against SQL Server 2000. Every SQL batch, RPC and Transaction Manager request carries an ALL_HEADERS block, which 7.2 introduced (MS-TDS 2.2.5.3). The 7.1 layouts of DONE (4-byte row count) and ERROR/INFO (2-byte line number) are decoded once LOGINACK reports 7.1, but INFO tokens the server sends before LOGINACK are still read with the 7.2 layout. |
 | **7.0** | 7.0 | ❌ None | Legacy fixed non-nullable types unsupported; the client only negotiates 7.4. Not a target. |
 
 There is **no Microsoft "TDS 6.0"** — the Microsoft protocol line is
@@ -24,7 +24,7 @@ MS-TDS and are a separate protocol lineage, out of scope for this driver.
 TDS 8.0 has no distinct LOGIN7 version — it reuses 7.4 tokens over mandatory
 TLS, so "8.0" is a transport/ALPN distinction.
 
-**Summary:** TDS 7.1 through 8.0 are fully supported. The only remaining
+**Summary:** TDS 7.2 through 8.0 are fully supported. The only remaining
 elements are optional and rarely used: transparent session recovery (the
 SESSIONSTATE token is decoded and stored, just not replayed on reconnect),
 CLR UDT *object* deserialization (raw bytes are surfaced), and `tds/8.0` ALPN
