@@ -3119,3 +3119,25 @@ where
 
     Ok(())
 }
+
+#[test_on_runtimes]
+async fn empty_xml_parameter<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    // A parameter after the empty value catches a misaligned request.
+    let row = conn
+        .query(
+            "SELECT CAST(@P1 AS nvarchar(max)), @P2",
+            &[&XmlData::new(""), &7i32],
+        )
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+
+    assert_eq!(Some(""), row.get::<&str, _>(0));
+    assert_eq!(Some(7i32), row.get(1));
+
+    Ok(())
+}

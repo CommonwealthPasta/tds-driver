@@ -89,6 +89,7 @@ that land will be documented here.
 - **Malformed values return errors instead of panicking**: a smalldatetime of
   1440+ minutes or a datetime past midnight, a sql_variant or decimal magnitude
   ≥ 2^127, a decimal scale > 38, and `Numeric` equality across a wide scale gap.
+- An empty `XmlData` parameter no longer corrupts the request (error 8009).
 
 ### Changed
 

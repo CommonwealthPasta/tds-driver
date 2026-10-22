@@ -95,6 +95,13 @@ impl Encode<BytesMut> for XmlData {
         // unknown size
         dst.put_u64_le(0xfffffffffffffffe_u64);
 
+        // A zero-length chunk is the PLP terminator, so an empty value is the
+        // terminator alone; a chunk header first would end the value early.
+        if self.data.is_empty() {
+            dst.put_u32_le(0);
+            return Ok(());
+        }
+
         // first blob
         let mut length = 0u32;
         let len_pos = dst.len();
@@ -176,5 +183,15 @@ mod tests {
         assert_eq!(&buf[12..16], &[b'a', 0, b'b', 0]);
         // PLP terminator
         assert_eq!(&buf[16..20], &(0u32).to_le_bytes());
+    }
+
+    #[test]
+    fn encode_empty_is_the_terminator_alone() {
+        let mut buf = BytesMut::new();
+        XmlData::new("").encode(&mut buf).unwrap();
+
+        let mut expected = 0xfffffffffffffffe_u64.to_le_bytes().to_vec();
+        expected.extend_from_slice(&0u32.to_le_bytes());
+        assert_eq!(&buf[..], &expected[..]);
     }
 }
