@@ -538,19 +538,29 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// transaction. Commit the work with [`commit_transaction`] or discard it
     /// with [`rollback_transaction`].
     ///
-    /// The transaction uses the server's default isolation level. Use
-    /// [`begin_transaction_with_isolation`] to request a specific one.
+    /// The transaction is READ COMMITTED, SQL Server's default, whatever
+    /// level an earlier transaction or `SET TRANSACTION ISOLATION LEVEL` left
+    /// on the session; the session stays READ COMMITTED afterwards. Use
+    /// [`begin_transaction_with_isolation`] for another level.
     ///
     /// [`commit_transaction`]: #method.commit_transaction
     /// [`rollback_transaction`]: #method.rollback_transaction
     /// [`begin_transaction_with_isolation`]: #method.begin_transaction_with_isolation
     pub async fn begin_transaction(&mut self) -> crate::Result<()> {
-        self.begin_transaction_with_isolation(IsolationLevel::Unspecified)
+        // Not `Unspecified`, which keeps the session's current level (MS-TDS
+        // 2.2.6.9). SqlClient does the same: `BeginSqlTransaction` turns
+        // `Unspecified` into `ReadCommitted`.
+        self.begin_transaction_with_isolation(IsolationLevel::ReadCommitted)
             .await
     }
 
     /// Begins a new transaction with an explicit isolation level using a
     /// Transaction Manager request (`TM_BEGIN_XACT`, MS-TDS 2.2.6.9).
+    ///
+    /// The level is a session setting: it stays in effect after the
+    /// transaction ends, for statements outside transactions and for later
+    /// transactions begun with [`IsolationLevel::Unspecified`], which keeps
+    /// the current level. [`begin_transaction`] resets it to READ COMMITTED.
     ///
     /// See [`begin_transaction`] for details on transaction scoping.
     ///

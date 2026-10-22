@@ -198,6 +198,13 @@ client.commit_transaction().await?;
 // or client.rollback_transaction().await?;
 ```
 
+An isolation level is a session setting, and it outlives the transaction:
+after `begin_transaction_with_isolation(IsolationLevel::Serializable)`,
+statements outside a transaction run SERIALIZABLE too, and so does a later
+transaction begun with `IsolationLevel::Unspecified`, which keeps the current
+level (MS-TDS 2.2.6.9). `begin_transaction()` always asks for READ COMMITTED
+and so puts the session back to it.
+
 ## `IN (…)` lists
 
 Helpers make variable-length `IN` lists and the 2,100-parameter limit ergonomic —

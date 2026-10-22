@@ -169,3 +169,65 @@ where
 
     Ok(())
 }
+
+async fn session_isolation_level<S>(conn: &mut tiberius::Client<S>) -> Result<i16>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let row = conn
+        .query(
+            "SELECT transaction_isolation_level FROM sys.dm_exec_sessions \
+             WHERE session_id = @@SPID",
+            &[],
+        )
+        .await?
+        .into_row()
+        .await?
+        .expect("the session row exists");
+
+    Ok(row.get::<i16, _>(0).expect("never NULL"))
+}
+
+// sys.dm_exec_sessions.transaction_isolation_level values.
+const READ_COMMITTED: i16 = 2;
+const SERIALIZABLE: i16 = 4;
+
+#[test_on_runtimes]
+async fn begin_transaction_resets_isolation_to_read_committed<S>(
+    mut conn: tiberius::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    conn.begin_transaction_with_isolation(IsolationLevel::Serializable)
+        .await?;
+    conn.commit_transaction().await?;
+    // The level outlives the transaction (MS-TDS 2.2.6.9).
+    assert_eq!(SERIALIZABLE, session_isolation_level(&mut conn).await?);
+
+    conn.begin_transaction().await?;
+    let in_transaction = session_isolation_level(&mut conn).await?;
+    conn.commit_transaction().await?;
+    assert_eq!(READ_COMMITTED, in_transaction);
+    assert_eq!(READ_COMMITTED, session_isolation_level(&mut conn).await?);
+
+    Ok(())
+}
+
+#[test_on_runtimes]
+async fn unspecified_isolation_keeps_session_level<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    conn.begin_transaction_with_isolation(IsolationLevel::Serializable)
+        .await?;
+    conn.commit_transaction().await?;
+
+    conn.begin_transaction_with_isolation(IsolationLevel::Unspecified)
+        .await?;
+    let in_transaction = session_isolation_level(&mut conn).await?;
+    conn.commit_transaction().await?;
+    assert_eq!(SERIALIZABLE, in_transaction);
+
+    Ok(())
+}

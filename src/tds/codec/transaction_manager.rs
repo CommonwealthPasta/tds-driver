@@ -27,9 +27,17 @@ uint_enum! {
 uint_enum! {
     /// The transaction isolation level requested when beginning a transaction
     /// through a Transaction Manager request (MS-TDS 2.2.6.9).
+    ///
+    /// Any level other than `Unspecified` is a session setting, like
+    /// `SET TRANSACTION ISOLATION LEVEL`: it stays in effect after the
+    /// transaction ends, for later transactions and for statements outside
+    /// any transaction.
     #[repr(u8)]
     pub enum IsolationLevel {
-        /// Use the server's default isolation level.
+        /// Keep the session's current isolation level ("No isolation level
+        /// change requested. Use current.", MS-TDS 2.2.6.9). That is READ
+        /// COMMITTED only on a session that never set another level: after a
+        /// SERIALIZABLE transaction, an `Unspecified` one is SERIALIZABLE too.
         Unspecified = 0x00,
         /// `READ UNCOMMITTED`.
         ReadUncommitted = 0x01,
@@ -78,8 +86,8 @@ enum TransactionRequestBody<'a> {
 
 impl<'a> TransactionManagerRequest<'a> {
     /// Build a `TM_BEGIN_XACT` request that begins a new transaction with the
-    /// given isolation level. The (usually empty) transaction name is sent as
-    /// a `B_VARCHAR`.
+    /// given isolation level (see [`IsolationLevel`] for how long it lasts).
+    /// The (usually empty) transaction name is sent as a `B_VARCHAR`.
     pub fn begin(
         transaction_desc: [u8; 8],
         isolation_level: IsolationLevel,

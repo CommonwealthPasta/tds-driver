@@ -70,6 +70,11 @@ that land will be documented here.
   straight into a buffer of the right size. On recorded responses, 1M narrow
   rows take 24% less time, 200k wide rows read 3.4 times as fast, and a 50 MB
   nvarchar(max) value 21 times as fast.
+- **`begin_transaction()` asks for READ COMMITTED** instead of
+  `IsolationLevel::Unspecified`, which keeps the session's current level (MS-TDS
+  2.2.6.9), so a transaction after a SERIALIZABLE one was SERIALIZABLE too. This
+  matches SqlClient's `BeginTransaction()`. The `IsolationLevel` docs now say
+  that a level outlives its transaction.
 
 ## [0.13.1] - 2026-08-30
 
