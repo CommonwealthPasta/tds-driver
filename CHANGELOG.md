@@ -243,6 +243,9 @@ that land will be documented here.
   lengths: bulk column names (a debug-build panic), UDT names in bulk and TVP
   metadata, XML schema names in TVP metadata, and `save_transaction` names over
   255 UTF-16 units.
+- **An instance name too long for PRELOGIN's u16 offsets and an access token of
+  2^31 UTF-16 units are errors**; the first panicked debug builds, the second
+  wrapped LOGIN7's u32 lengths.
 
 ### Changed
 

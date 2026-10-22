@@ -429,6 +429,13 @@ impl<'a> LoginMessage<'a> {
                 // token length, token, nonce, terminator
                 4 + 1 + 4 + 1 + 4 + token_bytes + f.nonce.map_or(0, |n| n.len()) + 1
             });
+        // Length, FeatureDataLen and the token's length are DWORDs; within
+        // `capacity`, the `as u32` below can't wrap.
+        if u32::try_from(capacity).is_err() {
+            return Err(crate::Error::Conversion(
+                format!("LOGIN7: an access token of {token_bytes} bytes is too long").into(),
+            ));
+        }
         let mut cursor = Cursor::new(Vec::with_capacity(capacity));
 
         // Space for the length
@@ -978,5 +985,15 @@ mod tests {
             let encoded = login.encode_to_vec().unwrap();
             assert_eq!(encoded.capacity(), encoded.len());
         }
+    }
+
+    #[test]
+    #[ignore = "allocates 2 GiB"]
+    fn access_token_past_4_gib_is_an_error() {
+        // LOGIN7's Length and the token's are DWORDs; 2^31 units wrapped them.
+        let mut login = LoginMessage::new();
+        login.aad_token("t".repeat(1 << 31), true, None);
+        let err = login.encode_to_vec().unwrap_err();
+        assert!(matches!(err, crate::Error::Conversion(_)), "{err:?}");
     }
 }
