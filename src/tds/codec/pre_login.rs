@@ -8,24 +8,29 @@ use std::io::{Cursor, Read, Write};
 use tds::EncryptionLevel;
 use uuid::Uuid;
 
-/// Client application activity id token used for debugging purposes introduced
-/// in TDS 7.4.
+/// The `TRACEID` option (MS-TDS 2.2.6.5, TDS 7.4): the client's connection
+/// id, then an activity id and its sequence number, for correlating the
+/// connection in server-side traces.
 #[allow(unused)]
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ActivityId {
+    connection_id: Uuid,
     id: Uuid,
     sequence: u32,
 }
 
 impl ActivityId {
-    /// Creates a new activity id (`TRACEID`, MS-TDS §2.2.6.5) from a client
-    /// activity [`Uuid`] and a monotonically increasing sequence number. The
-    /// value is emitted in the PRELOGIN packet so a server administrator can
-    /// correlate the connection in server-side traces.
+    /// GUID_CONNID, GUID_ActivityID and ActivitySequence.
+    const LEN: u16 = 16 + 16 + 4;
+
     #[allow(dead_code)]
-    pub fn new(id: Uuid, sequence: u32) -> Self {
-        Self { id, sequence }
+    pub fn new(connection_id: Uuid, id: Uuid, sequence: u32) -> Self {
+        Self {
+            connection_id,
+            id,
+            sequence,
+        }
     }
 }
 
@@ -195,15 +200,14 @@ impl Encode<BytesMut> for PreloginMessage {
         fields.push((PRELOGIN_MARS, 0x01)); // MARS
         data_cursor.write_u8(self.mars as u8)?;
 
-        // activity id (TRACEID): a client GUID plus a sequence number, emitted
-        // only when the client supplies one for server-side trace correlation.
-        if let Some(activity_id) = self.activity_id.as_ref() {
-            fields.push((PRELOGIN_TRACEID, 0x14)); // 16-byte GUID + 4-byte sequence
-
-            let mut data = *activity_id.id.as_bytes();
-            reorder_bytes(&mut data);
-            data_cursor.write_all(&data)?;
-            data_cursor.write_u32::<LittleEndian>(activity_id.sequence)?;
+        if let Some(trace) = self.activity_id.as_ref() {
+            fields.push((PRELOGIN_TRACEID, ActivityId::LEN));
+            for id in [trace.connection_id, trace.id] {
+                let mut data = *id.as_bytes();
+                reorder_bytes(&mut data);
+                data_cursor.write_all(&data)?;
+            }
+            data_cursor.write_u32::<LittleEndian>(trace.sequence)?;
         }
 
         // fed auth
@@ -294,17 +298,19 @@ impl Decode<BytesMut> for PreloginMessage {
                 PRELOGIN_MARS => {
                     ret.mars = data.first().is_some_and(|b| *b != 0);
                 }
-                // activity id
-                PRELOGIN_TRACEID => {
-                    // Data is a Guid, 16 bytes and ordered the wrong way around
-                    // than Uuid.
-                    let mut data = [0u8; 16];
-
-                    cursor.read_exact(&mut data)?;
-                    reorder_bytes(&mut data);
+                // Other lengths are ignored, as SqlClient ignores the option.
+                PRELOGIN_TRACEID if length == ActivityId::LEN => {
+                    let mut guid = || {
+                        let mut data = [0u8; 16];
+                        cursor.read_exact(&mut data)?;
+                        reorder_bytes(&mut data);
+                        Result::Ok(Uuid::from_bytes(data))
+                    };
+                    let (connection_id, id) = (guid()?, guid()?);
 
                     ret.activity_id = Some(ActivityId {
-                        id: Uuid::from_bytes(data),
+                        connection_id,
+                        id,
                         sequence: cursor.read_u32::<LittleEndian>()?,
                     });
                 }
@@ -410,22 +416,34 @@ mod tests {
         let mut prelogin = PreloginMessage::new();
         prelogin.activity_id = Some(ActivityId::new(
             Uuid::parse_str("6f9619ff-8b86-d011-b42d-00c04fc964ff").unwrap(),
-            42,
+            Uuid::parse_str("00112233-4455-6677-8899-aabbccddeeff").unwrap(),
+            0x0102_0304,
         ));
         prelogin
             .clone()
             .encode(&mut with)
             .expect("encode should succeed");
 
-        assert!(option_tokens(&with).contains(&PRELOGIN_TRACEID));
-        // 16-byte GUID + 4-byte sequence.
-        assert_eq!(
-            option_payload(&with, PRELOGIN_TRACEID).map(|p| p.len()),
-            Some(20)
-        );
+        // GUID_CONNID, GUID_ActivityID (both as .NET writes a Guid), then
+        // ActivitySequence, little-endian: 36 bytes.
+        let mut expected = vec![
+            0xff, 0x19, 0x96, 0x6f, 0x86, 0x8b, 0x11, 0xd0, 0xb4, 0x2d, 0x00, 0xc0, 0x4f, 0xc9,
+            0x64, 0xff,
+        ];
+        expected.extend_from_slice(&[
+            0x33, 0x22, 0x11, 0x00, 0x55, 0x44, 0x77, 0x66, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff,
+        ]);
+        expected.extend_from_slice(&[4, 3, 2, 1]);
+        assert_eq!(option_payload(&with, PRELOGIN_TRACEID), Some(expected));
 
         let decoded = PreloginMessage::decode(&mut with).expect("decode should succeed");
         assert_eq!(decoded.activity_id, prelogin.activity_id);
+
+        // A TRACEID of another length is skipped, not misread.
+        let mut buf = response(&[(PRELOGIN_TRACEID, &[0; 20]), (PRELOGIN_MARS, &[1])]);
+        let decoded = PreloginMessage::decode(&mut buf).unwrap();
+        assert_eq!((decoded.activity_id, decoded.mars), (None, true));
     }
 
     #[test]
