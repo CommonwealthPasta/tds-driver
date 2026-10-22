@@ -17,7 +17,7 @@ use crate::{
     EncryptionLevel, SqlReadBytes,
 };
 use asynchronous_codec::Framed;
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 #[cfg(any(windows, feature = "integrated-auth-gssapi", feature = "sspi-rs"))]
 use codec::TokenSspi;
 use futures_util::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
@@ -979,7 +979,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> futures_util::io::AsyncRead for C
             }
         }
 
-        buf.copy_from_slice(this.buf.split_to(size).as_ref());
+        buf.copy_from_slice(&this.buf[..size]);
+        this.buf.advance(size);
         Poll::Ready(Ok(size))
     }
 }
