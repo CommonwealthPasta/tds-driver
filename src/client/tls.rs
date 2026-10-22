@@ -134,12 +134,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for MaybeTlsStream<S> 
     }
 }
 
-/// On TLS handshake, the server expects to get and sends back normal TDS
-/// packets. To use a common TLS library, we must implement a wrapper for
-/// packet handling on this stage.
-///
-/// What it does is it interferes on handshake for TDS packet handling,
-/// and when complete, just passes the calls to the underlying connection.
+/// TDS 7.x carries the TLS handshake in PRELOGIN packets; this wrapper adds
+/// and strips that framing until `handshake_complete`, then passes through.
 #[cfg(any(
     feature = "rustls",
     feature = "native-tls",
@@ -153,9 +149,22 @@ pub(crate) struct TlsPreloginWrapper<S> {
     header_pos: usize,
     read_remaining: usize,
 
+    /// TLS bytes written but not yet framed.
     wr_buf: Vec<u8>,
-    header_written: bool,
+    /// Framed packets, of which `out_pos` bytes are on the wire.
+    out: Vec<u8>,
+    out_pos: usize,
+    packet_id: u8,
 }
+
+/// Packet size before login negotiates one; SQL Server drops larger
+/// handshake packets.
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
+const PRELOGIN_PACKET_SIZE: usize = 4096;
 
 #[cfg(any(
     feature = "rustls",
@@ -171,13 +180,41 @@ impl<S> TlsPreloginWrapper<S> {
             header_buf: [0u8; HEADER_BYTES],
             header_pos: 0,
             read_remaining: 0,
-            wr_buf: vec![0u8; HEADER_BYTES],
-            header_written: false,
+            wr_buf: Vec::new(),
+            out: Vec::new(),
+            out_pos: 0,
+            packet_id: 1,
         }
     }
 
     pub fn handshake_complete(&mut self) {
         self.pending_handshake = false;
+    }
+
+    /// Moves `wr_buf` into `out` as one PRELOGIN message of packets no
+    /// larger than `PRELOGIN_PACKET_SIZE`.
+    fn frame_pending(&mut self) {
+        let mut chunks = self
+            .wr_buf
+            .chunks(PRELOGIN_PACKET_SIZE - HEADER_BYTES)
+            .peekable();
+
+        while let Some(chunk) = chunks.next() {
+            let mut header = PacketHeader::new(chunk.len() + HEADER_BYTES, self.packet_id);
+            header.set_type(PacketType::PreLogin);
+            header.set_status(if chunks.peek().is_some() {
+                PacketStatus::NormalMessage
+            } else {
+                PacketStatus::EndOfMessage
+            });
+            header
+                .encode(&mut self.out)
+                .expect("encoding a header into a Vec cannot fail");
+            self.out.extend_from_slice(chunk);
+            self.packet_id = self.packet_id.wrapping_add(1);
+        }
+
+        self.wr_buf.clear();
     }
 }
 
@@ -279,7 +316,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for TlsPreloginWrapper
             return Pin::new(&mut self.stream.as_mut().unwrap()).poll_write(cx, buf);
         }
 
-        // Buffering data.
+        // Framed on flush, which is where a TLS flight ends.
         self.wr_buf.extend_from_slice(buf);
 
         Poll::Ready(Ok(buf.len()))
@@ -288,39 +325,29 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for TlsPreloginWrapper
     fn poll_flush(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         let inner = self.get_mut();
 
-        // If on handshake mode, wraps the data to a TDS packet before sending.
-        if inner.pending_handshake && inner.wr_buf.len() > HEADER_BYTES {
-            if !inner.header_written {
-                let mut header = PacketHeader::new(inner.wr_buf.len(), 0);
-
-                header.set_type(PacketType::PreLogin);
-                header.set_status(PacketStatus::EndOfMessage);
-
-                header
-                    .encode(&mut &mut inner.wr_buf[0..HEADER_BYTES])
-                    .map_err(|_| {
-                        io::Error::new(io::ErrorKind::InvalidInput, "Could not encode header.")
-                    })?;
-
-                inner.header_written = true;
+        // Bytes written while a flight is partly on the wire become the next
+        // message, never the tail of the current one.
+        while inner.out_pos < inner.out.len() || !inner.wr_buf.is_empty() {
+            if inner.out_pos == inner.out.len() {
+                inner.out.clear();
+                inner.out_pos = 0;
+                inner.frame_pending();
             }
 
-            while !inner.wr_buf.is_empty() {
-                event!(
-                    Level::TRACE,
-                    "Writing a packet of {} bytes",
-                    inner.wr_buf.len(),
-                );
+            event!(
+                Level::TRACE,
+                "Writing {} bytes of pre-login packets",
+                inner.out.len() - inner.out_pos,
+            );
 
-                let written = ready!(
-                    Pin::new(&mut inner.stream.as_mut().unwrap()).poll_write(cx, &inner.wr_buf)
-                )?;
+            let written = ready!(Pin::new(inner.stream.as_mut().unwrap())
+                .poll_write(cx, &inner.out[inner.out_pos..]))?;
 
-                inner.wr_buf.drain(..written);
+            if written == 0 {
+                return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
             }
 
-            inner.wr_buf.resize(HEADER_BYTES, 0);
-            inner.header_written = false;
+            inner.out_pos += written;
         }
 
         Pin::new(&mut inner.stream.as_mut().unwrap()).poll_flush(cx)
@@ -328,5 +355,171 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for TlsPreloginWrapper
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.stream.as_mut().unwrap()).poll_close(cx)
+    }
+}
+
+#[cfg(all(
+    test,
+    any(
+        feature = "rustls",
+        feature = "native-tls",
+        feature = "vendored-openssl"
+    )
+))]
+mod tests {
+    use super::*;
+    use std::task::{Context, Waker};
+
+    /// Moves at most `max` bytes per call and returns `Pending` on every
+    /// other call.
+    struct Choppy {
+        input: Vec<u8>,
+        read_pos: usize,
+        written: Vec<u8>,
+        max: usize,
+        flip: bool,
+    }
+
+    impl Choppy {
+        fn new(max: usize, input: Vec<u8>) -> Self {
+            Self {
+                input,
+                read_pos: 0,
+                written: Vec::new(),
+                max,
+                flip: false,
+            }
+        }
+
+        fn pending(&mut self, cx: &mut Context<'_>) -> bool {
+            self.flip = !self.flip;
+            if self.flip {
+                cx.waker().wake_by_ref();
+            }
+            self.flip
+        }
+    }
+
+    impl AsyncRead for Choppy {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut [u8],
+        ) -> Poll<io::Result<usize>> {
+            if self.pending(cx) {
+                return Poll::Pending;
+            }
+            let n = buf
+                .len()
+                .min(self.max)
+                .min(self.input.len() - self.read_pos);
+            buf[..n].copy_from_slice(&self.input[self.read_pos..self.read_pos + n]);
+            self.read_pos += n;
+            Poll::Ready(Ok(n))
+        }
+    }
+
+    impl AsyncWrite for Choppy {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            if self.pending(cx) {
+                return Poll::Pending;
+            }
+            let n = buf.len().min(self.max);
+            self.written.extend_from_slice(&buf[..n]);
+            Poll::Ready(Ok(n))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn cx() -> Context<'static> {
+        Context::from_waker(Waker::noop())
+    }
+
+    fn write(w: &mut TlsPreloginWrapper<Choppy>, data: &[u8]) {
+        assert_eq!(
+            Pin::new(w).poll_write(&mut cx(), data).map(Result::unwrap),
+            Poll::Ready(data.len())
+        );
+    }
+
+    fn flush(w: &mut TlsPreloginWrapper<Choppy>) {
+        while Pin::new(&mut *w)
+            .poll_flush(&mut cx())
+            .map(Result::unwrap)
+            .is_pending()
+        {}
+    }
+
+    /// Splits wire bytes into messages, checking every packet header.
+    fn messages(mut wire: &[u8]) -> Vec<Vec<u8>> {
+        let mut messages = vec![Vec::new()];
+        while !wire.is_empty() {
+            assert_eq!(wire[0], PacketType::PreLogin as u8);
+            let len = u16::from_be_bytes([wire[2], wire[3]]) as usize;
+            assert!(
+                (HEADER_BYTES + 1..=PRELOGIN_PACKET_SIZE).contains(&len),
+                "packet of {len} bytes"
+            );
+            messages
+                .last_mut()
+                .unwrap()
+                .extend_from_slice(&wire[HEADER_BYTES..len]);
+            if wire[1] == PacketStatus::EndOfMessage as u8 {
+                messages.push(Vec::new());
+            } else {
+                assert_eq!(wire[1], PacketStatus::NormalMessage as u8);
+            }
+            wire = &wire[len..];
+        }
+        assert!(
+            messages.pop().unwrap().is_empty(),
+            "last message lacks EndOfMessage"
+        );
+        messages
+    }
+
+    fn pattern(len: usize, seed: u8) -> Vec<u8> {
+        (0..len)
+            .map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed))
+            .collect()
+    }
+
+    #[test]
+    fn flights_survive_partial_writes_and_are_split_into_packets() {
+        for (len, max) in [(1, 1), (9, 3), (4088, 3), (4089, 7), (70_000, 1000)] {
+            let flight = pattern(len, 1);
+            let mut w = TlsPreloginWrapper::new(Choppy::new(max, Vec::new()));
+            write(&mut w, &flight);
+            flush(&mut w);
+            assert_eq!(
+                messages(&w.stream.as_ref().unwrap().written),
+                vec![flight],
+                "len {len}"
+            );
+        }
+    }
+
+    #[test]
+    fn bytes_written_mid_flush_start_a_new_message() {
+        let (a, b) = (pattern(5000, 1), pattern(300, 2));
+        let mut w = TlsPreloginWrapper::new(Choppy::new(3, Vec::new()));
+        write(&mut w, &a);
+        for _ in 0..10 {
+            let _ = Pin::new(&mut w).poll_flush(&mut cx());
+        }
+        write(&mut w, &b);
+        flush(&mut w);
+        assert_eq!(messages(&w.stream.as_ref().unwrap().written), vec![a, b]);
     }
 }
