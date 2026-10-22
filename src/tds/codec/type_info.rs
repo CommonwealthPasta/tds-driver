@@ -294,24 +294,9 @@ impl Encode<BytesMut> for TypeInfo {
 
                 if let Some(xs) = schema {
                     dst.put_u8(1);
-
-                    let db_name_encoded: Vec<u16> = xs.db_name().encode_utf16().collect();
-                    dst.put_u8(db_name_encoded.len() as u8);
-                    for chr in db_name_encoded {
-                        dst.put_u16_le(chr);
-                    }
-
-                    let owner_encoded: Vec<u16> = xs.owner().encode_utf16().collect();
-                    dst.put_u8(owner_encoded.len() as u8);
-                    for chr in owner_encoded {
-                        dst.put_u16_le(chr);
-                    }
-
-                    let collection_encoded: Vec<u16> = xs.collection().encode_utf16().collect();
-                    dst.put_u16_le(collection_encoded.len() as u16);
-                    for chr in collection_encoded {
-                        dst.put_u16_le(chr);
-                    }
+                    put_b_varchar(dst, xs.db_name(), "XML schema database name")?;
+                    put_b_varchar(dst, xs.owner(), "XML schema owner")?;
+                    put_us_varchar(dst, xs.collection(), "XML schema collection name")?;
                 } else {
                     dst.put_u8(0);
                 }
@@ -713,6 +698,10 @@ mod tests {
         // 256 wrapped a B_VARCHAR length to 0, 65,536 a US_VARCHAR's.
         let (b, b_over) = ("a".repeat(255), "a".repeat(256));
         let (us, us_over) = ("a".repeat(65_535), "a".repeat(65_536));
+        let xml = |db: &str, owner: &str, collection: &str| TypeInfo::Xml {
+            schema: Some(Arc::new(XmlSchema::new(db, owner, collection))),
+            size: 0xfffffffffffffffe_usize,
+        };
         let udt = |db: &str, schema: &str, ty: &str, aqn: &str| {
             TypeInfo::Udt(UdtInfo {
                 max_byte_size: 0xffff,
@@ -724,6 +713,9 @@ mod tests {
         };
 
         for ti in [
+            xml(&b_over, "", ""),
+            xml("", &b_over, ""),
+            xml("", "", &us_over),
             udt(&b_over, "", "", ""),
             udt("", &b_over, "", ""),
             udt("", "", &b_over, ""),
@@ -733,6 +725,7 @@ mod tests {
             assert!(matches!(err, Error::Conversion(_)), "{err:?}");
         }
 
+        xml(&b, &b, &us).encode(&mut BytesMut::new()).unwrap();
         udt(&b, &b, &b, &us).encode(&mut BytesMut::new()).unwrap();
     }
 }
