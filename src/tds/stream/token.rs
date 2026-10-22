@@ -117,20 +117,18 @@ where
         }
     }
 
-    pub(crate) async fn flush_done(self) -> crate::Result<TokenDone> {
-        let mut stream = self.try_unfold();
-        let mut messages = ServerMessages::default();
+    pub(crate) async fn flush_done(mut self) -> crate::Result<TokenDone> {
         let mut routing = None;
 
         loop {
-            match stream.try_next().await? {
-                Some(ReceivedToken::Error(error)) => messages.error(error),
-                Some(ReceivedToken::Info(info)) => messages.info(&info),
-                Some(ReceivedToken::Done(token)) => match (messages.into_error(), routing) {
-                    (Some(error), _) => return Err(error),
-                    (_, Some(routing)) => return Err(routing),
-                    (_, _) => return Ok(token),
-                },
+            match self.next_token().await? {
+                Some(ReceivedToken::Done(token)) => {
+                    match (self.messages.take().and_then(|m| m.into_error()), routing) {
+                        (Some(error), _) => return Err(error),
+                        (_, Some(routing)) => return Err(routing),
+                        (_, _) => return Ok(token),
+                    }
+                }
                 Some(ReceivedToken::EnvChange(TokenEnvChange::Routing { host, port })) => {
                     routing = Some(Error::Routing { host, port });
                 }
@@ -389,36 +387,42 @@ where
 
     pub fn try_unfold(self) -> BoxStream<'a, crate::Result<ReceivedToken>> {
         let stream = futures_util::stream::try_unfold(self, |mut this| async move {
-            if this.conn.is_eof() {
-                return match this.messages.take().and_then(|m| m.into_error()) {
-                    None => Ok(None),
-                    Some(error) => Err(error),
-                };
-            }
-
-            this.conn.begin_token()?;
-            let token = match this.read_token().await {
-                Ok(token) => token,
-                Err(e) => {
-                    this.conn.abandon_token();
-                    return Err(e);
-                }
-            };
-            this.conn.end_token();
-
-            if let ReceivedToken::Done(done)
-            | ReceivedToken::DoneProc(done)
-            | ReceivedToken::DoneInProc(done) = &token
-            {
-                if done.is_attention() {
-                    this.conn.attention_acknowledged();
-                }
-            }
-
-            Ok(Some((token, this)))
+            Ok(this.next_token().await?.map(|token| (token, this)))
         });
 
         Box::pin(stream)
+    }
+
+    /// The next token, or at the end of the response `None`, or the first
+    /// server error in it.
+    async fn next_token(&mut self) -> crate::Result<Option<ReceivedToken>> {
+        if self.conn.is_eof() {
+            return match self.messages.take().and_then(|m| m.into_error()) {
+                None => Ok(None),
+                Some(error) => Err(error),
+            };
+        }
+
+        self.conn.begin_token()?;
+        let token = match self.read_token().await {
+            Ok(token) => token,
+            Err(e) => {
+                self.conn.abandon_token();
+                return Err(e);
+            }
+        };
+        self.conn.end_token();
+
+        if let ReceivedToken::Done(done)
+        | ReceivedToken::DoneProc(done)
+        | ReceivedToken::DoneInProc(done) = &token
+        {
+            if done.is_attention() {
+                self.conn.attention_acknowledged();
+            }
+        }
+
+        Ok(Some(token))
     }
 
     async fn read_token(&mut self) -> crate::Result<ReceivedToken> {
