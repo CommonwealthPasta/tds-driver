@@ -81,7 +81,7 @@ cargo build --features=all   # make sure every feature still compiles
 ### Full integration suite (requires a live SQL Server)
 
 Most of the test suite exercises a real server over TDS, so you need a running
-SQL Server instance and the `TIBERIUS_TEST_CONNECTION_STRING` environment
+SQL Server instance and the `TDS_DRIVER_TEST_CONNECTION_STRING` environment
 variable pointing at it.
 
 The repository ships a `docker-compose.yml` with services for SQL Server 2017,
@@ -95,7 +95,7 @@ DOCKER_BUILDKIT=1 docker compose up -d mssql-2022
 Then export the connection string used by the tests and run them:
 
 ```bash
-export TIBERIUS_TEST_CONNECTION_STRING="server=tcp:localhost,1433;user=SA;password=<YourStrong@Passw0rd>;TrustServerCertificate=true"
+export TDS_DRIVER_TEST_CONNECTION_STRING="server=tcp:localhost,1433;user=SA;password=<YourStrong@Passw0rd>;TrustServerCertificate=true"
 
 cargo test --features=all
 ```

@@ -113,7 +113,7 @@ jobs:
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/dev')
     runs-on: ubuntu-latest
     env:
-      TIBERIUS_TEST_CONNECTION_STRING: "server=tcp:localhost,1433;user=SA;password=<YourStrong@Passw0rd>;TrustServerCertificate=true"
+      TDS_DRIVER_TEST_CONNECTION_STRING: "server=tcp:localhost,1433;user=SA;password=<YourStrong@Passw0rd>;TrustServerCertificate=true"
       RUSTFLAGS: "-Dwarnings"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -160,7 +160,7 @@ jobs:
           - "--no-default-features --features=rustls"
           - "--no-default-features --features=vendored-openssl"
     env:
-      TIBERIUS_TEST_CONNECTION_STRING: "server=tcp:localhost,1433;user=SA;password=<YourStrong@Passw0rd>;TrustServerCertificate=true"
+      TDS_DRIVER_TEST_CONNECTION_STRING: "server=tcp:localhost,1433;user=SA;password=<YourStrong@Passw0rd>;TrustServerCertificate=true"
       RUSTFLAGS: "-Dwarnings"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -202,7 +202,7 @@ jobs:
     # server-side behaviour change on the bleeding edge cannot red-wall qa.
     continue-on-error: true
     env:
-      TIBERIUS_TEST_CONNECTION_STRING: "server=tcp:localhost,1433;user=SA;password=<YourStrong@Passw0rd>;TrustServerCertificate=true"
+      TDS_DRIVER_TEST_CONNECTION_STRING: "server=tcp:localhost,1433;user=SA;password=<YourStrong@Passw0rd>;TrustServerCertificate=true"
       RUSTFLAGS: "-Dwarnings"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -270,8 +270,8 @@ jobs:
           - "--no-default-features --features=rustls,winauth"
           - "--no-default-features --features=vendored-openssl,winauth"
     env:
-      TIBERIUS_TEST_INSTANCE: "MSSQLSERVER"
-      TIBERIUS_TEST_CONNECTION_STRING: "server=tcp:127.0.0.1,1433;IntegratedSecurity=true;TrustServerCertificate=true"
+      TDS_DRIVER_TEST_INSTANCE: "MSSQLSERVER"
+      TDS_DRIVER_TEST_CONNECTION_STRING: "server=tcp:127.0.0.1,1433;IntegratedSecurity=true;TrustServerCertificate=true"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

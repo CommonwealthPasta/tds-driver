@@ -13,13 +13,13 @@ use tds_driver::{Client, Config, Result, SqlBrowser};
 static LOGGER_SETUP: Once = Once::new();
 
 static CONN_STR: Lazy<String> = Lazy::new(|| {
-    env::var("TIBERIUS_TEST_CONNECTION_STRING").unwrap_or_else(|_| {
+    env::var("TDS_DRIVER_TEST_CONNECTION_STRING").unwrap_or_else(|_| {
         "server=tcp:localhost,1433;IntegratedSecurity=true;TrustServerCertificate=true".to_owned()
     })
 });
 
 static NAMED_INSTANCE_CONN_STR: Lazy<String> = Lazy::new(|| {
-    let instance_name = env::var("TIBERIUS_TEST_INSTANCE").unwrap_or("MSSQLSERVER".to_owned());
+    let instance_name = env::var("TDS_DRIVER_TEST_INSTANCE").unwrap_or("MSSQLSERVER".to_owned());
     CONN_STR.replace(",1433", &format!("\\{}", instance_name))
 });
 

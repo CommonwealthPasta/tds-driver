@@ -40,7 +40,7 @@ use std::{
 /// # use futures_util::stream::TryStreamExt;
 /// # #[tokio::main]
 /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// # let c_str = env::var("TIBERIUS_TEST_CONNECTION_STRING").unwrap_or(
+/// # let c_str = env::var("TDS_DRIVER_TEST_CONNECTION_STRING").unwrap_or(
 /// #     "server=tcp:localhost,1433;integratedSecurity=true;TrustServerCertificate=true".to_owned(),
 /// # );
 /// # let config = Config::from_ado_string(&c_str)?;
@@ -151,7 +151,7 @@ impl<'a> QueryStream<'a> {
     /// # use futures_util::stream::TryStreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> anyhow::Result<()> {
-    /// # let c_str = env::var("TIBERIUS_TEST_CONNECTION_STRING").unwrap_or(
+    /// # let c_str = env::var("TDS_DRIVER_TEST_CONNECTION_STRING").unwrap_or(
     /// #     "server=tcp:localhost,1433;integratedSecurity=true;TrustServerCertificate=true".to_owned(),
     /// # );
     /// # let config = Config::from_ado_string(&c_str)?;

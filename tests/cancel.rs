@@ -23,7 +23,7 @@ use tds_driver::{CancelHandle, Client, Config, Result};
 static LOGGER_SETUP: Once = Once::new();
 
 static CONN_STR: Lazy<String> = Lazy::new(|| {
-    env::var("TIBERIUS_TEST_CONNECTION_STRING").unwrap_or_else(|_| {
+    env::var("TDS_DRIVER_TEST_CONNECTION_STRING").unwrap_or_else(|_| {
         "server=tcp:localhost,1433;user=SA;password=<YourStrong@Passw0rd>;IntegratedSecurity=true;TrustServerCertificate=true".to_owned()
     })
 });

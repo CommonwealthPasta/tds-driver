@@ -186,7 +186,7 @@ easiest way is the bundled helper:
 
 ```bash
 ./docker/test-server.sh              # starts SQL Server (docker or podman)
-export TIBERIUS_TEST_CONNECTION_STRING="server=tcp:localhost,1433;user=SA;password=<YourStrong@Passw0rd>;TrustServerCertificate=true"
+export TDS_DRIVER_TEST_CONNECTION_STRING="server=tcp:localhost,1433;user=SA;password=<YourStrong@Passw0rd>;TrustServerCertificate=true"
 cargo test --features all
 ```
 

@@ -8,7 +8,7 @@
 #
 # Then:
 #
-#   export TIBERIUS_TEST_CONNECTION_STRING='server=tcp:localhost,1433;user=SA;password=<YourStrong@Passw0rd>;IntegratedSecurity=true;TrustServerCertificate=true'
+#   export TDS_DRIVER_TEST_CONNECTION_STRING='server=tcp:localhost,1433;user=SA;password=<YourStrong@Passw0rd>;IntegratedSecurity=true;TrustServerCertificate=true'
 #   cargo test
 #
 # IMAGE selects the flavour; the default works on both x86_64 and arm64.

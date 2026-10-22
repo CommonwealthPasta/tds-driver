@@ -26,7 +26,7 @@ pull requests are reviewed and merged faster.
 - [ ] This PR targets the **`dev`** branch (feature work lands on `dev`, is promoted to `qa`, then `main`).
 - [ ] `cargo fmt --all` has been run and the code is formatted.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes with no warnings.
-- [ ] `cargo test` passes. Integration tests against a live SQL Server (via `TIBERIUS_TEST_CONNECTION_STRING` / `docker compose`) were run if the change affects runtime behaviour.
+- [ ] `cargo test` passes. Integration tests against a live SQL Server (via `TDS_DRIVER_TEST_CONNECTION_STRING` / `docker compose`) were run if the change affects runtime behaviour.
 - [ ] Supply-chain check passes: `cargo deny check` is green (advisories, licenses, bans, sources).
 - [ ] `CHANGELOG.md` has been updated with a user-facing entry (unless this change is not user-visible).
 - [ ] Public API changes are documented (rustdoc), and new features are gated behind the appropriate Cargo feature flag where applicable.

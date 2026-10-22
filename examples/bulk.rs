@@ -7,7 +7,7 @@ use tokio_util::compat::TokioAsyncWriteCompatExt;
 use tracing::log::info;
 
 static CONN_STR: Lazy<String> = Lazy::new(|| {
-    env::var("TIBERIUS_TEST_CONNECTION_STRING").unwrap_or_else(|_| {
+    env::var("TDS_DRIVER_TEST_CONNECTION_STRING").unwrap_or_else(|_| {
         "server=tcp:localhost,1433;IntegratedSecurity=true;TrustServerCertificate=true".to_owned()
     })
 });
