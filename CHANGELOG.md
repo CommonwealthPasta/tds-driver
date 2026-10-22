@@ -46,6 +46,14 @@ that land will be documented here.
   first, or, if the future was dropped partway through reading a token, fails
   along with every later one.
 
+### Changed
+
+- **Reading results is faster.** Packets are buffered without a copy per value,
+  values are read in bulk rather than a byte at a time, and strings are decoded
+  straight into a buffer of the right size. On recorded responses, 1M narrow
+  rows take 24% less time, 200k wide rows read 3.4 times as fast, and a 50 MB
+  nvarchar(max) value 21 times as fast.
+
 ## [0.13.1] - 2026-08-30
 
 A follow-up "polish" patch on top of the 0.13.0 release.
