@@ -56,7 +56,8 @@ pub(crate) use bytes_mut_with_type_info::BytesMutWithTypeInfo;
 use std::borrow::{BorrowMut, Cow};
 use uuid::Uuid;
 
-const MAX_NVARCHAR_SIZE: usize = 1 << 30;
+/// UTF-16 code units in nvarchar(max)'s 2^31 - 1 bytes.
+const NVARCHAR_MAX_UNITS: usize = i32::MAX as usize / 2;
 
 /// Precision of every numeric parameter: the server's maximum.
 const NUMERIC_PARAM_PRECISION: u8 = 38;
@@ -71,7 +72,21 @@ fn fits_nvarchar_4000(s: &str) -> bool {
 const PLP_NULL: u64 = 0xffffffffffffffff;
 
 /// `nvarchar(max)` TYPE_INFO and value.
-fn put_nvarchar_max(dst: &mut BytesMut, s: Option<&str>) {
+fn put_nvarchar_max(dst: &mut BytesMut, s: Option<&str>) -> crate::Result<()> {
+    // A unit is at least one UTF-8 byte: only longer strings need counting.
+    if let Some(s) = s.filter(|s| s.len() > NVARCHAR_MAX_UNITS) {
+        let units = s.encode_utf16().count();
+        if units > NVARCHAR_MAX_UNITS {
+            return Err(crate::Error::Conversion(
+                format!(
+                    "a string of {units} UTF-16 code units is longer than nvarchar(max) \
+                     holds ({NVARCHAR_MAX_UNITS})"
+                )
+                .into(),
+            ));
+        }
+    }
+
     // length: 0xffff and raw collation
     dst.put_u8(VarLenType::NVarchar as u8);
     dst.extend_from_slice(&[0xff_u8; 2]);
@@ -79,7 +94,10 @@ fn put_nvarchar_max(dst: &mut BytesMut, s: Option<&str>) {
 
     let s = match s {
         Some(s) => s,
-        None => return dst.put_u64_le(PLP_NULL),
+        None => {
+            dst.put_u64_le(PLP_NULL);
+            return Ok(());
+        }
     };
 
     // we cannot cheaply predetermine the length of the UCS2 string beforehand
@@ -103,11 +121,14 @@ fn put_nvarchar_max(dst: &mut BytesMut, s: Option<&str>) {
     }
 
     let dst: &mut [u8] = dst.borrow_mut();
+    // At most NVARCHAR_MAX_UNITS, so the byte count fits.
     let bytes = (length * 2).to_le_bytes(); // u32, four bytes
 
     for (i, byte) in bytes.iter().enumerate() {
         dst[len_pos + i] = *byte;
     }
+
+    Ok(())
 }
 
 /// `varbinary(max)` TYPE_INFO and value.
@@ -505,10 +526,8 @@ impl<'a> ColumnData<'a> {
             ColumnData::Bit(_) => "bit".into(),
             ColumnData::String(None) => "nvarchar(4000)".into(),
             ColumnData::String(Some(ref s)) if fits_nvarchar_4000(s) => "nvarchar(4000)".into(),
-            ColumnData::String(Some(ref s)) if s.len() <= MAX_NVARCHAR_SIZE => {
-                "nvarchar(max)".into()
-            }
-            ColumnData::String(_) => "ntext(max)".into(),
+            // The encoder rejects a string nvarchar(max) cannot hold.
+            ColumnData::String(Some(_)) => "nvarchar(max)".into(),
             ColumnData::Guid(_) => "uniqueidentifier".into(),
             ColumnData::Binary(Some(ref b)) if b.len() <= 8000 => "varbinary(8000)".into(),
             ColumnData::Binary(_) => "varbinary(max)".into(),
@@ -564,7 +583,7 @@ impl<'a> ColumnData<'a> {
     /// OUT parameter with no `Size`; there is no `Size` here.
     pub(crate) fn encode_rpc_param(self, dst: &mut BytesMut, out: bool) -> crate::Result<()> {
         match self {
-            ColumnData::String(s) if out => put_nvarchar_max(dst, s.as_deref()),
+            ColumnData::String(s) if out => put_nvarchar_max(dst, s.as_deref())?,
             ColumnData::Binary(b) if out => put_varbinary_max(dst, b.as_deref()),
             value => return value.encode(&mut BytesMutWithTypeInfo::new(dst)),
         }
@@ -873,7 +892,7 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     dst[len_pos + i] = *byte;
                 }
             }
-            (ColumnData::String(Some(s)), None) => put_nvarchar_max(dst, Some(&s)),
+            (ColumnData::String(Some(s)), None) => put_nvarchar_max(dst, Some(&s))?,
             (ColumnData::Binary(opt), Some(TypeInfo::VarLenSized(vlc)))
                 if vlc.r#type() == VarLenType::BigBinary
                     || vlc.r#type() == VarLenType::BigVarBin =>
@@ -1203,8 +1222,7 @@ mod tests {
     #[test]
     fn type_name_string_length_thresholds() {
         // None and anything up to 4000 chars is a sized nvarchar; just past it
-        // becomes nvarchar(max). The `<= 4000` and `<= MAX_NVARCHAR_SIZE` guards
-        // each flip the answer at their boundary.
+        // becomes nvarchar(max).
         assert_eq!(ColumnData::String(None).type_name(), "nvarchar(4000)");
         assert_eq!(
             ColumnData::String(Some("a".repeat(100).into())).type_name(),
@@ -1343,6 +1361,45 @@ mod tests {
             let max_len = u16::from_le_bytes([buf[1], buf[2]]);
             assert_eq!(max_len, if fits { 8000 } else { 0xFFFF }, "{expected}");
         }
+    }
+
+    /// 3 UTF-8 bytes, 1 UTF-16 unit each: over 2^30 bytes, so once declared
+    /// ntext(max), but within the 2^30 - 1 units nvarchar(max) holds.
+    fn euros_over_1_gib() -> String {
+        "\u{20AC}".repeat((1 << 30) / 3 + 1)
+    }
+
+    #[test]
+    fn strings_over_1_gib_of_utf8() {
+        let euros = euros_over_1_gib();
+        assert_eq!(
+            ColumnData::String(Some(euros.into())).type_name(),
+            "nvarchar(max)"
+        );
+
+        // 2^30 units, one more than nvarchar(max) holds.
+        let err = ColumnData::String(Some("a".repeat(1 << 30).into()))
+            .encode_rpc_param(&mut BytesMut::new(), false)
+            .unwrap_err();
+        assert!(matches!(err, Error::Conversion(_)), "{err:?}");
+    }
+
+    #[test]
+    #[ignore = "writes 716 MB, about 40 s in a debug build"]
+    fn string_over_1_gib_of_utf8_encodes() {
+        let euros = euros_over_1_gib();
+        let units = euros.len() / 3;
+
+        let mut buf = BytesMut::new();
+        ColumnData::String(Some(euros.into()))
+            .encode_rpc_param(&mut buf, false)
+            .unwrap();
+
+        // TYPE_INFO (8 bytes), unknown length (8), chunk length, units, terminator.
+        assert_eq!(buf[..3], [VarLenType::NVarchar as u8, 0xff, 0xff]);
+        let chunk = u32::from_le_bytes(buf[16..20].try_into().unwrap());
+        assert_eq!(chunk as usize, units * 2);
+        assert_eq!(buf.len(), 20 + units * 2 + 4);
     }
 
     #[test]
@@ -2100,11 +2157,6 @@ mod tests {
         let err = d.encode(&mut b).expect_err("encode should fail");
         assert!(matches!(err, Error::BulkInput(_)), "got {:?}", err);
     }
-
-    // NOTE: the `ntext(max)` catch-all in type_name is only reached by a string
-    // longer than MAX_NVARCHAR_SIZE (>1 GiB); allocating that in a unit test is
-    // impractical (slow / OOM-prone in CI), so that single line is intentionally
-    // left uncovered.
 
     // ----- decode: line 199 (VarLenSizedPrecision non-numeric -> todo!()) -----
 

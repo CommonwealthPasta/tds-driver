@@ -184,6 +184,9 @@ that land will be documented here.
   digits panicked debug builds.
 - **TVP schema and type names over 255 UTF-16 units and procedure names over
   65,535 are errors** instead of wrapped length prefixes (a debug-build panic).
+- **Strings over 1 GiB of UTF-8 are declared `nvarchar(max)`**, not `ntext(max)`
+  (error 2716); one longer than `nvarchar(max)` holds (1,073,741,823 UTF-16
+  units) is a `Conversion` error.
 - **A TLS handshake over OpenSSL survives a socket that can't take a flight at
   once.** OpenSSL fails the handshake on a flush that would block, which
   affected `native-tls` on Linux and `vendored-openssl`.
