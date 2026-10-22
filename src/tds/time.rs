@@ -460,8 +460,8 @@ pub struct DateTimeOffset {
 #[cfg(feature = "tds73")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tds73")))]
 impl DateTimeOffset {
-    /// What a chrono offset with seconds converts to: `ToSql` cannot fail, so
-    /// the encoder rejects it.
+    /// What a chrono or `time` offset with seconds converts to: `ToSql`
+    /// cannot fail, so the encoder rejects it.
     pub(crate) const OFFSET_WITH_SECONDS: i16 = i16::MIN;
 
     /// Construct a new `DateTimeOffset` from a `datetime2`, offset marking

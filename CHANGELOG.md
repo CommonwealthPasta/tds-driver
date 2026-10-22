@@ -249,6 +249,8 @@ that land will be documented here.
 - **An instance name too long for PRELOGIN's u16 offsets and an access token of
   2^31 UTF-16 units are errors**; the first panicked debug builds, the second
   wrapped LOGIN7's u32 lengths.
+- **A `time::OffsetDateTime` offset with seconds is a `Conversion` error**, as a
+  chrono one is, instead of being cut to whole minutes.
 - **Bulk insert of a string into an `xml` column works**, as in SqlBulkCopy.
 
 ### Changed

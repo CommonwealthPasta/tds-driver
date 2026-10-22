@@ -149,8 +149,13 @@ to_sql!(self_,
             super::DateTime2::new(date, time)
         });
         OffsetDateTime: (ColumnData::DateTimeOffset, {
+            // datetimeoffset stores whole minutes: one with seconds is
+            // rejected instead of cut. Within ±25:59:59, so i16 holds it.
             let tz = self_.offset();
-            let offset = (tz.whole_seconds() / 60) as i16;
+            let offset = match tz.seconds_past_minute() {
+                0 => (tz.whole_seconds() / 60) as i16,
+                _ => super::DateTimeOffset::OFFSET_WITH_SECONDS,
+            };
 
             // From the timestamp: `to_offset(UTC)` panics when the UTC date
             // passes year 9999.
@@ -496,6 +501,29 @@ mod tests {
                 }
                 other => panic!("unexpected: {:?}", other),
             }
+        }
+    }
+
+    /// Cut to whole minutes, +01:00:30 was stored as +01:00, 30 s off.
+    #[cfg(feature = "tds73")]
+    #[test]
+    fn offsets_with_seconds_are_encode_errors() {
+        use crate::ToSql;
+
+        let local = PrimitiveDateTime::new(
+            Date::from_calendar_date(2024, Month::May, 6).unwrap(),
+            Time::from_hms(1, 2, 3).unwrap(),
+        );
+
+        for (h, m, s) in [(0, 0, 30), (0, 0, -30), (1, 0, 30), (-1, -30, -1)] {
+            let dto = local.assume_offset(UtcOffset::from_hms(h, m, s).unwrap());
+            let err = encode(dto.to_sql()).unwrap_err();
+            assert!(matches!(err, crate::Error::Conversion(_)), "{dto}: {err:?}");
+        }
+
+        for (h, m) in [(-14, 0), (-1, -30), (14, 0)] {
+            let dto = local.assume_offset(UtcOffset::from_hms(h, m, 0).unwrap());
+            encode(dto.to_sql()).unwrap();
         }
     }
 
