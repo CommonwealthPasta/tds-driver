@@ -26,7 +26,7 @@ impl Encode<BytesMut> for Packet {
         let size = (self.payload.len() as u16 + HEADER_BYTES as u16).to_be_bytes();
 
         self.header.encode(dst)?;
-        dst.extend(self.payload);
+        dst.extend_from_slice(&self.payload);
 
         dst[2] = size[0];
         dst[3] = size[1];
