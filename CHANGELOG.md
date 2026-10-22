@@ -143,6 +143,8 @@ that land will be documented here.
 - **Bulk/TVP integers and floats are written at the column's width** (`-5i32`
   into `bigint` was stored as 4294967291, `1.5f32` into `float` as 5.3e-315);
   values out of the column's range are a `Conversion` error.
+- **A row that fails to encode no longer corrupts the bulk insert**; the request
+  stays usable for further rows and `finalize`.
 
 ### Changed
 

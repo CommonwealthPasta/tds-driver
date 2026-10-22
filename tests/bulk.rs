@@ -362,6 +362,51 @@ async fn within<T>(fut: impl Future<Output = Result<T>>) -> Result<T> {
     }
 }
 
+async fn select_int<S>(conn: &mut tiberius::Client<S>, sql: &str) -> Result<Option<i32>>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    within(async {
+        let row = conn.simple_query(sql).await?.into_row().await?;
+        Ok(row.and_then(|r| r.get::<i32, _>(0)))
+    })
+    .await
+}
+
+#[test_on_runtimes]
+async fn bulk_load_row_error_keeps_request_usable<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let table = format!("##{}", random_table().await);
+    conn.simple_query(format!("CREATE TABLE {table} (a INT, s VARCHAR(10))"))
+        .await?
+        .into_results()
+        .await?;
+
+    let mut req = conn.bulk_insert(&table).await?;
+
+    let mut too_long = TokenRow::new();
+    too_long.push(1i32.into_sql());
+    too_long.push("longer than ten".into_sql());
+    assert!(req.send(too_long).await.is_err());
+
+    let mut too_few = TokenRow::new();
+    too_few.push(2i32.into_sql());
+    assert!(req.send(too_few).await.is_err());
+
+    let mut good = TokenRow::new();
+    good.push(3i32.into_sql());
+    good.push("ok".into_sql());
+    req.send(good).await?;
+    assert_eq!(1, within(req.finalize()).await?.total());
+
+    let sum = format!("SELECT SUM(a) FROM {table}");
+    assert_eq!(Some(3), select_int(&mut conn, &sum).await?);
+
+    Ok(())
+}
+
 /// Bulk inserts `value` into a one-column table `v {column}` and reads
 /// `readback`, an expression over `v`, back as text.
 async fn bulk_one<S>(

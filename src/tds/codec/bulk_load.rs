@@ -52,6 +52,8 @@ where
 
     /// Adds a new row to the bulk insert, flushing only when having a full packet of data.
     ///
+    /// A row that fails to encode is not sent, and the request stays usable.
+    ///
     /// # Warning
     ///
     /// After the last row, [`finalize`] must be called to flush the buffered
@@ -59,9 +61,13 @@ where
     ///
     /// [`finalize`]: #method.finalize
     pub async fn send(&mut self, row: TokenRow<'a>) -> crate::Result<()> {
+        let row_start = self.buf.len();
         let mut buf_with_columns = BytesMutWithDataColumns::new(&mut self.buf, &self.columns);
 
-        row.encode(&mut buf_with_columns)?;
+        if let Err(e) = row.encode(&mut buf_with_columns) {
+            self.buf.truncate(row_start);
+            return Err(e);
+        }
         self.write_packets().await?;
 
         Ok(())
