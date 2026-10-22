@@ -2,7 +2,7 @@ pub use crate::tds::stream::{CommandItem, QueryItem, ResultMetadata};
 use crate::{
     client::Connection,
     error::Error,
-    tds::stream::{CommandReturnValue, ReceivedToken, TokenStream},
+    tds::stream::{CommandReturnValue, TokenStream},
     FromSql, Row,
 };
 use futures_util::io::{AsyncRead, AsyncWrite};
@@ -57,25 +57,25 @@ impl<'a> ExecuteResult {
         let mut rows_affected = Vec::new();
 
         while let Some(token) = token_stream.try_next().await? {
-            match token {
-                ReceivedToken::DoneProc(done) if done.is_final() => (),
-                ReceivedToken::DoneProc(done) => rows_affected.push(done.rows()),
-                ReceivedToken::DoneInProc(done) => rows_affected.push(done.rows()),
-                ReceivedToken::Done(done) => rows_affected.push(done.rows()),
-                _ => (),
-            }
+            rows_affected.extend(token.records_affected());
         }
 
         Ok(Self { rows_affected })
     }
 
-    /// A slice of numbers of rows affected in the same order as the given
-    /// queries.
+    /// The rows affected by each INSERT, UPDATE, DELETE, MERGE or other
+    /// non-SELECT statement, in execution order, including those run by
+    /// procedures and triggers. SELECTs and variable assignments
+    /// (`SET @v = ..`, `SELECT @v = ..`) are left out, and statements under
+    /// `SET NOCOUNT ON` report nothing. This is what SqlClient's
+    /// `ExecuteNonQuery` counts.
     pub fn rows_affected(&self) -> &[u64] {
         self.rows_affected.as_slice()
     }
 
-    /// Aggregates all resulting row counts into a sum.
+    /// The sum of [`rows_affected`](Self::rows_affected): SqlClient's
+    /// `ExecuteNonQuery` result, except that it is 0 rather than -1 when no
+    /// statement reported a count.
     ///
     /// # Example
     ///
@@ -161,8 +161,8 @@ pub struct CommandResult {
 }
 
 impl<'a> CommandResult {
-    /// A slice of the numbers of rows affected, in the same order as the
-    /// statements ran by the command.
+    /// The rows affected by each non-SELECT statement the command ran, in
+    /// order; counted as [`ExecuteResult::rows_affected`] counts them.
     pub fn rows_affected(&self) -> &[u64] {
         self.rows_affected.as_slice()
     }

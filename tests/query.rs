@@ -3035,3 +3035,43 @@ where
 
     Ok(())
 }
+
+#[test_on_runtimes]
+async fn execute_counts_only_modified_rows<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let table = random_table().await;
+    conn.execute(format!("CREATE TABLE ##{} (id int)", table), &[])
+        .await?;
+
+    // SqlClient's ExecuteNonQuery returns 1 for this batch: the DECLARE, SET
+    // and SELECT assignments each send a SELECT count of 1 too.
+    let res = conn
+        .execute(
+            format!(
+                "DECLARE @x int = @P1; SET @x = @x + 1; INSERT INTO ##{t} VALUES (@x); \
+                 SELECT @x = MAX(id) FROM ##{t}",
+                t = table
+            ),
+            &[&1i32],
+        )
+        .await?;
+    assert_eq!(res.rows_affected(), [1]);
+    assert_eq!(res.total(), 1);
+
+    let res = conn
+        .execute(
+            format!(
+                "INSERT INTO ##{t} VALUES (@P1), (@P1); SELECT id FROM ##{t}; \
+                 UPDATE ##{t} SET id = id; DELETE ##{t} WHERE 1 = 0",
+                t = table
+            ),
+            &[&5i32],
+        )
+        .await?;
+    assert_eq!(res.rows_affected(), [2, 3, 0]);
+    assert_eq!(res.total(), 5);
+
+    Ok(())
+}

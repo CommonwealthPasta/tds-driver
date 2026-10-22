@@ -11,6 +11,10 @@ pub struct TokenDone {
     done_rows: u64,
 }
 
+/// CurCmd of a SELECT statement (SqlClient `TdsEnums.SELECT`). MS-TDS leaves
+/// CurCmd to the application layer.
+pub(crate) const CUR_CMD_SELECT: u16 = 0xC1;
+
 #[bitflags]
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,10 +57,6 @@ impl TokenDone {
         })
     }
 
-    pub(crate) fn is_final(&self) -> bool {
-        self.status.is_empty()
-    }
-
     /// `true` when the server has set the `DONE_ATTN` status bit, indicating
     /// this DONE token acknowledges a client Attention signal (MS-TDS
     /// section 2.2.7.6).
@@ -64,14 +64,14 @@ impl TokenDone {
         self.status.contains(DoneStatus::Attention)
     }
 
-    pub(crate) fn rows(&self) -> u64 {
-        // The row count is only meaningful when the DONE_COUNT status bit is
-        // set (MS-TDS §2.2.7.6); otherwise the field is not a valid count.
-        if self.status.contains(DoneStatus::Count) {
-            self.done_rows
-        } else {
-            0
-        }
+    /// The statement's "records affected" count, as SqlClient's
+    /// `ExecuteNonQuery` counts it: present only when DONE_COUNT is set
+    /// (MS-TDS 2.2.7.6) and CurCmd is not SELECT (`TdsParser.TryProcessDone`).
+    /// SQL Server reports SELECTs, `SET @v = ..`, `SELECT @v = ..` and
+    /// `DECLARE @v = ..` all as SELECT, with a count of rows read or assigned.
+    pub(crate) fn records_affected(&self) -> Option<u64> {
+        (self.status.contains(DoneStatus::Count) && self.cur_cmd != CUR_CMD_SELECT)
+            .then_some(self.done_rows)
     }
 
     #[cfg(test)]
@@ -129,8 +129,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(done.is_final());
-        assert_eq!(done.rows(), 0);
+        assert!(done.status.is_empty());
+        assert_eq!(done.records_affected(), None);
         assert!(format!("{}", done).starts_with("Done with status"));
     }
 
@@ -145,8 +145,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!done.is_final());
-        assert_eq!(done.rows(), 5);
+        assert!(!done.status.is_empty());
+        assert_eq!(done.records_affected(), Some(5));
         assert!(format!("{}", done).contains("5 rows left"));
     }
 
@@ -168,7 +168,7 @@ mod tests {
             .set_version(FeatureLevel::SqlServer2000);
 
         let done = TokenDone::decode(&mut reader).await.unwrap();
-        assert_eq!(done.rows(), 7);
+        assert_eq!(done.records_affected(), Some(7));
     }
 
     #[tokio::test]
@@ -225,6 +225,25 @@ mod tests {
             .await
             .unwrap();
         assert!(!done.is_attention());
+    }
+
+    #[test]
+    fn records_affected_requires_count_and_non_select() {
+        let count = BitFlags::from_flag(DoneStatus::Count);
+        let insert = 0xC3;
+
+        assert_eq!(TokenDone::new(count, insert, 4).records_affected(), Some(4));
+        assert_eq!(TokenDone::new(count, insert, 0).records_affected(), Some(0));
+        // SELECT, and variable assignment, which SQL Server also tags SELECT.
+        assert_eq!(
+            TokenDone::new(count, CUR_CMD_SELECT, 1).records_affected(),
+            None
+        );
+        // SET NOCOUNT ON: no DONE_COUNT, the field is not a count.
+        assert_eq!(
+            TokenDone::new(BitFlags::from_flag(DoneStatus::More), insert, 1).records_affected(),
+            None
+        );
     }
 
     #[test]

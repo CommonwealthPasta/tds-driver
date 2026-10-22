@@ -40,6 +40,18 @@ pub enum ReceivedToken {
     Error(TokenError),
 }
 
+impl ReceivedToken {
+    /// See [`TokenDone::records_affected`].
+    pub(crate) fn records_affected(&self) -> Option<u64> {
+        match self {
+            ReceivedToken::Done(done)
+            | ReceivedToken::DoneProc(done)
+            | ReceivedToken::DoneInProc(done) => done.records_affected(),
+            _ => None,
+        }
+    }
+}
+
 pub(crate) struct TokenStream<'a, S: AsyncRead + AsyncWrite + Unpin + Send> {
     conn: &'a mut Connection<S>,
     last_error: Option<Error>,

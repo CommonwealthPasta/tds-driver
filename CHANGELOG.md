@@ -54,6 +54,12 @@ that land will be documented here.
 - **A request that fails to encode no longer hangs the connection.** After an
   encode error, such as a TVP value too long for its column, the next request
   waited for a response to the request never sent.
+- **Row counts match SqlClient's `ExecuteNonQuery`.**
+  `ExecuteResult::rows_affected`/`total`, `CommandResult::rows_affected` and
+  `CommandItem::RowsAffected` counted SELECTs and variable assignments (one
+  INSERT came back as 4); they now count only statements whose DONE has
+  DONE_COUNT and a non-SELECT CurCmd. *Behavior change*: fewer entries in
+  `rows_affected()`.
 - **`into_command_result` keeps empty result sets.** An empty result set after
   the first vanished and shifted later ones down an index.
 

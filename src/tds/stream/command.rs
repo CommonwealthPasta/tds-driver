@@ -189,7 +189,11 @@ pub enum CommandItem {
     ReturnStatus(u32),
     /// A return value, matching an OUT parameter.
     ReturnValue(CommandReturnValue),
-    /// The number of rows affected by one of the statements ran on the server.
+    /// The number of rows an INSERT, UPDATE, DELETE or other non-SELECT
+    /// statement affected. SELECTs and variable assignments produce none, as
+    /// with SqlClient's `ExecuteNonQuery`; see [`ExecuteResult::rows_affected`].
+    ///
+    /// [`ExecuteResult::rows_affected`]: crate::ExecuteResult::rows_affected
     RowsAffected(u64),
 }
 
@@ -318,17 +322,10 @@ impl<'a> Stream for CommandStream<'a> {
                         data: rv.value,
                     }))))
                 }
-                ReceivedToken::DoneProc(done) if done.is_final() => continue,
-                ReceivedToken::DoneProc(done) => {
-                    Poll::Ready(Some(Ok(CommandItem::RowsAffected(done.rows()))))
-                }
-                ReceivedToken::DoneInProc(done) => {
-                    Poll::Ready(Some(Ok(CommandItem::RowsAffected(done.rows()))))
-                }
-                ReceivedToken::Done(done) => {
-                    Poll::Ready(Some(Ok(CommandItem::RowsAffected(done.rows()))))
-                }
-                _ => continue,
+                token => match token.records_affected() {
+                    Some(rows) => Poll::Ready(Some(Ok(CommandItem::RowsAffected(rows)))),
+                    None => continue,
+                },
             };
         }
     }
@@ -338,8 +335,11 @@ impl<'a> Stream for CommandStream<'a> {
 mod tests {
     use super::*;
     use crate::tds::codec::{DoneStatus, TokenColMetaData, TokenDone, TokenRow};
+    use enumflags2::BitFlags;
     use futures_util::stream;
 
+    const INSERT: u16 = 0xC3;
+    const UPDATE: u16 = 0xC5;
     const SELECT: u16 = 0xC1;
 
     fn meta() -> ReceivedToken {
@@ -398,5 +398,22 @@ mod tests {
         ])
         .await;
         assert_eq!(set_sizes(&res), [0, 0, 1]);
+    }
+
+    #[tokio::test]
+    async fn rows_affected_skips_selects_and_uncounted_dones() {
+        let res = collect(vec![
+            ReceivedToken::DoneInProc(count(INSERT, 2)),
+            meta(),
+            row(),
+            ReceivedToken::DoneInProc(count(SELECT, 1)),
+            // `SELECT @v = ..` inside the procedure
+            ReceivedToken::DoneInProc(count(SELECT, 1)),
+            ReceivedToken::DoneInProc(count(UPDATE, 0)),
+            ReceivedToken::DoneProc(TokenDone::new(BitFlags::empty(), 0xE0, 0)),
+        ])
+        .await;
+        assert_eq!(res.rows_affected(), [2, 0]);
+        assert_eq!(set_sizes(&res), [1]);
     }
 }

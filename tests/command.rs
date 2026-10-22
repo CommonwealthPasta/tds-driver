@@ -258,3 +258,39 @@ where
 
     Ok(())
 }
+
+#[test_on_runtimes]
+async fn command_rows_affected_skips_selects<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let table = random_table().await;
+    let proc = format!("#{}", random_table().await);
+    conn.simple_query(format!("CREATE TABLE ##{} (id int)", table))
+        .await?
+        .into_results()
+        .await?;
+    conn.simple_query(format!(
+        "CREATE PROCEDURE {p} AS BEGIN \
+           INSERT INTO ##{t} VALUES (5), (6); SELECT id FROM ##{t}; \
+           DECLARE @y int; SELECT @y = MAX(id) FROM ##{t}; \
+           UPDATE ##{t} SET id = id WHERE id = 5 \
+         END",
+        p = proc,
+        t = table
+    ))
+    .await?
+    .into_results()
+    .await?;
+
+    let res = Command::new(&proc)
+        .exec(&mut conn)
+        .await?
+        .into_command_result()
+        .await?;
+    // ExecuteNonQuery on this procedure returns 3.
+    assert_eq!(res.rows_affected(), [2, 1]);
+    assert_eq!(res.to_query_result(0).map(Vec::len), Some(2));
+
+    Ok(())
+}
