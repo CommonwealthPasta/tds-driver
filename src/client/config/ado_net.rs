@@ -1,9 +1,10 @@
 use super::{ConfigString, ServerDefinition};
 use std::{collections::HashMap, str::FromStr, time::Duration};
+use zeroize::Zeroizing;
 
 /// An ADO.NET connection string, split with SqlClient's rules.
 pub(crate) struct AdoNetConfig {
-    dict: HashMap<String, String>,
+    dict: HashMap<String, Zeroizing<String>>,
 }
 
 impl FromStr for AdoNetConfig {
@@ -30,8 +31,9 @@ impl FromStr for AdoNetConfig {
 /// - The last occurrence of a key wins.
 ///
 /// A syntax error gives the byte index where the offending pair, or the
-/// offending character, starts.
-fn parse(input: &str) -> crate::Result<HashMap<String, String>> {
+/// offending character, starts. Each value is copied once, into a
+/// [`Zeroizing`] buffer that never grows.
+fn parse(input: &str) -> crate::Result<HashMap<String, Zeroizing<String>>> {
     // What follows a NUL is padding, not pairs.
     let (text, padding) = input.split_at(input.find('\0').unwrap_or(input.len()));
     let mut pairs = HashMap::new();
@@ -130,7 +132,7 @@ impl<'a> Cursor<'a> {
     }
 
     /// Reads a value from its opening `quote` through its closing one.
-    fn quoted(&mut self, quote: char) -> Option<String> {
+    fn quoted(&mut self, quote: char) -> Option<Zeroizing<String>> {
         self.pos += quote.len_utf8();
         let body = self.rest();
         // The quote is ASCII, so a byte search can't land inside a character.
@@ -145,7 +147,7 @@ impl<'a> Cursor<'a> {
                 Some(_) => i += 1,
             }
         };
-        let mut value = String::with_capacity(end);
+        let mut value = Zeroizing::new(String::with_capacity(end));
         let mut chars = body[..end].chars();
         while let Some(c) = chars.next() {
             value.push(c);
@@ -161,7 +163,7 @@ impl<'a> Cursor<'a> {
     /// Reads an unquoted value up to the next `;` or stray control character.
     /// `Some(None)` is an empty value, which removes the key; `None` is a
     /// malformed one.
-    fn unquoted(&mut self) -> Option<Option<String>> {
+    fn unquoted(&mut self) -> Option<Option<Zeroizing<String>>> {
         let rest = self.rest();
         let len = rest
             .find(|c| c == ';' || is_stray_control(c))
@@ -175,7 +177,7 @@ impl<'a> Cursor<'a> {
         if value.ends_with(['\'', '"']) {
             return None;
         }
-        Some(Some(value.to_owned()))
+        Some(Some(Zeroizing::new(value.to_owned())))
     }
 
     /// Skips whitespace and tells whether the pair ends there.

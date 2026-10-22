@@ -2,6 +2,7 @@ use super::{ConfigString, ServerDefinition};
 use crate::error::Error;
 use connection_string::JdbcString;
 use std::{str::FromStr, time::Duration};
+use zeroize::Zeroize;
 
 /// `loginTimeout` default of mssql-jdbc 11.2 and later.
 const JDBC_DEFAULT_LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
@@ -16,6 +17,14 @@ impl FromStr for JdbcConfig {
     fn from_str(s: &str) -> crate::Result<Self> {
         let config = s.parse()?;
         Ok(Self { config })
+    }
+}
+
+impl Drop for JdbcConfig {
+    fn drop(&mut self) {
+        for value in self.config.properties_mut().values_mut() {
+            value.zeroize();
+        }
     }
 }
 
