@@ -43,6 +43,9 @@ impl Collation {
     }
 
     /// return an encoding for a given collation
+    ///
+    /// Fails for the CP437/CP850 SQL collations (sort IDs 30-61), which
+    /// `encoding_rs` lacks; the driver itself still reads and writes them.
     pub fn encoding(&self) -> crate::Result<&'static Encoding> {
         let res = if self.sort_id == 0 {
             lcid_to_encoding(self.lcid())
@@ -61,16 +64,82 @@ impl Collation {
             )
         })
     }
+
+    /// The character set used for this collation's `char`/`varchar`/`text`.
+    pub(crate) fn charset(&self) -> crate::Result<Charset> {
+        match self.sort_id {
+            30..=35 => Ok(Charset::Oem(&CP437)),
+            40..=45 | 49 | 55..=61 => Ok(Charset::Oem(&CP850)),
+            _ => self.encoding().map(Charset::Encoding),
+        }
+    }
 }
 
 impl fmt::Display for Collation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.encoding() {
-            Ok(encoding) => write!(f, "{}", encoding.name()),
+        match self.charset() {
+            Ok(Charset::Encoding(encoding)) => write!(f, "{}", encoding.name()),
+            Ok(Charset::Oem(table)) if std::ptr::eq(table, &CP437) => write!(f, "IBM437"),
+            Ok(Charset::Oem(_)) => write!(f, "IBM850"),
             _ => write!(f, "None"),
         }
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Charset {
+    Encoding(&'static Encoding),
+    /// A single-byte code page that is ASCII below 0x80; the table holds the
+    /// characters for bytes 0x80..=0xFF.
+    Oem(&'static [char; 128]),
+}
+
+pub(crate) fn decode_oem(table: &[char; 128], buf: &[u8]) -> String {
+    buf.iter()
+        .map(|&b| match b {
+            0..=0x7f => b as char,
+            _ => table[b as usize - 0x80],
+        })
+        .collect()
+}
+
+pub(crate) fn encode_oem(table: &[char; 128], s: &str) -> crate::Result<Vec<u8>> {
+    s.chars()
+        .map(|c| match c {
+            '\0'..='\x7f' => Ok(c as u8),
+            _ => table
+                .iter()
+                .position(|&t| t == c)
+                .map(|i| 0x80 + i as u8)
+                .ok_or_else(|| Error::Encoding("unrepresentable character".into())),
+        })
+        .collect()
+}
+
+// Bytes 0x80..=0xFF as SQL Server 2022 converts them to nvarchar.
+#[rustfmt::skip]
+static CP437: [char; 128] = [
+    'Ç', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å',
+    'É', 'æ', 'Æ', 'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ',
+    'á', 'í', 'ó', 'ú', 'ñ', 'Ñ', 'ª', 'º', '¿', '⌐', '¬', '½', '¼', '¡', '«', '»',
+    '░', '▒', '▓', '│', '┤', '╡', '╢', '╖', '╕', '╣', '║', '╗', '╝', '╜', '╛', '┐',
+    '└', '┴', '┬', '├', '─', '┼', '╞', '╟', '╚', '╔', '╩', '╦', '╠', '═', '╬', '╧',
+    '╨', '╤', '╥', '╙', '╘', '╒', '╓', '╫', '╪', '┘', '┌', '█', '▄', '▌', '▐', '▀',
+    'α', 'ß', 'Γ', 'π', 'Σ', 'σ', 'µ', 'τ', 'Φ', 'Θ', 'Ω', 'δ', '∞', 'φ', 'ε', '∩',
+    '≡', '±', '≥', '≤', '⌠', '⌡', '÷', '≈', '°', '∙', '·', '√', 'ⁿ', '²', '■', '\u{a0}',
+];
+
+#[rustfmt::skip]
+static CP850: [char; 128] = [
+    'Ç', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å',
+    'É', 'æ', 'Æ', 'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', 'ø', '£', 'Ø', '×', 'ƒ',
+    'á', 'í', 'ó', 'ú', 'ñ', 'Ñ', 'ª', 'º', '¿', '®', '¬', '½', '¼', '¡', '«', '»',
+    '░', '▒', '▓', '│', '┤', 'Á', 'Â', 'À', '©', '╣', '║', '╗', '╝', '¢', '¥', '┐',
+    '└', '┴', '┬', '├', '─', '┼', 'ã', 'Ã', '╚', '╔', '╩', '╦', '╠', '═', '╬', '¤',
+    'ð', 'Ð', 'Ê', 'Ë', 'È', 'ı', 'Í', 'Î', 'Ï', '┘', '┌', '█', '▄', '¦', 'Ì', '▀',
+    'Ó', 'ß', 'Ô', 'Ò', 'õ', 'Õ', 'µ', 'þ', 'Þ', 'Ú', 'Û', 'Ù', 'ý', 'Ý', '¯', '´',
+    '\u{ad}', '±', '‗', '¾', '¶', '§', '÷', '¸', '°', '¨', '·', '¹', '³', '²', '■', '\u{a0}',
+];
 
 /// https://github.com/Microsoft/mssql-jdbc/blob/eb14f63077c47ef1fc1c690deb8cfab602baeb85/src/main/java/com/microsoft/sqlserver/jdbc/SQLCollation.java#L102-L310
 /// maps an LCID (it's locale part which is only 2 bytes) to a codepage

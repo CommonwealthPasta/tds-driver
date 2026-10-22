@@ -116,6 +116,48 @@ where
     Ok(())
 }
 
+#[test_on_runtimes]
+async fn oem_code_page_collations<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let r = rows(
+        &mut conn,
+        "CREATE TABLE #o (a varchar(20) COLLATE SQL_Latin1_General_CP437_CI_AS, \
+         b varchar(20) COLLATE SQL_Latin1_General_CP850_BIN, \
+         c text COLLATE SQL_Scandinavian_CP850_CI_AS); \
+         INSERT #o VALUES (N'Ç│π½', N'ÇØð¤ı', N'Åæø'); \
+         SELECT a, b, c, CAST(a AS sql_variant) FROM #o",
+    )
+    .await?;
+
+    assert_eq!(r[0].get::<&str, _>(0), Some("Ç│π½"));
+    assert_eq!(r[0].get::<&str, _>(1), Some("ÇØð¤ı"));
+    assert_eq!(r[0].get::<&str, _>(2), Some("Åæø"));
+    assert_eq!(r[0].get::<&str, _>(3), Some("Ç│π½"));
+
+    // Every byte decodes as the server converts it.
+    let hex: String = (0x01u8..=0xff).map(|b| format!("{b:02X}")).collect();
+    for coll in [
+        "SQL_Latin1_General_CP437_BIN",
+        "SQL_Latin1_General_CP850_BIN",
+    ] {
+        let sql = format!(
+            "CREATE TABLE #b (v varchar(300) COLLATE {coll}); INSERT #b SELECT 0x{hex}; \
+             SELECT v, CAST(v AS nvarchar(300)), CAST(v AS varbinary(300)) FROM #b; DROP TABLE #b"
+        );
+        let r = rows(&mut conn, &sql).await?;
+        assert_eq!(
+            r[0].get::<&[u8], _>(2).map(<[u8]>::len),
+            Some(255),
+            "{coll}"
+        );
+        assert_eq!(r[0].get::<&str, _>(0), r[0].get::<&str, _>(1), "{coll}");
+    }
+
+    Ok(())
+}
+
 #[cfg(feature = "rust_decimal")]
 #[test_on_runtimes]
 async fn rust_decimal_out_of_range<S>(mut conn: tiberius::Client<S>) -> Result<()>

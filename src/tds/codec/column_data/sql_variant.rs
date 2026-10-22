@@ -932,6 +932,18 @@ mod tests {
         assert_eq!(data, ColumnData::String(Some("a\u{FFFD}".into())));
     }
 
+    #[tokio::test]
+    async fn decode_varchar_in_cp850() {
+        let mut payload = vec![VarLenType::BigVarChar as u8, 7];
+        payload.extend_from_slice(&0x0409u32.to_le_bytes());
+        payload.push(42); // SQL_Latin1_General_CP850_CI_AS
+        payload.extend_from_slice(&40u16.to_le_bytes());
+        payload.extend_from_slice(&[0x9d, b'x']);
+
+        let data = decode(&mut variant_reader(&payload)).await.unwrap();
+        assert_eq!(data, ColumnData::String(Some("Øx".into())));
+    }
+
     // A string whose UTF-16 encoding exceeds MAX_VARIANT_PAYLOAD is rejected.
     // Covers 381-390.
     #[tokio::test]

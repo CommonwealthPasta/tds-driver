@@ -74,6 +74,8 @@ that land will be documented here.
 - **An unpaired UTF-16 surrogate decodes as U+FFFD instead of failing the result
   set**, in values (nvarchar, nchar, ntext, xml, sql_variant) and in
   column/table names, messages and ENVCHANGEs.
+- **The 20 CP437/CP850 SQL collations (e.g. `SQL_Latin1_General_CP850_CI_AS`)
+  can be read**, and bulk-load rows for them are encoded in their code page.
 
 ### Changed
 

@@ -1,6 +1,11 @@
 use std::borrow::Cow;
 
-use crate::{error::Error, sql_read_bytes::SqlReadBytes, tds::Collation, VarLenType};
+use crate::{
+    error::Error,
+    sql_read_bytes::SqlReadBytes,
+    tds::collation::{decode_oem, encode_oem, Charset, Collation},
+    VarLenType,
+};
 
 pub(crate) async fn decode<R>(
     src: &mut R,
@@ -35,7 +40,10 @@ where
 
 /// Decodes `buf` in the collation's code page.
 pub(crate) fn decode_varchar(buf: Vec<u8>, collation: &Collation) -> crate::Result<String> {
-    let encoder = collation.encoding()?;
+    let encoder = match collation.charset()? {
+        Charset::Encoding(encoder) => encoder,
+        Charset::Oem(table) => return Ok(decode_oem(table, &buf)),
+    };
     let decoded = encoder
         .decode_without_bom_handling_and_without_replacement(&buf)
         .ok_or_else(|| Error::Encoding("invalid sequence".into()))?;
@@ -52,7 +60,10 @@ pub(crate) fn decode_varchar(buf: Vec<u8>, collation: &Collation) -> crate::Resu
 
 /// Encodes `s` in the collation's code page; a character it lacks is an error.
 pub(crate) fn encode_varchar(s: &str, collation: &Collation) -> crate::Result<Vec<u8>> {
-    let mut encoder = collation.encoding()?.new_encoder();
+    let mut encoder = match collation.charset()? {
+        Charset::Encoding(encoding) => encoding.new_encoder(),
+        Charset::Oem(table) => return encode_oem(table, s),
+    };
     let len = encoder
         .max_buffer_length_from_utf8_without_replacement(s.len())
         .ok_or_else(|| Error::Encoding("string too long to encode".into()))?;
@@ -144,6 +155,41 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(s.as_deref(), Some("x\u{FFFD}"));
+    }
+
+    #[test]
+    fn varchar_in_oem_code_pages() {
+        let cp437 = Collation::new(0x0409, 32); // SQL_Latin1_General_CP437_CI_AS
+        let cp850 = Collation::new(0x0409, 42); // SQL_Latin1_General_CP850_CI_AS
+        assert_eq!(
+            decode_varchar(vec![b'a', 0x80, 0xb3, 0xe3, 0xff], &cp437).unwrap(),
+            "aÇ│π\u{a0}"
+        );
+        assert_eq!(
+            decode_varchar(vec![b'a', 0x9d, 0xd0, 0xd5, 0xf2], &cp850).unwrap(),
+            "aØðı‗"
+        );
+
+        assert_eq!(
+            encode_varchar("aÇ│π\u{a0}", &cp437).unwrap(),
+            [b'a', 0x80, 0xb3, 0xe3, 0xff]
+        );
+        assert_eq!(
+            encode_varchar("aØðı‗", &cp850).unwrap(),
+            [b'a', 0x9d, 0xd0, 0xd5, 0xf2]
+        );
+        assert!(matches!(
+            encode_varchar("Ø", &cp437),
+            Err(Error::Encoding(_))
+        ));
+
+        // Every byte round-trips.
+        for c in [cp437, cp850] {
+            let all: Vec<u8> = (0..=255).collect();
+            let s = decode_varchar(all.clone(), &c).unwrap();
+            assert_eq!(s.chars().count(), 256);
+            assert_eq!(encode_varchar(&s, &c).unwrap(), all);
+        }
     }
 
     #[test]
