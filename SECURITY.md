@@ -1,10 +1,9 @@
 # Security Policy
 
-`tiberius-ng` is an actively-maintained community continuation of the
-[tiberius](https://github.com/prisma/tiberius) TDS (Microsoft SQL Server) driver
-for Rust. It is published on crates.io as the package `tiberius-ng` (the library
-name remains `tiberius`). We take the security of the driver and its dependency
-graph seriously and appreciate responsible disclosure.
+`tds-driver` is a TDS (Microsoft SQL Server) driver for Rust that began as a
+fork of [tiberius](https://github.com/prisma/tiberius). We take the security of
+the driver and its dependency graph seriously and appreciate responsible
+disclosure.
 
 ## Supported Versions
 
@@ -13,10 +12,9 @@ patched; please upgrade to a supported release.
 
 | Version   | Supported          |
 | --------- | ------------------ |
-| 0.13.x    | :white_check_mark: |
-| < 0.13    | :x:                |
+| 0.1.x     | :white_check_mark: |
 
-Pre-release builds (e.g. `0.13.0-alpha.N`) are covered on a best-effort basis
+Pre-release builds (e.g. `0.2.0-alpha.N`) are covered on a best-effort basis
 while the series is in development. Where practical, fixes are developed on the
 `dev` branch and promoted through `qa` to `main` for release.
 
@@ -27,7 +25,7 @@ pull requests, or discussions.**
 
 Instead, report them privately through GitHub Security Advisories:
 
-- **[Open a private security advisory](https://github.com/MattJackson/tiberius-ng/security/advisories/new)**
+- **[Open a private security advisory](https://github.com/CommonwealthPasta/tds-driver/security/advisories/new)**
 
 This creates a confidential channel visible only to the maintainers, allowing us
 to investigate and coordinate a fix before any public disclosure.
@@ -39,10 +37,6 @@ To help us triage quickly, please include as much of the following as you can:
   flags such as `native-tls`, `rustls`, `integrated-auth-gssapi`).
 - Steps to reproduce, ideally a minimal proof of concept.
 - Any known mitigations or workarounds.
-
-If you prefer, you may also reach the maintainer directly at
-**matthew@pq.io** to initiate contact, but the GitHub Security Advisory is
-the preferred channel for the details.
 
 ## Response Expectations
 
@@ -87,7 +81,8 @@ cargo deny check advisories bans sources
 
 ## Scope
 
-This policy covers the `tiberius-ng` crate and its source in this repository.
-Vulnerabilities in upstream dependencies should be reported to their respective
-projects; if such an issue affects `tiberius-ng` users, we are glad to help
+This policy covers the `tds-driver` and `tds-driver-macros` crates and their
+source in this repository. Vulnerabilities in upstream dependencies should be
+reported to their respective projects; if such an issue affects `tds-driver`
+users, we are glad to help
 coordinate an upgrade or mitigation — please open an advisory so we can track it.

@@ -1,18 +1,18 @@
 blank_issues_enabled: false
 contact_links:
   - name: Questions & Discussions
-    url: https://github.com/MattJackson/tiberius-ng/discussions
+    url: https://github.com/CommonwealthPasta/tds-driver/discussions
     about: >-
       For usage questions, help with connection configuration, and general
       discussion, please open a Discussion instead of an issue.
   - name: Documentation
-    url: https://docs.rs/tiberius-ng/
-    about: API reference for tiberius-ng on docs.rs.
+    url: https://docs.rs/tds-driver/
+    about: API reference for tds-driver on docs.rs.
   - name: Getting started & README
-    url: https://github.com/MattJackson/tiberius-ng#readme
+    url: https://github.com/CommonwealthPasta/tds-driver#readme
     about: Installation, supported SQL Server versions, feature flags, and examples.
   - name: Report a security vulnerability
-    url: https://github.com/MattJackson/tiberius-ng/security/advisories/new
+    url: https://github.com/CommonwealthPasta/tds-driver/security/advisories/new
     about: >-
       Please report security issues privately through GitHub security
       advisories — do not open a public issue.

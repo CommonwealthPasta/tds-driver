@@ -1,22 +1,22 @@
 name: Feature request
-description: Suggest a new capability or improvement for tiberius-ng.
+description: Suggest a new capability or improvement for tds-driver.
 title: "[feature]: "
 labels: ["enhancement", "triage"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve tiberius-ng!
+        Thanks for helping improve tds-driver!
 
         Please search
-        [existing issues](https://github.com/MattJackson/tiberius-ng/issues?q=is%3Aissue)
+        [existing issues](https://github.com/CommonwealthPasta/tds-driver/issues?q=is%3Aissue)
         first — the feature may already be requested or in progress. For
-        open-ended ideas and questions, [Discussions](https://github.com/MattJackson/tiberius-ng/discussions)
+        open-ended ideas and questions, [Discussions](https://github.com/CommonwealthPasta/tds-driver/discussions)
         is often a better starting point.
 
         Note the project's stated non-goals (connection pooling, query building,
         and ORM functionality). Requests in those areas are generally out of
-        scope, but suggestions that make tiberius-ng compose better with external
+        scope, but suggestions that make tds-driver compose better with external
         crates that provide them are welcome.
   - type: textarea
     id: problem

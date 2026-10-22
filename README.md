@@ -1,5 +1,3 @@
-[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=github-sponsors)](https://github.com/sponsors/MattJackson)
-
 <h1 align="center">tds-driver</h1>
 
 <p align="center">
@@ -13,9 +11,9 @@
   <a href="https://crates.io/crates/tds-driver"><img src="https://img.shields.io/crates/d/tds-driver.svg" alt="downloads"></a>
   <a href="#license"><img src="https://img.shields.io/crates/l/tds-driver.svg" alt="license"></a>
   <br>
-  <a href="https://github.com/MattJackson/tiberius-ng/actions/workflows/test.yml"><img src="https://github.com/MattJackson/tiberius-ng/actions/workflows/test.yml/badge.svg?branch=dev" alt="tests"></a>
-  <a href="https://github.com/MattJackson/tiberius-ng/actions/workflows/security.yml"><img src="https://github.com/MattJackson/tiberius-ng/actions/workflows/security.yml/badge.svg?branch=dev" alt="security audit"></a>
-  <a href="https://codecov.io/gh/MattJackson/tiberius-ng"><img src="https://codecov.io/gh/MattJackson/tiberius-ng/branch/dev/graph/badge.svg" alt="coverage"></a>
+  <a href="https://github.com/CommonwealthPasta/tds-driver/actions/workflows/test.yml"><img src="https://github.com/CommonwealthPasta/tds-driver/actions/workflows/test.yml/badge.svg?branch=dev" alt="tests"></a>
+  <a href="https://github.com/CommonwealthPasta/tds-driver/actions/workflows/security.yml"><img src="https://github.com/CommonwealthPasta/tds-driver/actions/workflows/security.yml/badge.svg?branch=dev" alt="security audit"></a>
+  <a href="https://codecov.io/gh/CommonwealthPasta/tds-driver"><img src="https://codecov.io/gh/CommonwealthPasta/tds-driver/branch/dev/graph/badge.svg" alt="coverage"></a>
   <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome"></a>
 </p>
 
@@ -202,7 +200,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 Contributions are very welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [Code of Conduct](CODE_OF_CONDUCT.md). Target PRs at the `dev` branch. Bugs and
-feature requests go in the [issue tracker](https://github.com/MattJackson/tiberius-ng/issues).
+feature requests go in the [issue tracker](https://github.com/CommonwealthPasta/tds-driver/issues).
 
 ## Security
 
@@ -210,7 +208,7 @@ Supply-chain security is enforced in CI with
 [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) (see [`deny.toml`](deny.toml)):
 any vulnerability or yanked crate in the built graph fails the build. Report
 vulnerabilities privately via
-[GitHub Security Advisories](https://github.com/MattJackson/tiberius-ng/security/advisories/new).
+[GitHub Security Advisories](https://github.com/CommonwealthPasta/tds-driver/security/advisories/new).
 
 ## License
 

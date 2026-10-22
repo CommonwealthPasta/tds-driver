@@ -1,5 +1,5 @@
 <!--
-Thanks for contributing to tiberius-ng!
+Thanks for contributing to tds-driver!
 
 Please fill out the sections below. Keep the PR focused — smaller, single-purpose
 pull requests are reviewed and merged faster.

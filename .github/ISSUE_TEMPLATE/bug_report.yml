@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a defect in tiberius-ng so it can be reproduced and fixed.
+description: Report a defect in tds-driver so it can be reproduced and fixed.
 title: "[bug]: "
 labels: ["bug", "triage"]
 body:
@@ -9,9 +9,9 @@ body:
         Thanks for taking the time to file a bug report!
 
         Before opening a new issue, please search
-        [existing issues](https://github.com/MattJackson/tiberius-ng/issues?q=is%3Aissue)
+        [existing issues](https://github.com/CommonwealthPasta/tds-driver/issues?q=is%3Aissue)
         to avoid duplicates. For usage questions and general discussion, use
-        [Discussions](https://github.com/MattJackson/tiberius-ng/discussions) instead.
+        [Discussions](https://github.com/CommonwealthPasta/tds-driver/discussions) instead.
 
         The more precisely you can describe the problem — ideally with a minimal,
         self-contained reproduction — the faster it can be diagnosed.
@@ -24,12 +24,12 @@ body:
     validations:
       required: true
   - type: input
-    id: tiberius-version
+    id: version
     attributes:
-      label: tiberius-ng version
+      label: tds-driver version
       description: >-
-        The exact version of the `tiberius-ng` package you are using (from
-        `Cargo.toml` or `cargo tree -p tiberius-ng`). If building from git,
+        The exact version of the `tds-driver` package you are using (from
+        `Cargo.toml` or `cargo tree -p tds-driver`). If building from git,
         include the branch and commit hash.
       placeholder: 0.1.0
     validations:
@@ -70,7 +70,7 @@ body:
     attributes:
       label: Feature flags
       description: >-
-        The Cargo feature flags enabled for `tiberius-ng`. Include your async
+        The Cargo feature flags enabled for `tds-driver`. Include your async
         runtime and TLS backend, since behaviour differs between them.
       placeholder: "default (tds73, winauth, native-tls) + sql-browser-tokio, rust_decimal, chrono"
     validations:
@@ -119,7 +119,7 @@ body:
     attributes:
       label: Logs
       description: >-
-        Relevant logs or a backtrace. tiberius-ng emits diagnostics via the
+        Relevant logs or a backtrace. tds-driver emits diagnostics via the
         `tracing` crate — enabling `RUST_LOG=tds_driver=trace` (or a `tracing`
         subscriber at TRACE level) and pasting the TDS handshake / packet output
         is extremely helpful. Set `RUST_BACKTRACE=1` for panics. This field is

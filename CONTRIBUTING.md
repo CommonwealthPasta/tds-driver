@@ -1,14 +1,12 @@
-# Contributing to Tiberius
+# Contributing to tds-driver
 
-Thanks for your interest in improving Tiberius!
+Thanks for your interest in improving tds-driver!
 
-This repository — [`MattJackson/tiberius-ng`](https://github.com/MattJackson/tiberius-ng) —
-is an actively-maintained **community fork** of the original
-[`prisma/tiberius`](https://github.com/prisma/tiberius) TDS (Microsoft SQL Server)
-driver for Rust. The upstream project is no longer maintained; this fork carries
-the work forward. It is published on crates.io as
-[`tiberius-ng`](https://crates.io/crates/tiberius-ng) (the library name stays
-`tiberius`, so downstream code keeps `use tds_driver::...`).
+This repository — [`CommonwealthPasta/tds-driver`](https://github.com/CommonwealthPasta/tds-driver) —
+is a TDS (Microsoft SQL Server) driver for Rust. It began as a fork of
+[`prisma/tiberius`](https://github.com/prisma/tiberius) by way of
+[`MattJackson/tiberius-ng`](https://github.com/MattJackson/tiberius-ng), and is
+published on crates.io as [`tds-driver`](https://crates.io/crates/tds-driver).
 
 Contributions of all kinds are welcome and appreciated: bug reports, bug fixes,
 new type/feature support, documentation, tests, and CI improvements. If you are
@@ -135,7 +133,7 @@ builds tests with `RUSTFLAGS="-Dwarnings"`, so keep the tree warning-free.
 
 ## Supply-chain gate (cargo-deny)
 
-Tiberius is a foundational dependency, so the dependency graph is gated by
+A database driver is a foundational dependency, so the dependency graph is gated by
 [cargo-deny](https://embarkstudios.github.io/cargo-deny/). The
 `.github/workflows/security.yml` workflow runs this on every push, every PR, and
 weekly on a schedule. It **must stay green**:
@@ -221,6 +219,6 @@ policy for details.
 
 ## Getting help
 
-Open a [GitHub issue](https://github.com/MattJackson/tiberius-ng/issues) for bugs,
-questions, or feature ideas. Thanks for helping keep Tiberius healthy and
+Open a [GitHub issue](https://github.com/CommonwealthPasta/tds-driver/issues) for bugs,
+questions, or feature ideas. Thanks for helping keep tds-driver healthy and
 maintained!
