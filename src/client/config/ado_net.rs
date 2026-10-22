@@ -866,4 +866,26 @@ mod tests {
         // Trailing NULs and separators are accepted.
         assert_eq!(value("pwd=x;;\0\0", "pwd").as_deref(), Some("x"));
     }
+
+    #[test]
+    #[cfg(any(
+        feature = "rustls",
+        feature = "native-tls",
+        feature = "vendored-openssl"
+    ))]
+    fn encrypt_accepts_sqlclient_5_values() -> crate::Result<()> {
+        for (v, level) in [
+            ("Mandatory", EncryptionLevel::Required),
+            (" mandatory ", EncryptionLevel::Required),
+            ("TRUE", EncryptionLevel::Required),
+            ("Optional", EncryptionLevel::Off),
+            ("No", EncryptionLevel::Off),
+        ] {
+            let ado: AdoNetConfig = format!("encrypt='{v}'").parse()?;
+            assert_eq!(level, ado.encrypt()?, "{v}");
+        }
+        let ado: AdoNetConfig = "encrypt=sometimes".parse()?;
+        assert!(ado.encrypt().is_err());
+        Ok(())
+    }
 }

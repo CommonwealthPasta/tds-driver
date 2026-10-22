@@ -837,17 +837,27 @@ pub(crate) trait ConfigString {
     ))]
     fn encrypt(&self) -> crate::Result<EncryptionLevel> {
         self.first(&["encrypt"])
-            .map(|val| match Self::parse_bool(val) {
-                Ok(true) => Ok(EncryptionLevel::Required),
-                Ok(false) => Ok(EncryptionLevel::Off),
-                Err(_) if val == "DANGER_PLAINTEXT" => Ok(EncryptionLevel::NotSupported),
-                Err(_) if val.eq_ignore_ascii_case("strict") && cfg!(feature = "tds80") => {
+            .map(|val| {
+                let val = val.trim();
+                let is = |s: &str| val.eq_ignore_ascii_case(s);
+                // SqlClient 5+: true/yes/mandatory, false/no/optional, strict.
+                if is("true") || is("yes") || is("mandatory") {
+                    Ok(EncryptionLevel::Required)
+                } else if is("false") || is("no") || is("optional") {
+                    Ok(EncryptionLevel::Off)
+                } else if val == "DANGER_PLAINTEXT" {
+                    Ok(EncryptionLevel::NotSupported)
+                } else if is("strict") && cfg!(feature = "tds80") {
                     Ok(EncryptionLevel::Strict)
+                } else if is("strict") {
+                    Err(crate::Error::Conversion(
+                        "encrypt=strict requires the crate's `tds80` feature to be enabled".into(),
+                    ))
+                } else {
+                    Err(crate::Error::Conversion(
+                        "Connection string: Encrypt must be true, false, yes, no, mandatory, optional or strict".into(),
+                    ))
                 }
-                Err(_) if val.eq_ignore_ascii_case("strict") => Err(crate::Error::Conversion(
-                    "encrypt=strict requires the crate's `tds80` feature to be enabled".into(),
-                )),
-                Err(e) => Err(e),
             })
             // When the `encrypt` keyword is omitted, default to requiring
             // encryption — matching `Config::default()` and modern ADO.NET
