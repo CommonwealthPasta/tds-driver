@@ -267,6 +267,8 @@ that land will be documented here.
 - **Secrets are zeroized before their memory is freed:** connection-string
   values, the AAD token (also when a connect is abandoned) and the LOGIN7
   buffer, which used to grow and free copies of the obfuscated password.
+- **Parsing a JDBC URL frees no copy of its password;** the old parser grew its
+  buffers a character at a time.
 
 ### Breaking
 
@@ -292,6 +294,10 @@ that land will be documented here.
   `Authentication` values and a non-TCP `Network Library`. Pooling, retry,
   timeout and enlistment keywords are accepted and ignored. Invalid `Integrated
   Security` values are errors.
+- **JDBC:** `{a}}b}` is `a}b`, not `a}b}`; a URL must start with
+  `jdbc:sqlserver://` and its server name takes no braces; an `instanceName`
+  property wins over `serverName=host\instance`; a `{` after the start of a
+  value is an error, as in mssql-jdbc (`a{/}b` used to mean `a/b`).
 
 ## [0.13.1] - 2026-08-30
 

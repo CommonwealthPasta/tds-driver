@@ -1,36 +1,236 @@
 use super::{ConfigString, ServerDefinition};
 use crate::error::Error;
-use connection_string::JdbcString;
-use std::{str::FromStr, time::Duration};
-use zeroize::Zeroize;
+use std::{collections::HashMap, str::FromStr, time::Duration};
+use zeroize::Zeroizing;
 
 /// `loginTimeout` default of mssql-jdbc 11.2 and later.
 const JDBC_DEFAULT_LOGIN_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// A JDBC URL, split with mssql-jdbc's rules.
 pub(crate) struct JdbcConfig {
-    config: JdbcString,
+    dict: HashMap<String, Zeroizing<String>>,
 }
 
 impl FromStr for JdbcConfig {
     type Err = Error;
 
     fn from_str(s: &str) -> crate::Result<Self> {
-        let config = s.parse()?;
-        Ok(Self { config })
+        Ok(Self { dict: parse(s)? })
     }
 }
 
-impl Drop for JdbcConfig {
-    fn drop(&mut self) {
-        for value in self.config.properties_mut().values_mut() {
-            value.zeroize();
+/// mssql-jdbc's name for a lowercase property name.
+fn property(name: &str) -> String {
+    name.to_owned()
+}
+
+/// Java's `String.trim`.
+fn trim(s: &str) -> &str {
+    s.trim_matches(|c: char| c <= ' ')
+}
+
+/// Splits a `jdbc:sqlserver://` URL into its properties, each stored under
+/// [`property`] of its lowercase name.
+///
+/// - The prefix is matched without regard to ASCII case.
+/// - Then comes `serverName[\instanceName][:portNumber]`, up to the first
+///   `;`. The server name may be an IPv6 address in `[...]`, which may hold
+///   any character; outside brackets the name's first character is always
+///   taken as part of it. The parts are trimmed, stored unless empty and must
+///   not contain `=`. A port, once its `:` is there, must be ASCII digits
+///   with a value of at most 65535.
+/// - Then `;name=value` properties. A name runs to the `=` and is trimmed; it
+///   must not be empty. A segment holding only whitespace is skipped.
+/// - A value runs to the next `;` and is trimmed, and must not contain `{`,
+///   unless it starts with `{` after whitespace. Then it is kept as it is up
+///   to the matching `}`, where `}}` stands for a literal `}`, and only
+///   spaces may follow the brace before the `;` or the end.
+/// - The last occurrence of a name wins.
+///
+/// Each value is copied once, into a [`Zeroizing`] buffer that never grows.
+fn parse(url: &str) -> crate::Result<HashMap<String, Zeroizing<String>>> {
+    const PREFIX: &str = "jdbc:sqlserver://";
+    match url.get(..PREFIX.len()) {
+        Some(prefix) if prefix.eq_ignore_ascii_case(PREFIX) => (),
+        _ => {
+            return Err(Error::Conversion(
+                format!("Connection string: a JDBC URL must begin with {PREFIX}").into(),
+            ))
+        }
+    }
+
+    let mut props = HashMap::new();
+    let mut cursor = Cursor {
+        url,
+        pos: PREFIX.len(),
+    };
+    cursor.head(&mut props)?;
+    while cursor.eat(';') {
+        cursor.property(&mut props)?;
+    }
+    Ok(props)
+}
+
+fn malformed_at(index: usize) -> Error {
+    Error::Conversion(format!("Connection string: malformed JDBC URL at index {index}").into())
+}
+
+/// A byte position in a JDBC URL.
+struct Cursor<'a> {
+    url: &'a str,
+    pos: usize,
+}
+
+impl<'a> Cursor<'a> {
+    fn rest(&self) -> &'a str {
+        &self.url[self.pos..]
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.rest().chars().next()
+    }
+
+    fn eat(&mut self, c: char) -> bool {
+        let found = self.peek() == Some(c);
+        if found {
+            self.pos += c.len_utf8();
+        }
+        found
+    }
+
+    /// Moves to the next character in `stops`, or the end, and returns the
+    /// text passed over.
+    fn take_until(&mut self, stops: &[char]) -> &'a str {
+        let rest = self.rest();
+        let len = rest.find(stops).unwrap_or(rest.len());
+        self.pos += len;
+        &rest[..len]
+    }
+
+    /// Reads `serverName[\instanceName][:portNumber]`, up to the first `;`.
+    fn head(&mut self, props: &mut HashMap<String, Zeroizing<String>>) -> crate::Result<()> {
+        let start = self.pos;
+        match self.peek() {
+            // A bracketed IPv6 address; its `:`s (and anything else) are its own.
+            Some('[') => match self.rest().find(']') {
+                Some(close) => self.pos += close + 1,
+                None => return Err(malformed_at(self.url.len())),
+            },
+            Some(';') | None => (),
+            // The first character belongs to the server name even if it is
+            // `\` or `:`.
+            Some(first) => self.pos += first.len_utf8(),
+        }
+        self.take_until(&['\\', ':', ';']);
+        let server = &self.url[start..self.pos];
+        let instance = if self.eat('\\') {
+            self.take_until(&[':', ';'])
+        } else {
+            ""
+        };
+        let port = if self.eat(':') {
+            Some(trim(self.take_until(&[';'])))
+        } else {
+            None
+        };
+
+        for (name, part) in [("servername", server), ("instancename", instance)] {
+            let part = trim(part);
+            if part.contains('=') {
+                return Err(Error::Conversion(
+                    format!("Connection string: the {name} in a JDBC URL must not contain `=`")
+                        .into(),
+                ));
+            }
+            if !part.is_empty() {
+                props.insert(name.to_owned(), Zeroizing::new(part.to_owned()));
+            }
+        }
+        if let Some(port) = port {
+            // `parse` alone would also take a sign; leading zeros are fine.
+            let valid = port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok();
+            if !valid {
+                return Err(Error::Conversion(
+                    "Connection string: the port in a JDBC URL must be a number from 0 to 65535"
+                        .into(),
+                ));
+            }
+            props.insert("portnumber".to_owned(), Zeroizing::new(port.to_owned()));
+        }
+        Ok(())
+    }
+
+    /// Reads a `name=value` property after its `;`.
+    fn property(&mut self, props: &mut HashMap<String, Zeroizing<String>>) -> crate::Result<()> {
+        let name = trim(self.take_until(&['=', ';']));
+        if !self.eat('=') {
+            // Only an empty segment, as in `;;`, may lack the `=`.
+            if name.is_empty() {
+                return Ok(());
+            }
+            return Err(malformed_at(self.pos));
+        }
+        if name.is_empty() {
+            return Err(malformed_at(self.pos - 1));
+        }
+        let name = property(&name.to_lowercase());
+        let value = self.value()?;
+        props.insert(name, value);
+        Ok(())
+    }
+
+    /// Reads a property value, braced or not, up to its `;` or the end.
+    fn value(&mut self) -> crate::Result<Zeroizing<String>> {
+        let rest = self.rest();
+        // The leading characters `trim` would remove.
+        let lead = rest.len() - rest.trim_start_matches(|c| c <= ' ').len();
+        if rest[lead..].starts_with('{') {
+            self.pos += lead + 1;
+            return self.braced();
+        }
+        let start = self.pos;
+        let raw = self.take_until(&[';']);
+        if let Some(brace) = raw.find('{') {
+            return Err(malformed_at(start + brace));
+        }
+        Ok(Zeroizing::new(trim(raw).to_owned()))
+    }
+
+    /// Reads a braced value after its `{`, through the closing `}`.
+    fn braced(&mut self) -> crate::Result<Zeroizing<String>> {
+        let body = self.rest();
+        let bytes = body.as_bytes();
+        let mut i = 0;
+        let end = loop {
+            match bytes.get(i) {
+                None => return Err(malformed_at(self.url.len())),
+                Some(b'}') if bytes.get(i + 1) == Some(&b'}') => i += 2,
+                Some(b'}') => break i,
+                Some(_) => i += 1,
+            }
+        };
+        let mut value = Zeroizing::new(String::with_capacity(end));
+        let mut chars = body[..end].chars();
+        while let Some(c) = chars.next() {
+            value.push(c);
+            if c == '}' {
+                // The second of a doubled brace.
+                chars.next();
+            }
+        }
+        self.pos += end + 1;
+        let rest = self.rest();
+        self.pos += rest.len() - rest.trim_start_matches(' ').len();
+        match self.peek() {
+            None | Some(';') => Ok(value),
+            Some(_) => Err(malformed_at(self.pos)),
         }
     }
 }
 
 impl ConfigString for JdbcConfig {
     fn get(&self, key: &str) -> Option<&str> {
-        self.config.properties().get(key).map(|v| v.as_str())
+        self.dict.get(key).map(|v| v.as_str())
     }
 
     /// `loginTimeout` (alias `connectTimeout`): seconds, 0..=65535, where 0
@@ -48,29 +248,21 @@ impl ConfigString for JdbcConfig {
         }
     }
 
-    /// The `serverName`, `instanceName` and `portNumber` properties override
-    /// the URL prefix, as mssql-jdbc takes the last occurrence of a property.
+    /// As mssql-jdbc's `connectInternal`: `serverName` may end in
+    /// `\instance`, and an `instanceName` property wins over that.
     fn server(&self) -> crate::Result<ServerDefinition> {
-        let host = self
-            .first(&["servername", "server"])
-            .or(self.config.server_name());
-
-        // mssql-jdbc accepts `host\instance` in the serverName property.
-        let (host, url_instance) = match host.map(|h| h.split_once('\\')) {
-            Some(Some((host, instance))) => (Some(host), Some(instance)),
-            Some(None) => (host, None),
+        let (host, instance) = match self.first(&["servername", "server"]) {
+            Some(name) => match name.split_once('\\') {
+                Some((host, instance)) => (Some(host), Some(instance)),
+                None => (Some(name), None),
+            },
             None => (None, None),
         };
-
-        let instance = self
-            .get("instancename")
-            .or(url_instance)
-            .or(self.config.instance_name());
-
-        let port = match self.first(&["portnumber", "port"]) {
-            Some(port) => Some(port.trim().parse()?),
-            None => self.config.port(),
-        };
+        let instance = self.get("instancename").or(instance);
+        let port = self
+            .first(&["portnumber", "port"])
+            .map(|port| port.trim().parse())
+            .transpose()?;
 
         Ok(ServerDefinition {
             host: host.map(str::to_owned),
@@ -300,7 +492,7 @@ mod tests {
         let jdbc: JdbcConfig = test_str.parse()?;
 
         assert_eq!(
-            AuthMethod::sql_server("musti", "abc;}45}"),
+            AuthMethod::sql_server("musti", "abc;}45"),
             jdbc.authentication()?
         );
 
@@ -397,8 +589,8 @@ mod tests {
         assert_eq!(Some("h".to_string()), server.host);
         assert_eq!(Some(7), server.port);
 
-        // connection-string's lexer needs `\` inside braces.
-        let jdbc: JdbcConfig = r"jdbc:sqlserver://;serverName={h\INST}".parse()?;
+        // `\` needs no braces.
+        let jdbc: JdbcConfig = r"jdbc:sqlserver://;serverName=h\INST".parse()?;
         let server = jdbc.server()?;
         assert_eq!(Some("h".to_string()), server.host);
         assert_eq!(Some("INST".to_string()), server.instance);
@@ -439,6 +631,86 @@ mod tests {
         );
         assert!(t("jdbc:sqlserver://h;loginTimeout=65536").is_err());
         assert!(t("jdbc:sqlserver://h;loginTimeout=-1").is_err());
+        Ok(())
+    }
+
+    fn value(s: &str, key: &str) -> Option<String> {
+        let jdbc: JdbcConfig = s.parse().unwrap_or_else(|e| panic!("{s:?}: {e}"));
+        jdbc.get(key).map(str::to_owned)
+    }
+
+    #[test]
+    fn mssql_jdbc_value_rules() {
+        let v = |props: &str| value(&format!("jdbc:sqlserver://h;{props}"), "password");
+        // Only `;` and a leading `{` are special outside braces.
+        assert_eq!(v(r"password=a\b").as_deref(), Some(r"a\b"));
+        assert_eq!(v("password=a=b:c/d[e]}").as_deref(), Some("a=b:c/d[e]}"));
+        assert_eq!(v("password=pässwörd€😀").as_deref(), Some("pässwörd€😀"));
+        // Unescaped names and values are trimmed; braced values are not.
+        assert_eq!(v("  password  =  a b  ;").as_deref(), Some("a b"));
+        assert_eq!(v("password= { a;b } ;").as_deref(), Some(" a;b "));
+        // `}}` is a literal `}` inside braces (mssql-jdbc 8.4+).
+        assert_eq!(
+            v("password={pass\";{}}word}").as_deref(),
+            Some("pass\";{}word")
+        );
+        assert_eq!(v("password={ü\\{x}").as_deref(), Some("ü\\{x"));
+        assert_eq!(v("password=").as_deref(), Some(""));
+        // The last occurrence wins.
+        assert_eq!(v("password=a;password=b").as_deref(), Some("b"));
+
+        for bad in [
+            "password={abc",   // unclosed brace
+            "password={a}b",   // text after a braced value
+            "password=a{b}",   // a brace after text
+            "password",        // no `=`
+            "password;user=x", // ditto
+            "=x",              // empty name
+        ] {
+            let s = format!("jdbc:sqlserver://h;{bad}");
+            assert!(s.parse::<JdbcConfig>().is_err(), "{bad:?} parsed");
+        }
+    }
+
+    #[test]
+    fn mssql_jdbc_url_prefix_rules() -> crate::Result<()> {
+        let server = |s: &str| s.parse::<JdbcConfig>().and_then(|j| j.server());
+        let s = server(r"JDBC:SQLServer:// my host \ inst : 1433 ;")?;
+        assert_eq!(s.host.as_deref(), Some("my host"));
+        assert_eq!(s.instance.as_deref(), Some("inst"));
+        assert_eq!(s.port, Some(1433));
+        // The instanceName property wins over `serverName=host\instance`.
+        let s = server(r"jdbc:sqlserver://;serverName=h\A;instanceName=B")?;
+        assert_eq!(
+            (s.host.as_deref(), s.instance.as_deref()),
+            (Some("h"), Some("B"))
+        );
+        let s = server(r"jdbc:sqlserver://;serverName=h\A")?;
+        assert_eq!(
+            (s.host.as_deref(), s.instance.as_deref()),
+            (Some("h"), Some("A"))
+        );
+        // IPv6: brackets in the URL (the old parser's), bare in serverName.
+        assert_eq!(
+            server("jdbc:sqlserver://[::1]:1433")?.host.as_deref(),
+            Some("[::1]")
+        );
+        let s = server("jdbc:sqlserver://;serverName=fe80::1;port=7")?;
+        assert_eq!((s.host.as_deref(), s.port), (Some("fe80::1"), Some(7)));
+
+        for bad in [
+            "jdbc:mysql://h",
+            "sqlserver://h",
+            "jdbc:sqlserver://h:+5",
+            "jdbc:sqlserver://h:65536",
+            "jdbc:sqlserver://h:",
+            "jdbc:sqlserver://a=b",
+            r"jdbc:sqlserver://h\a=b",
+            "jdbc:sqlserver://[::1",
+            "jdbc:sqlserver:/",
+        ] {
+            assert!(bad.parse::<JdbcConfig>().is_err(), "{bad:?} parsed");
+        }
         Ok(())
     }
 }

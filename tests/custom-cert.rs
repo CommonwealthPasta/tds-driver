@@ -56,9 +56,9 @@ fn connect_to_custom_cert_instance_jdbc() -> Result<()> {
     let rt = Runtime::new()?;
 
     rt.block_on(async {
-        // Careful: the / in the TrustServerCertificateCA needs to be escaped
+        // mssql-jdbc braces only a whole value; `/` needs none.
         let mut config = Config::from_jdbc_string(
-            "jdbc:sqlserver://localhost:1433;TrustServerCertificateCA=docker{/}certs{/}customCA.crt",
+            "jdbc:sqlserver://localhost:1433;TrustServerCertificateCA=docker/certs/customCA.crt",
         )?;
         config.authentication(AuthMethod::sql_server("sa", "<YourStrong@Passw0rd>"));
 

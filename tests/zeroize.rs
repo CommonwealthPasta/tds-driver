@@ -145,6 +145,15 @@ fn credentials_are_zeroized_before_being_freed() {
     let (hits, _) = leaks(PW, || drop(Config::from_ado_string(&cs).unwrap()));
     assert_eq!(hits, 0, "connection string parsing");
 
+    // A buffer grown a character at a time frees copies of a prefix.
+    for jdbc in [
+        format!("jdbc:sqlserver://localhost;user=sa;password={PW}"),
+        format!("jdbc:sqlserver://localhost;user=sa;password={{{PW}}}"),
+    ] {
+        let (hits, _) = leaks(&PW[..8], || drop(Config::from_jdbc_string(&jdbc).unwrap()));
+        assert_eq!(hits, 0, "{jdbc}");
+    }
+
     let long = Duration::from_secs(10);
     let (hits, done) = leaks(PW, || {
         login(&rt, AuthMethod::sql_server("sa", PW), None, false, long)
