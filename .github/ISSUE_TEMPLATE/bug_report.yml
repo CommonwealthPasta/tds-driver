@@ -31,7 +31,7 @@ body:
         The exact version of the `tiberius-ng` package you are using (from
         `Cargo.toml` or `cargo tree -p tiberius-ng`). If building from git,
         include the branch and commit hash.
-      placeholder: 0.13.0-alpha.1
+      placeholder: 0.1.0
     validations:
       required: true
   - type: dropdown
