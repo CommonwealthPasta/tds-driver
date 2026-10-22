@@ -320,6 +320,14 @@ fn put_plp(dst: &mut BytesMutWithTypeInfo<'_>, bytes: &[u8]) {
     }
 }
 
+/// Encodes in the column's code page; the server stores the bytes as is.
+fn encode_in_collation(s: &str, vlc: &VarLenContext) -> crate::Result<Vec<u8>> {
+    let collation = vlc
+        .collation()
+        .ok_or_else(|| crate::Error::BulkInput("character column without a collation".into()))?;
+    string::encode_varchar(s, &collation)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 /// A container of a value that can be represented as a TDS value.
@@ -584,8 +592,7 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     || vlc.r#type() == VarLenType::BigVarChar =>
             {
                 if let Some(str) = opt {
-                    let bytes =
-                        string::encode_varchar(str.as_ref(), vlc.collation().as_ref().unwrap())?;
+                    let bytes = encode_in_collation(&str, vlc)?;
 
                     if bytes.len() > column_limit(vlc) {
                         return Err(crate::Error::BulkInput(
@@ -689,11 +696,7 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     dst.extend_from_slice(&[0u8; 8]); // timestamp
 
                     if vlc.r#type() == VarLenType::Text {
-                        // single-byte character data, encoded with the column collation
-                        let bytes = string::encode_varchar(
-                            str.as_ref(),
-                            vlc.collation().as_ref().unwrap(),
-                        )?;
+                        let bytes = encode_in_collation(&str, vlc)?;
 
                         dst.put_u32_le(bytes.len() as u32);
                         dst.extend_from_slice(bytes.as_slice());
