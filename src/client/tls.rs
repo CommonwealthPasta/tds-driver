@@ -52,7 +52,9 @@ pub(crate) enum MaybeTlsStream<S: AsyncRead + AsyncWrite + Unpin + Send> {
         feature = "native-tls",
         feature = "vendored-openssl"
     ))]
-    Tls(TlsStream<TlsPreloginWrapper<S>>),
+    /// With the bytes of the TDS packet being written that the TLS stream
+    /// has yet to take.
+    Tls(TlsStream<TlsPreloginWrapper<S>>, usize),
 }
 
 #[cfg(any(
@@ -69,7 +71,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> MaybeTlsStream<S> {
                 feature = "native-tls",
                 feature = "vendored-openssl"
             ))]
-            Self::Tls(mut tls) => tls.get_mut().stream.take().unwrap(),
+            Self::Tls(mut tls, _) => tls.get_mut().stream.take().unwrap(),
         }
     }
 }
@@ -87,7 +89,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncRead for MaybeTlsStream<S> {
                 feature = "native-tls",
                 feature = "vendored-openssl"
             ))]
-            MaybeTlsStream::Tls(s) => Pin::new(s).poll_read(cx, buf),
+            MaybeTlsStream::Tls(s, _) => Pin::new(s).poll_read(cx, buf),
         }
     }
 }
@@ -105,7 +107,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for MaybeTlsStream<S> 
                 feature = "native-tls",
                 feature = "vendored-openssl"
             ))]
-            MaybeTlsStream::Tls(s) => Pin::new(s).poll_write(cx, buf),
+            MaybeTlsStream::Tls(s, left) => {
+                // SQL Server drops the connection when a TLS record holds
+                // parts of two TDS packets, so the TLS stream gets at most
+                // the rest of one packet per write.
+                if *left == 0 && buf.len() >= HEADER_BYTES {
+                    *left = usize::from(u16::from_be_bytes([buf[2], buf[3]])).max(HEADER_BYTES);
+                }
+                let end = if *left == 0 {
+                    buf.len()
+                } else {
+                    buf.len().min(*left)
+                };
+                let written = ready!(Pin::new(s).poll_write(cx, &buf[..end]))?;
+                *left = left.saturating_sub(written);
+                Poll::Ready(Ok(written))
+            }
         }
     }
 
@@ -117,7 +134,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for MaybeTlsStream<S> 
                 feature = "native-tls",
                 feature = "vendored-openssl"
             ))]
-            MaybeTlsStream::Tls(s) => Pin::new(s).poll_flush(cx),
+            MaybeTlsStream::Tls(s, _) => Pin::new(s).poll_flush(cx),
         }
     }
 
@@ -129,7 +146,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for MaybeTlsStream<S> 
                 feature = "native-tls",
                 feature = "vendored-openssl"
             ))]
-            MaybeTlsStream::Tls(s) => Pin::new(s).poll_close(cx),
+            MaybeTlsStream::Tls(s, _) => Pin::new(s).poll_close(cx),
         }
     }
 }

@@ -154,7 +154,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                 pre_login_stream.handshake_complete();
                 let stream = create_tls_stream(&config, pre_login_stream).await?;
                 event!(Level::DEBUG, "TLS handshake successful");
-                Framed::new(MaybeTlsStream::Tls(stream), PacketCodec)
+                Framed::new(MaybeTlsStream::Tls(stream, 0), PacketCodec)
             }
             _ => Framed::new(MaybeTlsStream::Raw(tcp_stream), PacketCodec),
         };
@@ -397,7 +397,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         self.flushed = false;
 
         let packet = Packet::new(header, data);
-        self.transport.send(packet).await?;
+        // Buffered; the codec writes once its buffer passes the high-water
+        // mark, and every caller ends with `flush_sink`.
+        self.transport.feed(packet).await?;
 
         Ok(())
     }
@@ -957,7 +959,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                 stream.get_mut().handshake_complete();
                 event!(Level::DEBUG, "TLS handshake successful");
 
-                let transport = Framed::new(MaybeTlsStream::Tls(stream), PacketCodec);
+                let transport = Framed::new(MaybeTlsStream::Tls(stream, 0), PacketCodec);
 
                 Ok(Self {
                     transport,
