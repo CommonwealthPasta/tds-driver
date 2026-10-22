@@ -187,6 +187,9 @@ that land will be documented here.
 - **Strings over 1 GiB of UTF-8 are declared `nvarchar(max)`**, not `ntext(max)`
   (error 2716); one longer than `nvarchar(max)` holds (1,073,741,823 UTF-16
   units) is a `Conversion` error.
+- **NULL binary and decimal parameters are declared like values of their type**,
+  `varbinary(8000)` and `numeric(38,0)` instead of `varbinary(max)` and
+  `numeric` (18,0), so they no longer get a cached plan of their own.
 - **A TLS handshake over OpenSSL survives a socket that can't take a flight at
   once.** OpenSSL fails the handshake on a flush that would block, which
   affected `native-tls` on Linux and `vendored-openssl`.

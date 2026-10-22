@@ -529,15 +529,21 @@ impl<'a> ColumnData<'a> {
             // The encoder rejects a string nvarchar(max) cannot hold.
             ColumnData::String(Some(_)) => "nvarchar(max)".into(),
             ColumnData::Guid(_) => "uniqueidentifier".into(),
+            // A NULL is declared as a short value of its type, and as the
+            // TYPE_INFO `encode` sends with it, so they share a cached plan.
+            ColumnData::Binary(None) => "varbinary(8000)".into(),
             ColumnData::Binary(Some(ref b)) if b.len() <= 8000 => "varbinary(8000)".into(),
             ColumnData::Binary(_) => "varbinary(max)".into(),
             // Precision from the value would give each digit count its own
             // cached plan; 38 holds every value. The scale still comes from
-            // the value, as in SqlClient, so each scale gets its own plan.
-            ColumnData::Numeric(Some(ref n)) => {
-                format!("numeric({},{})", NUMERIC_PARAM_PRECISION, n.scale()).into()
-            }
-            ColumnData::Numeric(None) => "numeric".into(),
+            // the value, as in SqlClient, so each scale gets its own plan; a
+            // NULL's is 0, SqlClient's default.
+            ColumnData::Numeric(n) => format!(
+                "numeric({},{})",
+                NUMERIC_PARAM_PRECISION,
+                n.map_or(0, Numeric::scale)
+            )
+            .into(),
             ColumnData::Xml(_) => "xml".into(),
             ColumnData::DateTime(_) => "datetime".into(),
             ColumnData::SmallDateTime(_) => "smalldatetime".into(),
@@ -1214,7 +1220,7 @@ mod tests {
         assert_eq!(ColumnData::F64(Some(1.0)).type_name(), "float(53)");
         assert_eq!(ColumnData::Bit(Some(true)).type_name(), "bit");
         assert_eq!(ColumnData::Guid(None).type_name(), "uniqueidentifier");
-        assert_eq!(ColumnData::Numeric(None).type_name(), "numeric");
+        assert_eq!(ColumnData::Numeric(None).type_name(), "numeric(38,0)");
         assert_eq!(ColumnData::DateTime(None).type_name(), "datetime");
         assert_eq!(ColumnData::SmallDateTime(None).type_name(), "smalldatetime");
     }
@@ -1310,6 +1316,78 @@ mod tests {
                 }
                 assert_eq!(decoded, value);
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn nulls_are_declared_like_values_of_their_type() {
+        // A declaration of its own gave a NULL its own cached plan. The value
+        // is short, and numeric's at scale 0, the scale SqlClient gives a NULL.
+        let pairs = vec![
+            (
+                ColumnData::Binary(None),
+                ColumnData::Binary(Some(vec![1].into())),
+            ),
+            (
+                ColumnData::Numeric(None),
+                ColumnData::Numeric(Some(Numeric::new_with_scale(5, 0))),
+            ),
+            (
+                ColumnData::String(None),
+                ColumnData::String(Some("a".into())),
+            ),
+            (ColumnData::U8(None), ColumnData::U8(Some(1))),
+            (ColumnData::I16(None), ColumnData::I16(Some(1))),
+            (ColumnData::I32(None), ColumnData::I32(Some(1))),
+            (ColumnData::I64(None), ColumnData::I64(Some(1))),
+            (ColumnData::F32(None), ColumnData::F32(Some(1.0))),
+            (ColumnData::F64(None), ColumnData::F64(Some(1.0))),
+            (ColumnData::Bit(None), ColumnData::Bit(Some(true))),
+            (ColumnData::Guid(None), ColumnData::Guid(Some(Uuid::nil()))),
+            (
+                ColumnData::Xml(None),
+                ColumnData::Xml(Some(Cow::Owned(XmlData::new("<a/>")))),
+            ),
+            (
+                ColumnData::DateTime(None),
+                ColumnData::DateTime(Some(DateTime::new(0, 0))),
+            ),
+            (
+                ColumnData::SmallDateTime(None),
+                ColumnData::SmallDateTime(Some(SmallDateTime::new(0, 0))),
+            ),
+            #[cfg(feature = "tds73")]
+            (
+                ColumnData::Time(None),
+                ColumnData::Time(Some(Time::new(0, 7))),
+            ),
+            #[cfg(feature = "tds73")]
+            (ColumnData::Date(None), ColumnData::Date(Some(Date::new(0)))),
+            #[cfg(feature = "tds73")]
+            (
+                ColumnData::DateTime2(None),
+                ColumnData::DateTime2(Some(DateTime2::new(Date::new(0), Time::new(0, 7)))),
+            ),
+            #[cfg(feature = "tds73")]
+            (
+                ColumnData::DateTimeOffset(None),
+                ColumnData::DateTimeOffset(Some(DateTimeOffset::new(
+                    DateTime2::new(Date::new(0), Time::new(0, 7)),
+                    0,
+                ))),
+            ),
+        ];
+
+        for (null, value) in pairs {
+            assert_eq!(null.type_name(), value.type_name(), "{null:?}");
+
+            // And the TYPE_INFO sent with the NULL is the declared type's.
+            let ti = |data: ColumnData<'static>| async {
+                let mut buf = BytesMut::new();
+                data.encode_rpc_param(&mut buf, false).unwrap();
+                format!("{:?}", decode_rpc_param(buf).await.0)
+            };
+            assert_eq!(ti(null.clone()).await, ti(value).await, "{null:?}");
         }
     }
 
@@ -1412,7 +1490,7 @@ mod tests {
             ColumnData::Binary(Some(vec![0u8; 8001].into())).type_name(),
             "varbinary(max)"
         );
-        assert_eq!(ColumnData::Binary(None).type_name(), "varbinary(max)");
+        assert_eq!(ColumnData::Binary(None).type_name(), "varbinary(8000)");
     }
 
     #[test]

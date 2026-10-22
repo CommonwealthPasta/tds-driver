@@ -3248,6 +3248,61 @@ where
     Ok(())
 }
 
+/// The (max_length, precision, scale) the server gives a parameter.
+async fn declared_type<S>(
+    conn: &mut tiberius::Client<S>,
+    value: &dyn tiberius::ToSql,
+) -> Result<(i16, u8, u8)>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let row = conn
+        .query(
+            "SELECT @P1 AS v INTO #declared; \
+             SELECT max_length, precision, scale FROM tempdb.sys.columns \
+             WHERE object_id = OBJECT_ID('tempdb..#declared'); \
+             DROP TABLE #declared;",
+            &[value],
+        )
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+
+    Ok((
+        row.get(0).unwrap(),
+        row.get(1).unwrap(),
+        row.get(2).unwrap(),
+    ))
+}
+
+#[test_on_runtimes]
+async fn nulls_are_declared_like_values_of_their_type<S>(
+    mut conn: tiberius::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    // varbinary(max) and numeric(18,0) gave NULLs a cached plan of their own.
+    let bytes: &[u8] = &[1];
+    assert_eq!((8000, 0, 0), declared_type(&mut conn, &bytes).await?);
+    assert_eq!(
+        (8000, 0, 0),
+        declared_type(&mut conn, &None::<&[u8]>).await?
+    );
+
+    let n = Numeric::new_with_scale(5, 0);
+    assert_eq!((17, 38, 0), declared_type(&mut conn, &n).await?);
+    assert_eq!(
+        (17, 38, 0),
+        declared_type(&mut conn, &None::<Numeric>).await?
+    );
+
+    assert_eq!((8000, 0, 0), declared_type(&mut conn, &None::<&str>).await?);
+
+    Ok(())
+}
+
 #[test_on_runtimes]
 async fn numeric_parameters_share_a_plan_across_precisions<S>(
     mut conn: tiberius::Client<S>,
