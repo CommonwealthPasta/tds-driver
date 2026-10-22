@@ -101,7 +101,9 @@ where
 
 pub(crate) struct TokenStream<'a, S: AsyncRead + AsyncWrite + Unpin + Send> {
     conn: &'a mut Connection<S>,
-    messages: ServerMessages,
+    /// Boxed on the first ERROR or INFO: the stream moves on every token, so
+    /// it stays two words.
+    messages: Option<Box<ServerMessages>>,
 }
 
 impl<'a, S> TokenStream<'a, S>
@@ -111,7 +113,7 @@ where
     pub(crate) fn new(conn: &'a mut Connection<S>) -> Self {
         Self {
             conn,
-            messages: ServerMessages::default(),
+            messages: None,
         }
     }
 
@@ -256,7 +258,7 @@ where
 
     async fn get_error(&mut self) -> crate::Result<ReceivedToken> {
         let err = TokenError::decode(self.conn).await?;
-        self.messages.error(err.clone());
+        self.messages.get_or_insert_default().error(err.clone());
 
         event!(Level::ERROR, message = %err.message, code = err.code);
         Ok(ReceivedToken::Error(err))
@@ -336,7 +338,7 @@ where
 
     async fn get_info(&mut self) -> crate::Result<ReceivedToken> {
         let info = TokenInfo::decode(self.conn).await?;
-        self.messages.info(&info);
+        self.messages.get_or_insert_default().info(&info);
         event!(Level::DEBUG, "{}", info.message);
         Ok(ReceivedToken::Info(info))
     }
@@ -384,7 +386,7 @@ where
     pub fn try_unfold(self) -> BoxStream<'a, crate::Result<ReceivedToken>> {
         let stream = futures_util::stream::try_unfold(self, |mut this| async move {
             if this.conn.is_eof() {
-                return match std::mem::take(&mut this.messages).into_error() {
+                return match this.messages.take().and_then(|m| m.into_error()) {
                     None => Ok(None),
                     Some(error) => Err(error),
                 };
