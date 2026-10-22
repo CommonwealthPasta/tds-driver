@@ -15,8 +15,10 @@ pub struct TokenError {
     pub(crate) class: u8,
     /// The error message
     pub(crate) message: String,
-    pub(crate) server: String,
-    pub(crate) procedure: String,
+    // `Box<str>` keeps `Error`, and so every `crate::Result` on the read
+    // path, small.
+    pub(crate) server: Box<str>,
+    pub(crate) procedure: Box<str>,
     pub(crate) line: u32,
     /// The response's other messages, attached only to the error a request
     /// fails with. Boxed so `Error` stays small.
@@ -44,8 +46,8 @@ impl From<&TokenInfo> for TokenError {
             state: info.state,
             class: info.class,
             message: info.message.clone(),
-            server: info.server.clone(),
-            procedure: info.procedure.clone(),
+            server: info.server.as_str().into(),
+            procedure: info.procedure.as_str().into(),
             line: info.line,
             related: None,
         }
@@ -82,8 +84,8 @@ impl TokenError {
             state,
             class,
             message,
-            server,
-            procedure,
+            server: server.into(),
+            procedure: procedure.into(),
             line,
             related: None,
         };
@@ -166,8 +168,8 @@ mod tests {
             state: 2,
             class: 13,
             message: "deadlocked".to_string(),
-            server: "myserver".to_string(),
-            procedure: "myproc".to_string(),
+            server: "myserver".into(),
+            procedure: "myproc".into(),
             line: 42,
             related: None,
         }

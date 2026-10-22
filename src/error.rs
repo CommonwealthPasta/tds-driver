@@ -177,8 +177,8 @@ mod tests {
             state: 1,
             class: 16,
             message: "boom".to_string(),
-            server: "srv".to_string(),
-            procedure: "proc".to_string(),
+            server: "srv".into(),
+            procedure: "proc".into(),
             line: 3,
             related: None,
         }

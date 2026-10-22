@@ -473,8 +473,8 @@ mod tests {
             state: 1,
             class: 16,
             message: message.into(),
-            server: String::new(),
-            procedure: String::new(),
+            server: "".into(),
+            procedure: "".into(),
             line: 1,
             related: None,
         }
@@ -486,8 +486,8 @@ mod tests {
             state: 1,
             class: 0,
             message: message.into(),
-            server: String::new(),
-            procedure: String::new(),
+            server: "".into(),
+            procedure: "".into(),
             line: 1,
         }
     }
