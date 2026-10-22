@@ -982,7 +982,7 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                 num.encode(&mut *dst)?;
             }
             (data, Some(TypeInfo::VarLenSized(vlc))) if vlc.r#type() == VarLenType::SSVariant => {
-                sql_variant::encode(&mut *dst, data)?;
+                sql_variant::encode(&mut *dst, data, vlc.collation())?;
             }
             // Typed NULLs: an OUT parameter may not be an untyped NULL (8015).
             // Maximum precision and scale, so an OUT value loses nothing,

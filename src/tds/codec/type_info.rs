@@ -156,7 +156,19 @@ impl Encode<BytesMut> for VarLenContext {
             }
         }
 
-        if let Some(collation) = self.collation() {
+        // Only character types carry a collation on the wire; a sql_variant
+        // context keeps one for the strings it holds.
+        let character = matches!(
+            self.r#type,
+            VarLenType::NChar
+                | VarLenType::BigChar
+                | VarLenType::NVarchar
+                | VarLenType::BigVarChar
+                | VarLenType::Text
+                | VarLenType::NText
+        );
+
+        if let Some(collation) = self.collation().filter(|_| character) {
             dst.put_u32_le(collation.info());
             dst.put_u8(collation.sort_id());
         }

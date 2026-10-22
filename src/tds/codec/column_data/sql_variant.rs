@@ -218,7 +218,14 @@ const MAX_VARIANT_PAYLOAD: usize = 8000;
 /// The base type written for a given [`ColumnData`] variant is the same one the
 /// decoder maps back onto that variant, so the two are symmetric. [`ColumnData::Xml`]
 /// has no `sql_variant` base type and returns a [`crate::Error::Conversion`].
-pub(crate) fn encode(dst: &mut BytesMut, data: ColumnData<'_>) -> crate::Result<()> {
+///
+/// Strings are tagged with `collation`, the database default; SqlClient does
+/// the same, and the server rejects a zero collation.
+pub(crate) fn encode(
+    dst: &mut BytesMut,
+    data: ColumnData<'_>,
+    collation: Option<Collation>,
+) -> crate::Result<()> {
     // The value part is built up first so its total length can be prefixed.
     let mut body = BytesMut::new();
 
@@ -314,12 +321,18 @@ pub(crate) fn encode(dst: &mut BytesMut, data: ColumnData<'_>) -> crate::Result<
                 ));
             }
 
+            let collation = collation.ok_or_else(|| {
+                Error::Conversion(
+                    "sql_variant: a string needs the database collation, which the server has not sent"
+                        .into(),
+                )
+            })?;
+
             body.put_u8(VarLenType::NVarchar as u8);
             // propData = collation (5 bytes) + max length (2 bytes)
             body.put_u8(7);
-            // A zero collation lets the server apply the database default, as
-            // done elsewhere when encoding strings without a known collation.
-            body.extend_from_slice(&[0u8; 5]);
+            body.put_u32_le(collation.info());
+            body.put_u8(collation.sort_id());
             body.put_u16_le(MAX_VARIANT_PAYLOAD as u16);
             body.extend_from_slice(&utf16);
             true
@@ -527,7 +540,7 @@ mod tests {
     /// round-trip is lossless and that the whole buffer is consumed.
     async fn round_trip(value: ColumnData<'static>) {
         let mut buf = BytesMut::new();
-        encode(&mut buf, value.clone()).expect("encode must succeed");
+        encode(&mut buf, value.clone(), Some(collation())).expect("encode must succeed");
 
         let reader = &mut buf.into_sql_read_bytes();
         let decoded = decode(reader).await.expect("decode must succeed");
@@ -619,11 +632,37 @@ mod tests {
         .await;
     }
 
+    fn collation() -> Collation {
+        Collation::new(0x00d0_0409, 52)
+    }
+
+    #[test]
+    fn string_carries_the_collation() {
+        let mut buf = BytesMut::new();
+        encode(
+            &mut buf,
+            ColumnData::String(Some("a".into())),
+            Some(collation()),
+        )
+        .unwrap();
+
+        // total length, base type, prop bytes count, then the collation.
+        assert_eq!(&buf[6..10], &0x00d0_0409u32.to_le_bytes());
+        assert_eq!(buf[10], 52);
+    }
+
+    #[test]
+    fn string_without_collation_errors() {
+        let mut buf = BytesMut::new();
+        let err = encode(&mut buf, ColumnData::String(Some("a".into())), None).unwrap_err();
+        assert!(matches!(err, Error::Conversion(_)), "got {err:?}");
+    }
+
     #[tokio::test]
     async fn round_trip_null() {
         // A NULL of any variant decodes to the generic null representation.
         let mut buf = BytesMut::new();
-        encode(&mut buf, ColumnData::I32(None)).expect("encode must succeed");
+        encode(&mut buf, ColumnData::I32(None), None).expect("encode must succeed");
         let decoded = decode(&mut buf.into_sql_read_bytes()).await.unwrap();
         assert_eq!(decoded, ColumnData::String(None));
     }
@@ -637,6 +676,7 @@ mod tests {
         let err = encode(
             &mut buf,
             ColumnData::Xml(Some(Cow::Owned(XmlData::new("<a/>")))),
+            None,
         )
         .expect_err("xml must not encode as a sql_variant");
 
@@ -715,8 +755,12 @@ mod tests {
     async fn encode_string_at_max_payload() {
         let s: String = "a".repeat(MAX_VARIANT_PAYLOAD / 2);
         let mut buf = BytesMut::new();
-        encode(&mut buf, ColumnData::String(Some(s.into())))
-            .expect("a string exactly at the limit must encode");
+        encode(
+            &mut buf,
+            ColumnData::String(Some(s.into())),
+            Some(collation()),
+        )
+        .expect("a string exactly at the limit must encode");
     }
 
     // Binary of exactly MAX_VARIANT_PAYLOAD (8000) bytes is allowed; the guard
@@ -725,7 +769,7 @@ mod tests {
     async fn encode_binary_at_max_payload() {
         let bytes = vec![0u8; MAX_VARIANT_PAYLOAD];
         let mut buf = BytesMut::new();
-        encode(&mut buf, ColumnData::Binary(Some(bytes.into())))
+        encode(&mut buf, ColumnData::Binary(Some(bytes.into())), None)
             .expect("binary exactly at the limit must encode");
     }
 
@@ -920,7 +964,12 @@ mod tests {
         // 4001 BMP chars => 8002 UTF-16 bytes (> 8000).
         let s: String = "a".repeat(MAX_VARIANT_PAYLOAD / 2 + 1);
         let mut buf = BytesMut::new();
-        let err = encode(&mut buf, ColumnData::String(Some(s.into()))).unwrap_err();
+        let err = encode(
+            &mut buf,
+            ColumnData::String(Some(s.into())),
+            Some(collation()),
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::Conversion(_)), "got {err:?}");
     }
 
@@ -929,7 +978,7 @@ mod tests {
     async fn encode_binary_over_max_payload_errors() {
         let bytes = vec![0u8; MAX_VARIANT_PAYLOAD + 1];
         let mut buf = BytesMut::new();
-        let err = encode(&mut buf, ColumnData::Binary(Some(bytes.into()))).unwrap_err();
+        let err = encode(&mut buf, ColumnData::Binary(Some(bytes.into())), None).unwrap_err();
         assert!(matches!(err, Error::Conversion(_)), "got {err:?}");
     }
 

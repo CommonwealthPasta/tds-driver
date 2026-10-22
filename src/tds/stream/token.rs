@@ -323,6 +323,9 @@ where
             | TokenEnvChange::DefectTransaction => {
                 self.conn.context_mut().set_transaction_descriptor([0; 8]);
             }
+            TokenEnvChange::SqlCollation { new, .. } => {
+                self.conn.context_mut().set_collation(new);
+            }
             _ => (),
         }
 

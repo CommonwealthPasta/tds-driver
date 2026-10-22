@@ -29,12 +29,17 @@ where
 {
     pub(crate) fn new(
         connection: &'a mut Connection<S>,
-        columns: Vec<MetaDataColumn<'a>>,
+        mut columns: Vec<MetaDataColumn<'a>>,
     ) -> crate::Result<Self> {
         // The server now waits for the bulk-load message; until `finalize`
         // ends it, the next request on the connection has to abandon it.
         connection.set_bulk_load_open(true);
         let packet_id = connection.context_mut().next_packet_id();
+
+        let collation = connection.context().collation();
+        for column in columns.iter_mut() {
+            column.base.set_variant_collation(collation);
+        }
         let mut buf = BytesMut::new();
 
         let cmd = TokenColMetaData {

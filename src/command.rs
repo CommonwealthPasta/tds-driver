@@ -279,7 +279,12 @@ impl<'a> Command<'a> {
                             t.db_type
                         ))
                         .await?;
-                    RpcValue::Table(if let Some(cm) = cols_metadata {
+                    RpcValue::Table(if let Some(mut cm) = cols_metadata {
+                        let collation =
+                            crate::SqlReadBytes::context(&client.connection).collation();
+                        for column in cm.iter_mut() {
+                            column.base.set_variant_collation(collation);
+                        }
                         type_info_tvp.with_metadata(cm)
                     } else {
                         type_info_tvp

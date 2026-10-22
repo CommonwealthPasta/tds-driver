@@ -1,4 +1,5 @@
 use super::codec::*;
+use super::Collation;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -14,6 +15,8 @@ pub(crate) struct Context {
     /// COMPUTE clause id that the matching `ALTROW` rows refer back to.
     alt_metas: HashMap<u16, Arc<TokenAltMetaData<'static>>>,
     spn: Option<String>,
+    /// The current database's default collation (ENVCHANGE type 7).
+    collation: Option<Collation>,
 }
 
 impl Context {
@@ -26,6 +29,7 @@ impl Context {
             last_meta: None,
             alt_metas: HashMap::new(),
             spn: None,
+            collation: None,
         }
     }
 
@@ -78,6 +82,14 @@ impl Context {
 
     pub fn version(&self) -> FeatureLevel {
         self.version
+    }
+
+    pub fn collation(&self) -> Option<Collation> {
+        self.collation
+    }
+
+    pub fn set_collation(&mut self, collation: Option<Collation>) {
+        self.collation = collation;
     }
 
     pub fn set_spn(&mut self, host: impl AsRef<str>, port: u16) {

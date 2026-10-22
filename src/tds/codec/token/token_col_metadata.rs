@@ -5,7 +5,8 @@ use std::{
 
 use crate::{
     tds::codec::{Encode, FixedLenType, TokenType, TypeInfo, VarLenType},
-    Column, ColumnData, ColumnType, SqlReadBytes,
+    tds::Collation,
+    Column, ColumnData, ColumnType, SqlReadBytes, VarLenContext,
 };
 use asynchronous_codec::BytesMut;
 use bytes::BufMut;
@@ -185,6 +186,16 @@ impl BaseMetaDataColumn {
     pub(crate) fn is_non_unicode_text(&self) -> bool {
         matches!(&self.ty, TypeInfo::VarLenSized(cx)
             if matches!(cx.r#type(), VarLenType::BigChar | VarLenType::BigVarChar | VarLenType::Text))
+    }
+
+    /// COLMETADATA gives a sql_variant column no collation; its string values
+    /// need one, so the encoder finds the database default here.
+    pub(crate) fn set_variant_collation(&mut self, collation: Option<Collation>) {
+        if let TypeInfo::VarLenSized(cx) = &mut self.ty {
+            if cx.r#type() == VarLenType::SSVariant {
+                *cx = VarLenContext::new(VarLenType::SSVariant, cx.len(), collation);
+            }
+        }
     }
 
     pub(crate) fn null_value(&self) -> ColumnData<'static> {
@@ -964,6 +975,26 @@ mod tests {
         // column name 1 + 2.
         assert_eq!(buf.len(), 21);
         assert_eq!(&buf[16..18], &[0, 0]);
+    }
+
+    #[test]
+    fn variant_collation_is_kept_off_the_wire() {
+        let mut base = BaseMetaDataColumn {
+            flags: BitFlags::empty(),
+            ty: TypeInfo::VarLenSized(VarLenContext::new(VarLenType::SSVariant, 8016, None)),
+        };
+        let mut plain = BytesMut::new();
+        base.clone().encode(&mut plain).unwrap();
+
+        base.set_variant_collation(Some(Collation::new(13632521, 52)));
+        let mut stamped = BytesMut::new();
+        base.clone().encode(&mut stamped).unwrap();
+
+        assert_eq!(plain, stamped);
+        match base.ty {
+            TypeInfo::VarLenSized(cx) => assert!(cx.collation().is_some()),
+            _ => unreachable!(),
+        }
     }
 
     #[test]

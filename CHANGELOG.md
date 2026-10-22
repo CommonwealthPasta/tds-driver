@@ -159,6 +159,8 @@ that land will be documented here.
   `nchar(n)` declared twice its length.
 - **Bulk insert into `text`, `ntext` and `image` columns** (error 4804, `image`
   unsupported).
+- **`sql_variant` strings in bulk/TVP** carry the database collation (error
+  8001).
 - **`INSERT BULK` column names are quoted with `]` doubled** (a column named
   `we]ird` broke the statement).
 

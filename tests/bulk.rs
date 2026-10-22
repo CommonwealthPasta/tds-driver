@@ -756,6 +756,104 @@ where
 }
 
 #[test_on_runtimes]
+async fn bulk_load_sql_variant_string<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let collation = conn
+        .simple_query("SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), 'Collation') AS nvarchar(128))")
+        .await?
+        .into_row()
+        .await?
+        .and_then(|r| r.get::<&str, _>(0).map(str::to_owned));
+
+    assert_bulk(
+        &mut conn,
+        vec![
+            ("SQL_VARIANT", "abc".into_sql(), "v", "abc"),
+            (
+                "SQL_VARIANT",
+                "abc".into_sql(),
+                "SQL_VARIANT_PROPERTY(v, 'Collation')",
+                collation.as_deref().unwrap(),
+            ),
+            (
+                "SQL_VARIANT",
+                "abc".into_sql(),
+                "SQL_VARIANT_PROPERTY(v, 'BaseType')",
+                "nvarchar",
+            ),
+        ],
+    )
+    .await
+}
+
+struct VariantRow {
+    v: &'static str,
+    b: i32,
+}
+
+impl<'a> tiberius::TableValueRow<'a> for VariantRow {
+    fn bind_fields(&self, row: &mut tiberius::SqlTableDataRow<'a>) {
+        row.add_field(self.v);
+        row.add_field(self.b);
+    }
+
+    fn get_db_type() -> &'static str {
+        "VariantRow"
+    }
+}
+
+#[test_on_runtimes]
+async fn tvp_sql_variant_string_and_wider_column<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let db_type = random_table().await;
+    let proc_name = random_table().await;
+    conn.simple_query(format!(
+        "CREATE TYPE dbo.[{db_type}] AS TABLE (v SQL_VARIANT, b BIGINT)"
+    ))
+    .await?
+    .into_results()
+    .await?;
+    conn.simple_query(format!(
+        "CREATE PROCEDURE dbo.[{proc_name}] @t dbo.[{db_type}] READONLY AS \
+         SELECT CONVERT(nvarchar(10), v), b FROM @t"
+    ))
+    .await?
+    .into_results()
+    .await?;
+
+    let result = async {
+        let mut cmd = tiberius::Command::new(format!("dbo.[{proc_name}]"));
+        cmd.bind_table_with_dbtype("@t", &db_type, vec![VariantRow { v: "abc", b: -5 }]);
+        let result =
+            within(async { cmd.exec(&mut conn).await?.into_command_result().await }).await?;
+        let rows = result.to_query_result(0).unwrap();
+        Ok::<_, tiberius::error::Error>((
+            rows[0].get::<&str, _>(0).map(str::to_owned),
+            rows[0].get::<i64, _>(1),
+        ))
+    }
+    .await;
+
+    within(async {
+        conn.simple_query(format!(
+            "DROP PROCEDURE dbo.[{proc_name}]; DROP TYPE dbo.[{db_type}]"
+        ))
+        .await?
+        .into_results()
+        .await
+    })
+    .await?;
+
+    assert_eq!((Some("abc".to_owned()), Some(-5)), result?);
+
+    Ok(())
+}
+
+#[test_on_runtimes]
 async fn bulk_load_escapes_column_names<S>(mut conn: tiberius::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
