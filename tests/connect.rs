@@ -7,7 +7,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tiberius::{error::Error, Client, Config, EncryptionLevel, Result};
+use tiberius::{error::Error, AuthMethod, Client, Config, EncryptionLevel, Result};
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
@@ -40,6 +40,34 @@ async fn encrypt_option<S: AsyncRead + AsyncWrite + Unpin + Send>(
         .await?
         .unwrap();
     Ok(row.get::<&str, _>(0).unwrap().to_owned())
+}
+
+/// Under login-only encryption only the first packet of a multi-packet
+/// LOGIN7 is encrypted; the server drops the connection if all of it is.
+#[tokio::test]
+async fn multi_packet_login_with_login_only_encryption() -> Result<()> {
+    for level in [EncryptionLevel::Off, EncryptionLevel::Required] {
+        let mut config = config();
+        config.encryption(level);
+        // A 12 KB token makes LOGIN7 span three 4 KB packets. The server has no
+        // Entra ID, so it answers with a login error once it has read it all.
+        config.authentication(AuthMethod::aad_token(format!("eyJ{}", "a".repeat(6000))));
+
+        match connect(config).await {
+            Err(Error::Server(e)) if e.code() == 18456 => (),
+            other => panic!("{level:?}: expected login failure 18456, got {other:?}"),
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn login_only_encryption_leaves_the_session_unencrypted() -> Result<()> {
+    let mut config = config();
+    config.encryption(EncryptionLevel::Off);
+    let mut client = connect(config).await?;
+    assert_eq!(encrypt_option(&mut client).await?, "FALSE");
+    Ok(())
 }
 
 /// An explicit port wins over the instance name.

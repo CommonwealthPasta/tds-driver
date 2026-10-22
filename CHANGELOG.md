@@ -114,6 +114,9 @@ that land will be documented here.
   instead of as an untyped NULL, which the server rejects for OUT parameters
   (8015). OUT strings and binary are sent as `nvarchar(max)`/`varbinary(max)`,
   so a `(max)` result is no longer cut to 4000 characters or 8000 bytes.
+- **Logins over one packet work with `Encrypt=false`.** Only the first LOGIN7
+  packet is now sent through TLS (MS-TDS 3.2.5.2); the server dropped long AAD
+  tokens and SSPI blobs.
 - **ADO.NET strings are parsed with SqlClient's rules:** `""`/`''` are one
   quote, non-ASCII values are accepted, whitespace (TAB, CR, LF) before a key is
   skipped instead of making it a different key, and `Encrypt` accepts

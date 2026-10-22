@@ -317,11 +317,15 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         Ok(())
     }
 
-    async fn send_sensitive_login(
-        &mut self,
+    /// Sends a LOGIN7 message from a zeroizing buffer. Under login-only
+    /// encryption only its first packet goes through TLS and everything after
+    /// it is plaintext (MS-TDS 3.2.5.2), so TLS is dropped after that packet.
+    async fn send_login(
+        mut self,
         mut header: PacketHeader,
         mut payload: Zeroizing<Vec<u8>>,
-    ) -> crate::Result<()> {
+        encryption: EncryptionLevel,
+    ) -> crate::Result<Self> {
         self.ensure_not_poisoned()?;
         self.flushed = false;
         let packet_size = (self.context.packet_size() as usize) - HEADER_BYTES;
@@ -351,13 +355,19 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
             self.transport.write_all(frame.as_slice()).await?;
             frame.zeroize();
             payload[offset..end].zeroize();
+
+            if offset == 0 {
+                (&mut *self.transport).flush().await?;
+                self = self.post_login_encryption(encryption);
+            }
+
             offset = end;
         }
 
         (&mut *self.transport).flush().await?;
         self.poisoned = false;
 
-        Ok(())
+        Ok(self)
     }
 
     /// Sends a packet of data to the database.
@@ -659,9 +669,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                 login_message.integrated_security(client.next_bytes(None)?);
 
                 let id = self.context.next_packet_id();
-                self.send(PacketHeader::login(id), login_message).await?;
-
-                self = self.post_login_encryption(encryption);
+                let payload = login_message.encode_to_vec()?;
+                self = self
+                    .send_login(PacketHeader::login(id), payload, encryption)
+                    .await?;
 
                 let sspi_bytes = self.flush_sspi().await?;
 
@@ -701,9 +712,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                 login_message.integrated_security(Some(Vec::from(init_token.unwrap().deref())));
 
                 let id = self.context.next_packet_id();
-                self.send(PacketHeader::login(id), login_message).await?;
-
-                self = self.post_login_encryption(encryption);
+                let payload = login_message.encode_to_vec()?;
+                self = self
+                    .send_login(PacketHeader::login(id), payload, encryption)
+                    .await?;
 
                 let auth_bytes = self.flush_sspi().await?;
 
@@ -765,8 +777,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                 login_message.integrated_security(Some(output[0].buffer.clone()));
 
                 let id = self.context.next_packet_id();
-                self.send(PacketHeader::login(id), login_message).await?;
-                self = self.post_login_encryption(encryption);
+                let payload = login_message.encode_to_vec()?;
+                self = self
+                    .send_login(PacketHeader::login(id), payload, encryption)
+                    .await?;
 
                 // Second leg: consume the server's CHALLENGE token and reply
                 // with the AUTHENTICATE token.
@@ -810,9 +824,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                 login_message.integrated_security(client.next_bytes(None)?);
 
                 let id = self.context.next_packet_id();
-                self.send(PacketHeader::login(id), login_message).await?;
-
-                self = self.post_login_encryption(encryption);
+                let payload = login_message.encode_to_vec()?;
+                self = self
+                    .send_login(PacketHeader::login(id), payload, encryption)
+                    .await?;
 
                 let sspi_bytes = self.flush_sspi().await?;
 
@@ -835,8 +850,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
             }
             AuthMethod::None => {
                 let id = self.context.next_packet_id();
-                self.send(PacketHeader::login(id), login_message).await?;
-                self = self.post_login_encryption(encryption);
+                let payload = login_message.encode_to_vec()?;
+                self = self
+                    .send_login(PacketHeader::login(id), payload, encryption)
+                    .await?;
             }
             AuthMethod::SqlServer(auth) => {
                 let (user, mut password) = auth.into_credentials();
@@ -847,19 +864,17 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                 password.zeroize();
 
                 let id = self.context.next_packet_id();
-                self.send_sensitive_login(PacketHeader::login(id), payload)
+                self = self
+                    .send_login(PacketHeader::login(id), payload, encryption)
                     .await?;
-                self = self.post_login_encryption(encryption);
             }
             AuthMethod::AADToken(token) => {
                 login_message.aad_token(token, prelogin.fed_auth_required, prelogin.nonce);
-                // Encode into a zeroizing buffer and use the sensitive-login
-                // path so the bearer token does not linger in freed heap memory.
                 let payload = login_message.encode_to_vec()?;
                 let id = self.context.next_packet_id();
-                self.send_sensitive_login(PacketHeader::login(id), payload)
+                self = self
+                    .send_login(PacketHeader::login(id), payload, encryption)
                     .await?;
-                self = self.post_login_encryption(encryption);
             }
         }
 
