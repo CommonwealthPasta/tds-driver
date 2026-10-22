@@ -108,6 +108,8 @@ that land will be documented here.
   a value that panics in `int_part`, `dec_part` and `Display`.
 - **A precision-typed column other than decimal/numeric is a protocol error**
   instead of a `todo!()` panic; the decoder never builds one.
+- **A `datetimeoffset` whose local time is past 9999-12-31 reads as a UTC
+  `time::OffsetDateTime`** instead of panicking; only a malformed date is.
 - **A PRELOGIN answer over 32768 bytes is an error** instead of a buffer that
   grows for as long as the server sends; SqlClient reads it from one packet.
 - An empty `XmlData` parameter no longer corrupts the request (error 8009).

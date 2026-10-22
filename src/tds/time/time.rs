@@ -119,7 +119,13 @@ from_sql!(
             let offset = UtcOffset::from_whole_seconds(dto.offset as i32 * 60)
                 .unwrap_or(UtcOffset::UTC);
 
-            date.with_time(time).assume_utc().to_offset(offset)
+            // Nor past `Date::MAX` locally, where a malformed date is clamped
+            // (`to_offset` panics there).
+            let utc = date.with_time(time);
+            match utc.checked_add(time::Duration::seconds(offset.whole_seconds().into())) {
+                Some(local) => local.assume_offset(offset),
+                None => utc.assume_utc(),
+            }
         })
 );
 
@@ -359,6 +365,25 @@ mod tests {
         let data = ColumnData::DateTime(Some(dt));
         let decoded = PrimitiveDateTime::from_sql(&data).unwrap().unwrap();
         assert_eq!(decoded.date(), from_days(1, 1900));
+    }
+
+    /// A malformed date is clamped to `Date::MAX`, past which a positive
+    /// offset made `to_offset` panic.
+    #[cfg(feature = "tds73")]
+    #[test]
+    fn offset_date_time_past_the_last_local_date_keeps_utc() {
+        use crate::FromSql;
+
+        let dt2 = super::super::DateTime2::new(
+            super::super::Date::new(0xff_ffff),
+            super::super::Time::new(23 * 3600 * 10_000_000, 7),
+        );
+        let dto = super::super::DateTimeOffset::new(dt2, 14 * 60);
+        let data = ColumnData::DateTimeOffset(Some(dto));
+        let decoded = OffsetDateTime::from_sql(&data).unwrap().unwrap();
+
+        let utc = from_days(0xff_ffff, 1).with_time(Time::from_hms(23, 0, 0).unwrap());
+        assert_eq!(decoded, utc.assume_utc());
     }
 
     #[cfg(feature = "tds73")]
