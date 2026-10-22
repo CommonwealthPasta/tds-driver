@@ -131,11 +131,7 @@ where
 
             let buf = read_bytes(src, data_len).await?;
 
-            if buf.len() % 2 != 0 {
-                return Err(Error::Protocol("sql_variant: invalid nchar length".into()));
-            }
-
-            ColumnData::String(Some(super::string::decode_utf16le(&buf).into()))
+            ColumnData::String(Some(super::string::decode_nchar(&buf)?.into()))
         }
         VarLenType::BigBinary | VarLenType::BigVarBin => {
             // propData = max length (2 bytes)

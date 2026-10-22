@@ -26,14 +26,7 @@ where
             let collation = collation.as_ref().unwrap();
             Ok(Some(decode_varchar(buf, collation)?.into()))
         }
-        // UTF-16
-        (Some(buf), _) => {
-            if buf.len() % 2 != 0 {
-                return Err(Error::Protocol("nvarchar: invalid plp length".into()));
-            }
-
-            Ok(Some(decode_utf16le(&buf).into()))
-        }
+        (Some(buf), _) => Ok(Some(decode_nchar(&buf)?.into())),
         _ => Ok(None),
     }
 }
@@ -58,6 +51,18 @@ pub(crate) fn decode_varchar(buf: Vec<u8>, collation: &Collation) -> crate::Resu
         }
         Cow::Owned(s) => Ok(s),
     }
+}
+
+/// Decodes an nvarchar, nchar, ntext or xml value. The server pads binary
+/// converted to these types to an even length, so an odd one is malformed.
+pub(crate) fn decode_nchar(buf: &[u8]) -> crate::Result<String> {
+    if !buf.len().is_multiple_of(2) {
+        return Err(Error::Protocol(
+            format!("UTF-16 value of odd length {}", buf.len()).into(),
+        ));
+    }
+
+    Ok(decode_utf16le(buf))
 }
 
 /// Encodes `s` in the collation's code page; a character it lacks is an error.
@@ -218,6 +223,15 @@ mod tests {
             decode_varchar(vec![b'a', 0xff, 0xe6, 0x97], &utf8).unwrap(),
             "a\u{FFFD}\u{FFFD}"
         );
+    }
+
+    #[test]
+    fn odd_length_utf16_is_an_error() {
+        assert_eq!(decode_nchar(&[b'h', 0, b'i', 0]).unwrap(), "hi");
+        assert!(matches!(
+            decode_nchar(&[b'h', 0, b'i']),
+            Err(Error::Protocol(_))
+        ));
     }
 
     #[test]

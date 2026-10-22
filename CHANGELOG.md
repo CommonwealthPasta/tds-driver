@@ -80,6 +80,8 @@ that land will be documented here.
 - **An invalid code-page sequence decodes as U+FFFD instead of failing the
   result set** (0x82 0x20 in a Japanese_CI_AS column), in char, varchar, text
   and sql_variant values. SqlClient substitutes `?`.
+- **An ntext value of odd byte length is an error**, as an nvarchar one is,
+  instead of losing its last byte.
 - **A `sql_variant` holding a UTF-8-collation varchar decodes as UTF-8**, not as
   the locale's code page.
 - **The 20 CP437/CP850 SQL collations (e.g. `SQL_Latin1_General_CP850_CI_AS`)

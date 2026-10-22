@@ -25,7 +25,7 @@ where
         // TEXT
         Some(collation) => super::string::decode_varchar(buf, &collation)?,
         // NTEXT
-        None => super::string::decode_utf16le(&buf),
+        None => super::string::decode_nchar(&buf)?,
     };
 
     Ok(ColumnData::String(Some(text.into())))
@@ -59,6 +59,21 @@ mod tests {
 
         let data = decode(&mut buf.into_sql_read_bytes(), None).await.unwrap();
         assert_eq!(data, ColumnData::String(Some("hi".into())));
+    }
+
+    /// As nvarchar: the trailing byte used to be dropped.
+    #[tokio::test]
+    async fn decode_ntext_of_odd_length_is_an_error() {
+        let mut buf = BytesMut::new();
+        buf.put_u8(1);
+        buf.put_u8(0xAA);
+        buf.put_i32_le(0);
+        buf.put_u32_le(0);
+        buf.put_u32_le(3);
+        buf.put_slice(&[b'h', 0, b'i']);
+
+        let res = decode(&mut buf.into_sql_read_bytes(), None).await;
+        assert!(matches!(res, Err(crate::Error::Protocol(_))), "{res:?}");
     }
 
     #[tokio::test]
