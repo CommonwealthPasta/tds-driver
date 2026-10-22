@@ -1,6 +1,6 @@
 use super::TypeInfoTvp;
 use super::{AllHeaderTy, Encode, ALL_HEADERS_LEN_TX};
-use crate::{tds::codec::ColumnData, BytesMutWithTypeInfo, Result};
+use crate::{tds::codec::ColumnData, Result};
 use bytes::{BufMut, BytesMut};
 use enumflags2::{bitflags, BitFlags};
 use std::borrow::BorrowMut;
@@ -164,8 +164,7 @@ impl<'a> Encode<BytesMut> for RpcParam<'a> {
 
         match self.value {
             RpcValue::Scalar(value) => {
-                let mut dst_ti = BytesMutWithTypeInfo::new(dst);
-                value.encode(&mut dst_ti)?;
+                value.encode_rpc_param(dst, self.flags.contains(RpcStatus::ByRefValue))?
             }
             RpcValue::Table(value) => value.encode(dst)?,
         }

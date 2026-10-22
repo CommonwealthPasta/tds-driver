@@ -107,6 +107,10 @@ that land will be documented here.
   `Error::Conversion` instead of silently saturating (smallmoney 300000 was
   stored as 214748.3647). A `Numeric` is converted exactly instead of through
   `f64`.
+- OUT parameters bound as `None` work: NULL parameters are sent with their type
+  instead of as an untyped NULL, which the server rejects for OUT parameters
+  (8015). OUT strings and binary are sent as `nvarchar(max)`/`varbinary(max)`,
+  so a `(max)` result is no longer cut to 4000 characters or 8000 bytes.
 
 ### Changed
 

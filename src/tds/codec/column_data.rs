@@ -51,7 +51,7 @@ use crate::{
     tds::{time::DateTime, time::SmallDateTime, xml::XmlData, Numeric},
     FromSql, FromSqlOwned, IntoSql, SqlReadBytes, ToSql,
 };
-use bytes::BufMut;
+use bytes::{BufMut, BytesMut};
 pub(crate) use bytes_mut_with_type_info::BytesMutWithTypeInfo;
 use std::borrow::{BorrowMut, Cow};
 use uuid::Uuid;
@@ -69,6 +69,70 @@ fn fits_nvarchar_4000(s: &str) -> bool {
 }
 
 const PLP_NULL: u64 = 0xffffffffffffffff;
+
+/// `nvarchar(max)` TYPE_INFO and value.
+fn put_nvarchar_max(dst: &mut BytesMut, s: Option<&str>) {
+    // length: 0xffff and raw collation
+    dst.put_u8(VarLenType::NVarchar as u8);
+    dst.extend_from_slice(&[0xff_u8; 2]);
+    dst.extend_from_slice(&[0u8; 5]);
+
+    let s = match s {
+        Some(s) => s,
+        None => return dst.put_u64_le(PLP_NULL),
+    };
+
+    // we cannot cheaply predetermine the length of the UCS2 string beforehand
+    // (2 * bytes(UTF8) is not always right) - so just let the SQL server handle it
+    dst.put_u64_le(0xfffffffffffffffe_u64);
+
+    // Write the varchar length
+    let mut length = 0u32;
+    let len_pos = dst.len();
+
+    dst.put_u32_le(length);
+
+    for chr in s.encode_utf16() {
+        length += 1;
+        dst.put_u16_le(chr);
+    }
+
+    if length > 0 {
+        // PLP_TERMINATOR
+        dst.put_u32_le(0);
+    }
+
+    let dst: &mut [u8] = dst.borrow_mut();
+    let bytes = (length * 2).to_le_bytes(); // u32, four bytes
+
+    for (i, byte) in bytes.iter().enumerate() {
+        dst[len_pos + i] = *byte;
+    }
+}
+
+/// `varbinary(max)` TYPE_INFO and value.
+fn put_varbinary_max(dst: &mut BytesMut, bytes: Option<&[u8]>) {
+    dst.put_u8(VarLenType::BigVarBin as u8);
+    // Max length
+    dst.put_u16_le(0xffff_u16);
+
+    let bytes = match bytes {
+        Some(bytes) => bytes,
+        None => return dst.put_u64_le(PLP_NULL),
+    };
+
+    // Also the length is unknown
+    dst.put_u64_le(0xfffffffffffffffe_u64);
+    // We'll write in one chunk, length is the whole bytes length
+    dst.put_u32_le(bytes.len() as u32);
+
+    if !bytes.is_empty() {
+        // Payload
+        dst.extend_from_slice(bytes);
+        // PLP_TERMINATOR
+        dst.put_u32_le(0);
+    }
+}
 
 /// Number of days between `0001-01-01` (the `DateTime2`/`Date` epoch) and
 /// `1900-01-01` (the `datetime`/`Datetimen` epoch).
@@ -218,6 +282,25 @@ impl<'a> ColumnData<'a> {
         };
 
         Ok(res)
+    }
+}
+
+impl<'a> ColumnData<'a> {
+    /// An RPC parameter's TYPE_INFO and value.
+    ///
+    /// The server returns an OUT parameter in the type it was sent as, so an
+    /// OUT string or binary is sent as (max): its own length would truncate
+    /// the result. SqlClient sends the larger of `Size` and the value's
+    /// length, or (max) for `Size = -1`, and rejects a NULL variable-length
+    /// OUT parameter with no `Size`; there is no `Size` here.
+    pub(crate) fn encode_rpc_param(self, dst: &mut BytesMut, out: bool) -> crate::Result<()> {
+        match self {
+            ColumnData::String(s) if out => put_nvarchar_max(dst, s.as_deref()),
+            ColumnData::Binary(b) if out => put_varbinary_max(dst, b.as_deref()),
+            value => return value.encode(&mut BytesMutWithTypeInfo::new(dst)),
+        }
+
+        Ok(())
     }
 }
 
@@ -602,39 +685,7 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     dst[len_pos + i] = *byte;
                 }
             }
-            (ColumnData::String(Some(ref s)), None) => {
-                // length: 0xffff and raw collation
-                dst.put_u8(VarLenType::NVarchar as u8);
-                dst.extend_from_slice(&[0xff_u8; 2]);
-                dst.extend_from_slice(&[0u8; 5]);
-
-                // we cannot cheaply predetermine the length of the UCS2 string beforehand
-                // (2 * bytes(UTF8) is not always right) - so just let the SQL server handle it
-                dst.put_u64_le(0xfffffffffffffffe_u64);
-
-                // Write the varchar length
-                let mut length = 0u32;
-                let len_pos = dst.len();
-
-                dst.put_u32_le(length);
-
-                for chr in s.encode_utf16() {
-                    length += 1;
-                    dst.put_u16_le(chr);
-                }
-
-                if length > 0 {
-                    // PLP_TERMINATOR
-                    dst.put_u32_le(0);
-                }
-
-                let dst: &mut [u8] = dst.borrow_mut();
-                let bytes = (length * 2).to_le_bytes(); // u32, four bytes
-
-                for (i, byte) in bytes.iter().enumerate() {
-                    dst[len_pos + i] = *byte;
-                }
-            }
+            (ColumnData::String(Some(s)), None) => put_nvarchar_max(dst, Some(&s)),
             (ColumnData::Binary(opt), Some(TypeInfo::VarLenSized(vlc)))
                 if vlc.r#type() == VarLenType::BigBinary
                     || vlc.r#type() == VarLenType::BigVarBin =>
@@ -676,22 +727,7 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                 dst.put_u16_le(bytes.len() as u16);
                 dst.extend(bytes.into_owned());
             }
-            (ColumnData::Binary(Some(bytes)), None) => {
-                dst.put_u8(VarLenType::BigVarBin as u8);
-                // Max length
-                dst.put_u16_le(0xffff_u16);
-                // Also the length is unknown
-                dst.put_u64_le(0xfffffffffffffffe_u64);
-                // We'll write in one chunk, length is the whole bytes length
-                dst.put_u32_le(bytes.len() as u32);
-
-                if !bytes.is_empty() {
-                    // Payload
-                    dst.extend(bytes.into_owned());
-                    // PLP_TERMINATOR
-                    dst.put_u32_le(0);
-                }
-            }
+            (ColumnData::Binary(Some(bytes)), None) => put_varbinary_max(dst, Some(&bytes)),
             (ColumnData::DateTime(opt), Some(TypeInfo::VarLenSized(vlc)))
                 if vlc.r#type() == VarLenType::Datetimen =>
             {
@@ -1047,7 +1083,7 @@ mod tests {
         );
     }
 
-    /// Decodes what a parameter's `encode` wrote: TYPE_INFO, then the value.
+    /// Decodes what `encode_rpc_param` wrote: TYPE_INFO, then the value.
     async fn decode_rpc_param(buf: BytesMut) -> (TypeInfo, ColumnData<'static>) {
         let reader = &mut buf.into_sql_read_bytes();
         let ti = TypeInfo::decode(reader).await.unwrap();
@@ -1087,14 +1123,38 @@ mod tests {
         ];
 
         for null in nulls {
-            let mut buf = BytesMut::new();
-            null.clone()
-                .encode(&mut BytesMutWithTypeInfo::new(&mut buf))
-                .unwrap();
-            assert_ne!(buf[0], FixedLenType::Null as u8, "{null:?}");
+            for out in [false, true] {
+                let mut buf = BytesMut::new();
+                null.clone().encode_rpc_param(&mut buf, out).unwrap();
+                assert_ne!(buf[0], FixedLenType::Null as u8, "{null:?}");
 
-            let (_, decoded) = decode_rpc_param(buf).await;
-            assert_eq!(decoded, null);
+                let (_, decoded) = decode_rpc_param(buf).await;
+                assert_eq!(decoded, null);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn out_strings_and_binaries_are_sent_as_max() {
+        let values = [
+            ColumnData::String(Some("a".into())),
+            ColumnData::String(None),
+            ColumnData::Binary(Some(vec![1u8].into())),
+            ColumnData::Binary(None),
+        ];
+
+        for value in values {
+            for (out, max_len) in [(true, 0xffff), (false, 8000)] {
+                let mut buf = BytesMut::new();
+                value.clone().encode_rpc_param(&mut buf, out).unwrap();
+
+                let (ti, decoded) = decode_rpc_param(buf).await;
+                match ti {
+                    TypeInfo::VarLenSized(vlc) => assert_eq!(vlc.len(), max_len, "{value:?}"),
+                    other => panic!("{other:?}"),
+                }
+                assert_eq!(decoded, value);
+            }
         }
     }
 

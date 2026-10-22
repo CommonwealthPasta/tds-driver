@@ -126,7 +126,8 @@ impl<'a> Command<'a> {
     /// Binds a by-ref (OUT) scalar parameter. The returned value can be found by
     /// the same name in the [`CommandResult`] returned values.
     ///
-    /// The value is returned in the type `data` is sent as. A
+    /// The value is returned in the type `data` is sent as. Strings and binary
+    /// are sent as `nvarchar(max)`/`varbinary(max)`, so nothing is cut off. A
     /// [`Numeric`](crate::numeric::Numeric) sets the scale of the result (a
     /// `None` gives scale 0): bind e.g. `Numeric::new_with_scale(0, 4)` for a
     /// `decimal(10, 4)` parameter.

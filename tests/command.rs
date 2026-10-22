@@ -432,13 +432,21 @@ where
 }
 
 #[test_on_runtimes]
-async fn out_params_round_trip_null<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn out_params_round_trip_null_and_max<S>(mut conn: tiberius::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
     // (declaration, value the procedure sets)
     let procs = [
+        (
+            "nvarchar(max)",
+            "replicate(cast(N'z' as nvarchar(max)), 10000)",
+        ),
         ("nvarchar(50)", "replicate(N'q', 40)"),
+        (
+            "varbinary(max)",
+            "cast(replicate(cast('a' as varchar(max)), 9000) as varbinary(max))",
+        ),
         ("decimal(10,4)", "12.3456"),
         ("datetime2(7)", "'2024-01-02T03:04:05.1234567'"),
         ("int", "-7"),
@@ -455,20 +463,29 @@ where
         names.push(name);
     }
 
+    let z = "z".repeat(10000);
     let q = "q".repeat(40);
 
+    // (max) output is not cut to the bound value's declared length.
     for bound in [None, Some("a")] {
         let res = out_param(&mut conn, &names[0], bound).await?;
+        assert_eq!(Some(z.as_str()), res.try_return_value::<&str>("@x")?);
+        let res = out_param(&mut conn, &names[1], bound).await?;
         assert_eq!(Some(q.as_str()), res.try_return_value::<&str>("@x")?);
+    }
+    for bound in [None, Some(&[1u8][..])] {
+        let res = out_param(&mut conn, &names[2], bound).await?;
+        let bytes: Option<&[u8]> = res.try_return_value("@x")?;
+        assert_eq!(Some(&[b'a'; 9000][..]), bytes);
     }
 
     // The scale of a bound Numeric sets the output's scale; NULL gives scale 0.
-    let res = out_param(&mut conn, &names[1], Numeric::new_with_scale(0, 4)).await?;
+    let res = out_param(&mut conn, &names[3], Numeric::new_with_scale(0, 4)).await?;
     assert_eq!(
         Some(Numeric::new_with_scale(123456, 4)),
         res.try_return_value("@x")?
     );
-    let res = out_param(&mut conn, &names[1], None::<Numeric>).await?;
+    let res = out_param(&mut conn, &names[3], None::<Numeric>).await?;
     assert_eq!(
         Some(Numeric::new_with_scale(12, 0)),
         res.try_return_value("@x")?
@@ -476,7 +493,7 @@ where
 
     #[cfg(all(feature = "tds73", feature = "chrono"))]
     {
-        let res = out_param(&mut conn, &names[2], None::<chrono::NaiveDateTime>).await?;
+        let res = out_param(&mut conn, &names[4], None::<chrono::NaiveDateTime>).await?;
         let expected = chrono::NaiveDate::from_ymd_opt(2024, 1, 2)
             .unwrap()
             .and_hms_nano_opt(3, 4, 5, 123_456_700)
@@ -484,10 +501,10 @@ where
         assert_eq!(Some(expected), res.try_return_value("@x")?);
     }
 
-    let res = out_param(&mut conn, &names[3], None::<i32>).await?;
+    let res = out_param(&mut conn, &names[5], None::<i32>).await?;
     assert_eq!(Some(-7i32), res.try_return_value("@x")?);
 
-    let res = out_param(&mut conn, &names[4], None::<tiberius::xml::XmlData>).await?;
+    let res = out_param(&mut conn, &names[6], None::<tiberius::xml::XmlData>).await?;
     let xml: Option<&tiberius::xml::XmlData> = res.try_return_value("@x")?;
     assert_eq!(Some("<a>1</a>"), xml.map(|x| x.as_ref()));
 
