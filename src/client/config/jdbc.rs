@@ -278,10 +278,11 @@ impl ConfigString for JdbcConfig {
             .map(|port| port.trim().parse())
             .transpose()?;
 
+        let owned = |s: Option<&str>| s.filter(|s| !s.is_empty()).map(str::to_owned);
         Ok(ServerDefinition {
-            host: host.map(str::to_owned),
+            host: owned(host),
             port,
-            instance: instance.map(str::to_owned),
+            instance: owned(instance),
         })
     }
 }
