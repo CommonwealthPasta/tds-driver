@@ -6,20 +6,46 @@ use bytes::BufMut;
 /// bulk-load row). `max_len` is the column's declared length (8 for `money`,
 /// 4 for `smallmoney`). Money is stored on the wire as a scaled integer
 /// (value * 10_000).
-pub(crate) fn encode<B>(dst: &mut B, max_len: usize, val: f64)
+pub(crate) fn encode<B>(dst: &mut B, max_len: usize, val: f64) -> crate::Result<()>
+where
+    B: BufMut,
+{
+    let scaled = (val * 1e4).round();
+    // `as` maps NaN to 0 and saturates the rest, which `put_scaled` rejects.
+    if scaled.is_nan() {
+        return Err(out_of_range(max_len, &val));
+    }
+    put_scaled(dst, max_len, scaled as i128, &val)
+}
+
+/// `scaled` is the value in 1/10000ths.
+fn put_scaled<B>(
+    dst: &mut B,
+    max_len: usize,
+    scaled: i128,
+    shown: &dyn std::fmt::Display,
+) -> crate::Result<()>
 where
     B: BufMut,
 {
     if max_len == 4 {
+        let scaled = i32::try_from(scaled).map_err(|_| out_of_range(max_len, shown))?;
         dst.put_u8(4);
-        dst.put_i32_le((val * 1e4).round() as i32);
+        dst.put_i32_le(scaled);
     } else {
+        let scaled = i64::try_from(scaled).map_err(|_| out_of_range(max_len, shown))?;
         dst.put_u8(8);
-        let scaled = (val * 1e4).round() as i64;
         // money is transmitted as two 32-bit words, high word first.
         dst.put_i32_le((scaled >> 32) as i32);
         dst.put_u32_le(scaled as u32);
     }
+
+    Ok(())
+}
+
+fn out_of_range(max_len: usize, shown: &dyn std::fmt::Display) -> Error {
+    let ty = if max_len == 4 { "smallmoney" } else { "money" };
+    Error::Conversion(format!("{shown} is out of range for {ty}").into())
 }
 
 /// Decodes to an exact scale-4 [`Numeric`], as SqlClient decodes to `decimal`;
@@ -116,7 +142,7 @@ mod tests {
     #[test]
     fn encode_smallmoney_roundtrips() {
         let mut buf = Vec::new();
-        encode(&mut buf, 4, 1234.5678);
+        encode(&mut buf, 4, 1234.5678).unwrap();
         assert_eq!(buf[0], 4);
         assert_eq!(buf.len(), 5);
         assert_eq!(decode_bytes(&buf), 1234.5678);
@@ -143,10 +169,58 @@ mod tests {
     fn encode_money_roundtrips() {
         for val in [0.0, 1.0, -1.0, 1234.5678, -9999.9999, 92233720368.5477] {
             let mut buf = Vec::new();
-            encode(&mut buf, 8, val);
+            encode(&mut buf, 8, val).unwrap();
             assert_eq!(buf[0], 8);
             assert_eq!(buf.len(), 9);
             assert!((decode_bytes(&buf) - val).abs() < 1e-3, "val={}", val);
+        }
+    }
+    /// The scaled integer `encode` wrote, without its length byte.
+    fn scaled_of(bytes: &[u8]) -> i64 {
+        match bytes[0] {
+            4 => i32::from_le_bytes(bytes[1..5].try_into().unwrap()) as i64,
+            8 => {
+                let high = i32::from_le_bytes(bytes[1..5].try_into().unwrap()) as i64;
+                let low = u32::from_le_bytes(bytes[5..9].try_into().unwrap()) as i64;
+                (high << 32) | low
+            }
+            len => panic!("invalid length {len}"),
+        }
+    }
+
+    #[test]
+    fn encode_out_of_range_is_an_error() {
+        // (max_len, value): just past each end, far past, and not a number.
+        let cases = [
+            (4, 214748.3648),
+            (4, -214748.3649),
+            (4, 300000.0),
+            (8, 922337203685477.6),
+            (8, -922337203685478.0),
+            (8, 1e300),
+            (8, f64::INFINITY),
+            (8, f64::NAN),
+            (4, f64::NAN),
+        ];
+        for (max_len, val) in cases {
+            let err = encode(&mut Vec::new(), max_len, val).unwrap_err();
+            assert!(
+                matches!(err, Error::Conversion(_)),
+                "{max_len} {val}: {err:?}"
+            );
+        }
+    }
+
+    // money's ends are not f64 values.
+    #[test]
+    fn encode_accepts_the_ends_of_the_range() {
+        for (max_len, val, scaled) in [
+            (4, 214748.3647, i32::MAX as i64),
+            (4, -214748.3648, i32::MIN as i64),
+        ] {
+            let mut buf = Vec::new();
+            encode(&mut buf, max_len, val).unwrap();
+            assert_eq!(scaled_of(&buf), scaled, "{val}");
         }
     }
 }

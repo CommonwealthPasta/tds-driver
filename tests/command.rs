@@ -315,3 +315,60 @@ where
 
     Ok(())
 }
+
+struct MoneyRow<T> {
+    m: T,
+}
+
+impl<'a, T: tiberius::IntoSql<'a> + Copy + 'a> TableValueRow<'a> for MoneyRow<T> {
+    fn bind_fields(&self, data_row: &mut tiberius::SqlTableDataRow<'a>) {
+        data_row.add_field(self.m);
+    }
+
+    fn get_db_type() -> &'static str {
+        "MoneyRow"
+    }
+}
+
+/// Creates a one-column TVP type `column_type` and a procedure reading it
+/// back as text; returns (type, procedure).
+async fn money_tvp<S>(conn: &mut tiberius::Client<S>, column_type: &str) -> Result<(String, String)>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let db_type = random_table().await;
+    let proc = random_table().await;
+
+    conn.simple_query(format!(
+        "create type dbo.[{db_type}] as table (m {column_type})"
+    ))
+    .await?;
+    conn.simple_query(format!(
+        "create or alter procedure {proc} @t dbo.[{db_type}] readonly \
+         as select convert(varchar(40), m, 2) from @t"
+    ))
+    .await?;
+
+    Ok((db_type, proc))
+}
+
+#[test_on_runtimes]
+async fn tvp_smallmoney_out_of_range_is_an_error<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let (db_type, proc) = money_tvp(&mut conn, "smallmoney").await?;
+    // Cleaned up first: the failed request leaves this connection unusable.
+    conn.simple_query(format!("drop procedure {proc}")).await?;
+
+    // Used to be stored as 214748.3647.
+    let mut cmd = Command::new(&proc);
+    cmd.bind_table_with_dbtype("@t", &db_type, vec![MoneyRow { m: 300000.0f64 }]);
+    let err = cmd.exec(&mut conn).await.unwrap_err();
+    assert!(
+        matches!(err, tiberius::error::Error::Conversion(_)),
+        "{err:?}"
+    );
+
+    Ok(())
+}
