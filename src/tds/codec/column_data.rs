@@ -2486,7 +2486,7 @@ mod tests {
     #[tokio::test]
     async fn smalldatetime_encode_without_type_info() {
         let buf = encode_without_ti(ColumnData::SmallDateTime(Some(SmallDateTime::new(
-            200, 3000,
+            200, 600,
         ))))
         .unwrap();
         assert_eq!(buf[0], VarLenType::Datetimen as u8);

@@ -105,10 +105,16 @@ impl DateTime {
         // ticks / 0.3: a third is never a tie.
         Ok((self.seconds_fragments * 10 + 1) / 3)
     }
+
+    /// Fails unless the server holds the value: under 24 hours.
+    pub(crate) fn validate(self) -> crate::Result<()> {
+        self.millis_of_day().map(drop)
+    }
 }
 
 impl Encode<BytesMut> for DateTime {
     fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
+        self.validate()?;
         dst.put_i32_le(self.days);
         dst.put_u32_le(self.seconds_fragments);
 
@@ -143,7 +149,7 @@ impl SmallDateTime {
         self.days
     }
 
-    /// 1/300 of a second, so a value of 300 equals 1 second (since midnight)
+    /// Minutes since midnight, 0 to 1439, despite the name.
     pub fn seconds_fragments(self) -> u16 {
         self.seconds_fragments
     }
@@ -173,10 +179,16 @@ impl SmallDateTime {
             )),
         }
     }
+
+    /// Fails unless the server holds the value: under 24 hours.
+    pub(crate) fn validate(self) -> crate::Result<()> {
+        self.minutes_of_day().map(drop)
+    }
 }
 
 impl Encode<BytesMut> for SmallDateTime {
     fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
+        self.validate()?;
         dst.put_u16_le(self.days);
         dst.put_u16_le(self.seconds_fragments);
 
@@ -552,14 +564,34 @@ mod tests {
     #[tokio::test]
     async fn decode_rejects_a_time_past_midnight() {
         let mut buf = BytesMut::new();
-        DateTime::new(0, 25920000).encode(&mut buf).unwrap();
+        buf.put_i32_le(0);
+        buf.put_u32_le(25920000);
         let err = DateTime::decode(&mut buf.into_sql_read_bytes()).await;
         assert!(matches!(err, Err(crate::Error::Protocol(_))), "{err:?}");
 
         let mut buf = BytesMut::new();
-        SmallDateTime::new(0, 1440).encode(&mut buf).unwrap();
+        buf.put_u16_le(0);
+        buf.put_u16_le(1440);
         let err = SmallDateTime::decode(&mut buf.into_sql_read_bytes()).await;
         assert!(matches!(err, Err(crate::Error::Protocol(_))), "{err:?}");
+    }
+
+    /// The server rejects them as parameters (8023).
+    #[test]
+    fn encode_rejects_a_time_past_midnight() {
+        for dt in [DateTime::new(0, 25920000), DateTime::new(0, u32::MAX)] {
+            let err = dt.encode(&mut BytesMut::new()).unwrap_err();
+            assert!(matches!(err, crate::Error::Conversion(_)), "{dt:?}");
+        }
+        let err = SmallDateTime::new(0, 1440).encode(&mut BytesMut::new());
+        assert!(matches!(err, Err(crate::Error::Conversion(_))), "{err:?}");
+
+        DateTime::new(0, 25919999)
+            .encode(&mut BytesMut::new())
+            .unwrap();
+        SmallDateTime::new(0, 1439)
+            .encode(&mut BytesMut::new())
+            .unwrap();
     }
 
     #[test]
