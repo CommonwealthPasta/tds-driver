@@ -17,8 +17,8 @@ impl FromStr for JdbcConfig {
 }
 
 impl ConfigString for JdbcConfig {
-    fn dict(&self) -> &std::collections::HashMap<String, String> {
-        self.config.properties()
+    fn get(&self, key: &str) -> Option<&str> {
+        self.config.properties().get(key).map(|v| v.as_str())
     }
 
     fn server(&self) -> crate::Result<ServerDefinition> {

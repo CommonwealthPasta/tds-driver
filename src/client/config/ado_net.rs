@@ -15,8 +15,8 @@ impl FromStr for AdoNetConfig {
 }
 
 impl ConfigString for AdoNetConfig {
-    fn dict(&self) -> &std::collections::HashMap<String, String> {
-        &self.dict
+    fn get(&self, key: &str) -> Option<&str> {
+        self.dict.get(key).map(|v| v.as_str())
     }
 
     fn server(&self) -> crate::Result<ServerDefinition> {
@@ -53,11 +53,7 @@ impl ConfigString for AdoNetConfig {
             Ok(definition)
         }
 
-        match self
-            .dict
-            .get("server")
-            .or_else(|| self.dict.get("data source"))
-        {
+        match self.first(&["server", "data source"]) {
             Some(value) if value.starts_with("tcp:") => {
                 parse_server(value[4..].split(',').collect())
             }

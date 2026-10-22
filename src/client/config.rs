@@ -1,7 +1,6 @@
 mod ado_net;
 mod jdbc;
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::AuthMethod;
@@ -755,30 +754,21 @@ pub(crate) struct ServerDefinition {
 }
 
 pub(crate) trait ConfigString {
-    fn dict(&self) -> &HashMap<String, String>;
+    fn get(&self, key: &str) -> Option<&str>;
+
+    /// The value of the first of `keys` present.
+    fn first(&self, keys: &[&str]) -> Option<&str> {
+        keys.iter().find_map(|key| self.get(key))
+    }
 
     fn server(&self) -> crate::Result<ServerDefinition>;
 
     fn authentication(&self) -> crate::Result<AuthMethod> {
-        let user = self
-            .dict()
-            .get("uid")
-            .or_else(|| self.dict().get("username"))
-            .or_else(|| self.dict().get("user"))
-            .or_else(|| self.dict().get("user id"))
-            .map(|s| s.as_str());
+        let user = self.first(&["uid", "username", "user", "user id"]);
 
-        let pw = self
-            .dict()
-            .get("password")
-            .or_else(|| self.dict().get("pwd"))
-            .map(|s| s.as_str());
+        let pw = self.first(&["password", "pwd"]);
 
-        match self
-            .dict()
-            .get("integratedsecurity")
-            .or_else(|| self.dict().get("integrated security"))
-        {
+        match self.first(&["integratedsecurity", "integrated security"]) {
             #[cfg(all(windows, feature = "winauth"))]
             Some(val) if val.to_lowercase() == "sspi" || Self::parse_bool(val)? => match (user, pw)
             {
@@ -810,44 +800,33 @@ pub(crate) trait ConfigString {
     }
 
     fn database(&self) -> Option<String> {
-        self.dict()
-            .get("database")
-            .or_else(|| self.dict().get("initial catalog"))
-            .or_else(|| self.dict().get("databasename"))
+        self.first(&["database", "initial catalog", "databasename"])
             .map(|db| db.to_string())
     }
 
     fn application_name(&self) -> Option<String> {
-        self.dict()
-            .get("application name")
-            .or_else(|| self.dict().get("applicationname"))
+        self.first(&["application name", "applicationname"])
             .map(|name| name.to_string())
     }
 
     fn trust_cert(&self) -> crate::Result<bool> {
-        self.dict()
-            .get("trustservercertificate")
+        self.first(&["trustservercertificate"])
             .map(Self::parse_bool)
             .unwrap_or(Ok(false))
     }
 
     fn trust_cert_ca(&self) -> Option<String> {
-        self.dict()
-            .get("trustservercertificateca")
+        self.first(&["trustservercertificateca"])
             .map(|ca| ca.to_string())
     }
 
     fn hostname_in_certificate(&self) -> Option<String> {
-        self.dict()
-            .get("hostnameincertificate")
-            .or_else(|| self.dict().get("hostname in certificate"))
+        self.first(&["hostnameincertificate", "hostname in certificate"])
             .map(|host| host.to_string())
     }
 
     fn client_name(&self) -> Option<String> {
-        self.dict()
-            .get("workstationid")
-            .or_else(|| self.dict().get("workstation id"))
+        self.first(&["workstationid", "workstation id"])
             .map(|name| name.to_string())
     }
 
@@ -857,8 +836,7 @@ pub(crate) trait ConfigString {
         feature = "vendored-openssl"
     ))]
     fn encrypt(&self) -> crate::Result<EncryptionLevel> {
-        self.dict()
-            .get("encrypt")
+        self.first(&["encrypt"])
             .map(|val| match Self::parse_bool(val) {
                 Ok(true) => Ok(EncryptionLevel::Required),
                 Ok(false) => Ok(EncryptionLevel::Off),
@@ -899,15 +877,13 @@ pub(crate) trait ConfigString {
     }
 
     fn readonly(&self) -> bool {
-        self.dict()
-            .get("applicationintent")
+        self.first(&["applicationintent"])
             .filter(|val| val.trim().eq_ignore_ascii_case("ReadOnly"))
             .is_some()
     }
 
     fn multi_subnet_failover(&self) -> crate::Result<bool> {
-        self.dict()
-            .get("multisubnetfailover")
+        self.first(&["multisubnetfailover"])
             .map(Self::parse_bool)
             .unwrap_or(Ok(false))
     }
