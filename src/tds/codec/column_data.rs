@@ -924,8 +924,9 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                 if vlc.r#type() == VarLenType::Image =>
             {
                 if let Some(bytes) = opt {
+                    let len = lob_len(bytes.len()).ok_or_else(|| too_long(bytes.len()))?;
                     put_text_pointer(dst);
-                    dst.put_u32_le(bytes.len() as u32);
+                    dst.put_u32_le(len);
                     dst.extend_from_slice(&bytes);
                 } else {
                     dst.put_u8(0);
@@ -2943,8 +2944,8 @@ mod tests {
         assert!(matches!(err, Error::Conversion(_)), "{err:?}");
     }
 
-    /// One byte more than varbinary(max) holds; `as u32` wrapped from 4 GiB.
-    /// The zeroed pages are never touched.
+    /// One byte more than varbinary(max) and image hold; `as u32` wrapped
+    /// from 4 GiB. The zeroed pages are never touched.
     #[test]
     fn binaries_over_2_gib_are_errors() {
         let big = vec![0u8; 1 << 31];
@@ -2955,6 +2956,12 @@ mod tests {
                 .unwrap_err();
             assert!(matches!(err, Error::Conversion(_)), "{out}: {err:?}");
         }
+
+        let image = TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Image, 0x7fff_ffff, None));
+        let err = encode_with_ti(&image, ColumnData::Binary(Some(big.as_slice().into())))
+            .map(drop)
+            .unwrap_err();
+        assert!(matches!(err, Error::BulkInput(_)), "{err:?}");
     }
 
     #[test]

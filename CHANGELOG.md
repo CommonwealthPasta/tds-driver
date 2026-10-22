@@ -239,6 +239,9 @@ that land will be documented here.
 - **JDBC URLs are split as mssql-jdbc splits them:** a bare `\` and non-ASCII
   values parse, `}}` in braces is `}`, names and unbraced values are trimmed,
   and the last of a property's synonyms wins.
+- **Values over the 2^31 - 1 bytes their type holds are errors** before anything
+  is sent: `XmlData` and `varbinary(max)` parameters, and bulk `xml`, `text`,
+  `ntext` and `image` values. From 4 GiB their u32 lengths wrapped.
 - **Names too long for their length prefix are errors** instead of wrapped
   lengths: bulk column names (a debug-build panic), UDT names in bulk and TVP
   metadata, XML schema names in TVP metadata, and `save_transaction` names over
