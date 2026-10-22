@@ -562,6 +562,7 @@ impl Config {
     /// |`Workstation ID`, `WorkstationID`, `wsid`|`<string>`|The client / workstation name reported to the server.|
     /// |`Multi Subnet Failover`, `MultiSubnetFailover`|`true`,`false`,`yes`,`no`|When enabled, connections are attempted in parallel to all IP addresses the server resolves to, and the first to succeed is used.|
     /// |`Connect Timeout`, `Connection Timeout`, `Timeout`|`<seconds>`|See [`Config::connect_timeout`].|
+    /// |`Packet Size`|`512` to `32768`|See [`Config::packet_size`].|
     ///
     /// [ADO.NET connection string]: https://docs.microsoft.com/en-us/dotnet/framework/data/adonet/connection-strings
     pub fn from_ado_string(s: &str) -> crate::Result<Self> {
@@ -641,6 +642,9 @@ impl Config {
             builder.client_name(client_name);
         }
         builder.multi_subnet_failover(s.multi_subnet_failover()?);
+        if let Some(size) = s.packet_size()? {
+            builder.packet_size(size);
+        }
         builder.set_connect_timeout(s.connect_timeout()?);
 
         Ok(builder)
@@ -864,6 +868,10 @@ pub(crate) trait ConfigString {
     fn server(&self) -> crate::Result<ServerDefinition>;
 
     fn connect_timeout(&self) -> crate::Result<Option<Duration>>;
+
+    fn packet_size(&self) -> crate::Result<Option<u32>> {
+        Ok(None)
+    }
 
     fn authentication(&self) -> crate::Result<AuthMethod> {
         let user = self.first(&["uid", "username", "user", "user id"]);

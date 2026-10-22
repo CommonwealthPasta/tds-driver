@@ -39,6 +39,7 @@ fn keyword(key: &str) -> Option<&'static str> {
             "integrated security"
         }
         "multi subnet failover" | "multisubnetfailover" => "multi subnet failover",
+        "packet size" | "packetsize" => "packet size",
         "password" | "pwd" => "password",
         "trust server certificate" | "trustservercertificate" => "trust server certificate",
         "user id" | "uid" | "user" | "username" => "user id",
@@ -242,6 +243,19 @@ impl ConfigString for AdoNetConfig {
                 )),
             },
         }
+    }
+
+    /// `Packet Size`: 512 to 32768 bytes (SqlConnectionOptions,
+    /// TdsEnums.MIN_PACKET_SIZE/MAX_PACKET_SIZE).
+    fn packet_size(&self) -> crate::Result<Option<u32>> {
+        self.get("packet size")
+            .map(|v| match v.trim().parse::<u32>() {
+                Ok(size @ 512..=32768) => Ok(size),
+                _ => Err(crate::Error::Conversion(
+                    "Connection string: Packet Size must be from 512 to 32768".into(),
+                )),
+            })
+            .transpose()
     }
 
     /// `Data Source` as SqlClient's managed SNI splits it (`DataSource` in
@@ -979,9 +993,12 @@ mod tests {
         ] {
             assert_eq!(config(&format!("{key}=h,1500")).get_addr(), "h:1500");
         }
-        let c = config("App=a;WSID=w");
+        let c = config("App=a;WSID=w;Packet Size=8192");
         assert_eq!(c.application_name.as_deref(), Some("a"));
         assert_eq!(c.client_name.as_deref(), Some("w"));
+        assert_eq!(c.get_packet_size(), Some(8192));
+        assert_eq!(config("packetsize=512").get_packet_size(), Some(512));
+        assert_eq!(config("").get_packet_size(), None);
 
         let c = config(
             "Application Intent=ReadOnly;Multi Subnet Failover=true;\
@@ -998,6 +1015,10 @@ mod tests {
             config("Trusted_Connection=no;uid=u").auth,
             AuthMethod::SqlServer(_)
         ));
+
+        for bad in ["Packet Size=511", "Packet Size=32769", "Packet Size=big"] {
+            assert!(crate::Config::from_ado_string(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

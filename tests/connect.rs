@@ -118,6 +118,42 @@ async fn connect_named_with_explicit_port_skips_the_browser() -> Result<()> {
     Ok(())
 }
 
+/// SqlClient's synonyms reach the server; the last of them wins.
+#[tokio::test]
+async fn sqlclient_synonyms_reach_the_server() -> Result<()> {
+    let addr = config().get_addr();
+    let (host, port) = addr.rsplit_once(':').unwrap();
+    let cs = format!(
+        "{};server=tcp:nosuchhost,1;Addr=TCP: {host} , {port} ;\
+         Application Name=x;App=syn-app;WSID=syn-ws;Packet Size=2048;Pooling=false",
+        *CONN_STR
+    );
+    let session = |config: Config| async {
+        let mut client = connect(config).await?;
+        let row = client
+            .simple_query(
+                "SELECT APP_NAME(), HOST_NAME(), net_packet_size FROM sys.dm_exec_connections \
+                 WHERE session_id = @@SPID",
+            )
+            .await?
+            .into_row()
+            .await?
+            .unwrap();
+        let text = |i| row.get::<&str, _>(i).map(str::to_owned);
+        Result::Ok((text(0), text(1), row.get::<i32, _>(2)))
+    };
+
+    let (app, ws, size) = session(Config::from_ado_string(&cs)?).await?;
+    assert_eq!(app.as_deref(), Some("syn-app"));
+    assert_eq!(ws.as_deref(), Some("syn-ws"));
+    // The server reports the size with its TLS overhead, so compare with the
+    // same size set through the API.
+    let mut sized = config();
+    sized.packet_size(2048);
+    assert_eq!(size, session(sized).await?.2);
+    Ok(())
+}
+
 #[tokio::test]
 async fn overlong_login_field_is_a_clear_error() {
     let mut config = config();

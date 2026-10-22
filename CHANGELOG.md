@@ -217,6 +217,10 @@ that land will be documented here.
 - **A TLS handshake over OpenSSL survives a socket that can't take a flight at
   once.** OpenSSL fails the handshake on a flush that would block, which
   affected `native-tls` on Linux and `vendored-openssl`.
+- **ADO.NET strings take SqlClient's other keywords and synonyms:** `Addr`,
+  `Address`, `Network Address`, `App`, `WSID`, `Trusted_Connection`, `Packet
+  Size`, `connecttimeout` and the spaced spellings, such as `Application Intent`
+  and `Trust Server Certificate`.
 - **The last of an ADO.NET key's synonyms wins,** as in SqlClient:
   `Server=a;Data Source=b` connects to `b`, not `a`.
 - **`Data Source` takes `TCP:` in any case and spaces around the port;** `np:`,
