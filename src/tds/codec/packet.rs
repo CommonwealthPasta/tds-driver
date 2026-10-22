@@ -25,11 +25,13 @@ impl Encode<BytesMut> for Packet {
     fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
         let size = (self.payload.len() as u16 + HEADER_BYTES as u16).to_be_bytes();
 
+        // `dst` may already hold packets queued before this one.
+        let start = dst.len();
         self.header.encode(dst)?;
         dst.extend_from_slice(&self.payload);
 
-        dst[2] = size[0];
-        dst[3] = size[1];
+        dst[start + 2] = size[0];
+        dst[start + 3] = size[1];
 
         Ok(())
     }
@@ -91,6 +93,21 @@ mod tests {
         // 8 header bytes + 4 payload bytes.
         assert_eq!(&buf[2..4], &12u16.to_be_bytes());
         assert_eq!(&buf[8..], b"abcd");
+    }
+
+    #[test]
+    fn encode_patches_the_length_of_a_packet_queued_behind_another() {
+        let mut buf = BytesMut::new();
+        Packet::new(PacketHeader::batch(1), BytesMut::from(&b"abcd"[..]))
+            .encode(&mut buf)
+            .unwrap();
+        Packet::new(PacketHeader::batch(2), BytesMut::from(&b"ef"[..]))
+            .encode(&mut buf)
+            .unwrap();
+
+        assert_eq!(&buf[2..4], &12u16.to_be_bytes());
+        assert_eq!(&buf[12 + 2..12 + 4], &10u16.to_be_bytes());
+        assert_eq!(&buf[12 + 8..], b"ef");
     }
 
     #[test]
