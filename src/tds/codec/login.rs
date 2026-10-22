@@ -212,6 +212,9 @@ impl std::fmt::Debug for LoginMessage<'_> {
     }
 }
 
+/// Maximum length in characters of the LOGIN7 strings (MS-TDS 2.2.6.4).
+const MAX_FIELD_CHARS: usize = 128;
+
 impl<'a> LoginMessage<'a> {
     pub fn new() -> LoginMessage<'a> {
         Self {
@@ -223,6 +226,44 @@ impl<'a> LoginMessage<'a> {
             hostname: Self::get_hostname(),
             ..Default::default()
         }
+    }
+
+    /// The UTF-16 length of each string field, or an error naming the first
+    /// field the server would reject.
+    fn field_lengths(&self) -> crate::Result<[usize; 6]> {
+        let fields = [
+            ("client name (workstation id)", &self.hostname),
+            ("user name", &self.username),
+            ("password", &self.password),
+            ("application name", &self.app_name),
+            ("server name", &self.server_name),
+            ("database", &self.db_name),
+        ];
+
+        let mut lengths = [0; 6];
+        for (len, (name, value)) in lengths.iter_mut().zip(fields) {
+            *len = value.encode_utf16().count();
+            if *len > MAX_FIELD_CHARS {
+                return Err(crate::Error::Conversion(
+                    format!(
+                        "LOGIN7: the {name} is {len} UTF-16 characters long; SQL Server accepts at most {MAX_FIELD_CHARS}"
+                    )
+                    .into(),
+                ));
+            }
+        }
+
+        if self
+            .integrated_security
+            .as_ref()
+            .is_some_and(|sspi| sspi.len() > u16::MAX as usize)
+        {
+            return Err(crate::Error::Conversion(
+                "LOGIN7: the SSPI token is longer than 65535 bytes".into(),
+            ));
+        }
+
+        Ok(lengths)
     }
 
     /// Best-effort local workstation id (machine hostname), used as the default
@@ -347,6 +388,8 @@ impl<'a> LoginMessage<'a> {
     }
 
     pub(crate) fn encode_to_vec(self) -> crate::Result<Zeroizing<Vec<u8>>> {
+        self.field_lengths()?;
+
         let mut cursor = Cursor::new(Vec::with_capacity(512));
 
         // Space for the length
@@ -841,5 +884,37 @@ mod tests {
             "AAD token leaked in Debug output: {dbg}"
         );
         assert!(dbg.contains("HIDDEN"));
+    }
+
+    #[test]
+    fn overlong_fields_are_named_in_the_error() {
+        type Setter = fn(&mut LoginMessage<'static>, String);
+        let cases: [(&str, Setter); 6] = [
+            ("client name", |l, v| l.hostname(v)),
+            ("user name", |l, v| l.user_name(v)),
+            ("password", |l, v| l.password(v)),
+            ("application name", |l, v| l.app_name(v)),
+            ("server name", |l, v| l.server_name(v)),
+            ("database", |l, v| l.db_name(v)),
+        ];
+        for (name, set) in cases {
+            let mut login = LoginMessage::new();
+            set(&mut login, "x".repeat(128));
+            login.encode_to_vec().expect("128 characters are allowed");
+
+            let mut login = LoginMessage::new();
+            set(&mut login, "x".repeat(129));
+            match login.encode_to_vec() {
+                Err(crate::Error::Conversion(msg)) => {
+                    assert!(msg.contains(name) && msg.contains("128"), "{msg}")
+                }
+                other => panic!("{name}: expected a conversion error, got {other:?}"),
+            }
+        }
+
+        // Counted in UTF-16 code units, as the wire format does.
+        let mut login = LoginMessage::new();
+        login.app_name("😀".repeat(65));
+        assert!(login.encode_to_vec().is_err());
     }
 }

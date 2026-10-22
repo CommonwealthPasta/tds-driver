@@ -7,7 +7,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tiberius::{Client, Config, EncryptionLevel, Result};
+use tiberius::{error::Error, Client, Config, EncryptionLevel, Result};
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
@@ -64,6 +64,21 @@ async fn connect_named_with_explicit_port_skips_the_browser() -> Result<()> {
     let mut client = Client::connect(config, tcp.compat_write()).await?;
     client.simple_query("SELECT 1").await?.into_row().await?;
     Ok(())
+}
+
+#[tokio::test]
+async fn overlong_login_field_is_a_clear_error() {
+    let mut config = config();
+    config.application_name("a".repeat(129));
+    match connect(config).await {
+        Err(Error::Conversion(msg)) => {
+            assert!(
+                msg.contains("application name") && msg.contains("128"),
+                "{msg}"
+            )
+        }
+        other => panic!("expected a conversion error, got {:?}", other.map(drop)),
+    }
 }
 
 /// Accepts at most `max` bytes per read or write, and returns `Pending` on
