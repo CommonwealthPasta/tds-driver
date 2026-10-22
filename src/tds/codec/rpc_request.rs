@@ -145,13 +145,18 @@ impl<'a> Encode<BytesMut> for TokenRpcRequest<'a> {
 
 impl<'a> Encode<BytesMut> for RpcParam<'a> {
     fn encode(self, dst: &mut BytesMut) -> Result<()> {
-        let len_pos = dst.len();
-        let mut length = 0u8;
+        // ParamMetaData's name is a B_VARCHAR: a u8 count of UTF-16 units.
+        let units = self.name.encode_utf16().count();
+        let length = u8::try_from(units).map_err(|_| {
+            crate::Error::Conversion(
+                format!("RPC parameter name is {units} UTF-16 code units long; the limit is 255")
+                    .into(),
+            )
+        })?;
 
         dst.put_u8(length);
 
         for codepoint in self.name.encode_utf16() {
-            length += 1;
             dst.put_u16_le(codepoint);
         }
 
@@ -164,9 +169,6 @@ impl<'a> Encode<BytesMut> for RpcParam<'a> {
             }
             RpcValue::Table(value) => value.encode(dst)?,
         }
-
-        let dst: &mut [u8] = dst.borrow_mut();
-        dst[len_pos] = length;
 
         Ok(())
     }
@@ -259,5 +261,30 @@ mod tests {
 
         // Status flags byte carries the ByRefValue bit.
         assert_eq!(buf[off], RpcStatus::ByRefValue as u8);
+    }
+
+    fn param_named(name: String) -> RpcParam<'static> {
+        RpcParam {
+            name: Cow::Owned(name),
+            flags: BitFlags::empty(),
+            value: scalar(ColumnData::I32(Some(1))),
+        }
+    }
+
+    #[test]
+    fn param_name_of_255_units_encodes() {
+        let mut buf = BytesMut::new();
+        param_named("a".repeat(255)).encode(&mut buf).unwrap();
+        assert_eq!(buf[0], 255);
+    }
+
+    #[test]
+    fn param_name_over_255_units_is_an_error() {
+        // 300 would wrap to 44; a surrogate pair counts as two units.
+        for name in ["a".repeat(300), "\u{1F600}".repeat(128)] {
+            let mut buf = BytesMut::new();
+            let err = param_named(name).encode(&mut buf).unwrap_err();
+            assert!(matches!(err, crate::Error::Conversion(_)), "{err:?}");
+        }
     }
 }
