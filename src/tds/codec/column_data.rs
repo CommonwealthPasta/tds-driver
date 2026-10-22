@@ -304,7 +304,9 @@ fn encode_legacy_datetime(
 
     // Days since 1900-01-01 and the time of day in `UNITS_PER_SECOND`.
     let parts = match *data {
+        // Validated: rounding would carry 24:00 and later into the next day.
         ColumnData::DateTime(v) => v.map(|v| {
+            v.validate()?;
             Ok((
                 i64::from(v.days()),
                 u64::from(v.seconds_fragments()) * (UNITS_PER_SECOND / 300),
@@ -312,6 +314,7 @@ fn encode_legacy_datetime(
         }),
         // `seconds_fragments` of a smalldatetime counts minutes.
         ColumnData::SmallDateTime(v) => v.map(|v| {
+            v.validate()?;
             Ok((
                 i64::from(v.days()),
                 u64::from(v.seconds_fragments()) * 60 * UNITS_PER_SECOND,
@@ -2989,5 +2992,28 @@ mod tests {
             .map(drop)
             .unwrap_err();
         assert!(matches!(err, Error::BulkInput(_)), "{err:?}");
+    }
+
+    /// Rounding carried them into the next day: 24:00:00.5 was stored as
+    /// 00:00:00.5 the day after.
+    #[test]
+    fn bulk_datetimes_past_midnight_are_errors() {
+        let datetimen =
+            |len| TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Datetimen, len, None));
+        let past = ColumnData::DateTime(Some(DateTime::new(0, 25_920_150)));
+        let leap = ColumnData::DateTime(Some(DateTime::new(0, u32::MAX)));
+        let small = ColumnData::SmallDateTime(Some(SmallDateTime::new(0, 1440)));
+
+        for (ti, data) in [
+            (TypeInfo::FixedLen(FixedLenType::Datetime), past.clone()),
+            (datetimen(8), leap.clone()),
+            (TypeInfo::FixedLen(FixedLenType::Datetime4), past),
+            (datetimen(4), leap),
+            (TypeInfo::FixedLen(FixedLenType::Datetime), small.clone()),
+            (datetimen(4), small),
+        ] {
+            let err = encode_with_ti(&ti, data).unwrap_err();
+            assert!(matches!(err, Error::Conversion(_)), "{ti:?}: {err:?}");
+        }
     }
 }
