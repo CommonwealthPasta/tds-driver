@@ -139,27 +139,37 @@ fn put_nvarchar_max(dst: &mut BytesMut, s: Option<&str>) -> crate::Result<()> {
 }
 
 /// `varbinary(max)` TYPE_INFO and value.
-fn put_varbinary_max(dst: &mut BytesMut, bytes: Option<&[u8]>) {
+fn put_varbinary_max(dst: &mut BytesMut, bytes: Option<&[u8]>) -> crate::Result<()> {
     dst.put_u8(VarLenType::BigVarBin as u8);
     // Max length
     dst.put_u16_le(0xffff_u16);
 
-    let bytes = match bytes {
-        Some(bytes) => bytes,
-        None => return dst.put_u64_le(PLP_NULL),
+    let Some(bytes) = bytes else {
+        dst.put_u64_le(PLP_NULL);
+        return Ok(());
     };
+    let len = lob_len(bytes.len()).ok_or_else(|| {
+        crate::Error::Conversion(
+            format!(
+                "{} bytes are more than varbinary(max) holds ({})",
+                bytes.len(),
+                i32::MAX
+            )
+            .into(),
+        )
+    })?;
 
-    // Also the length is unknown
+    // Unknown length, then the value in one chunk.
     dst.put_u64_le(0xfffffffffffffffe_u64);
-    // We'll write in one chunk, length is the whole bytes length
-    dst.put_u32_le(bytes.len() as u32);
+    dst.put_u32_le(len);
 
-    if !bytes.is_empty() {
-        // Payload
+    if len > 0 {
         dst.extend_from_slice(bytes);
         // PLP_TERMINATOR
         dst.put_u32_le(0);
     }
+
+    Ok(())
 }
 
 /// Number of days between `0001-01-01` (the `DateTime2`/`Date` epoch) and
@@ -628,7 +638,7 @@ impl<'a> ColumnData<'a> {
     pub(crate) fn encode_rpc_param(self, dst: &mut BytesMut, out: bool) -> crate::Result<()> {
         match self {
             ColumnData::String(s) if out => put_nvarchar_max(dst, s.as_deref())?,
-            ColumnData::Binary(b) if out => put_varbinary_max(dst, b.as_deref()),
+            ColumnData::Binary(b) if out => put_varbinary_max(dst, b.as_deref())?,
             value => return value.encode(&mut BytesMutWithTypeInfo::new(dst)),
         }
 
@@ -976,7 +986,7 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                 dst.put_u16_le(bytes.len() as u16);
                 dst.extend(bytes.into_owned());
             }
-            (ColumnData::Binary(Some(bytes)), None) => put_varbinary_max(dst, Some(&bytes)),
+            (ColumnData::Binary(Some(bytes)), None) => put_varbinary_max(dst, Some(&bytes))?,
             (ColumnData::DateTime(Some(dt)), None) => {
                 dst.extend_from_slice(&[VarLenType::Datetimen as u8, 8, 8]);
                 dt.encode(&mut *dst)?;
@@ -2911,5 +2921,19 @@ mod tests {
             .encode_rpc_param(&mut BytesMut::new(), false)
             .unwrap_err();
         assert!(matches!(err, Error::Conversion(_)), "{err:?}");
+    }
+
+    /// One byte more than varbinary(max) holds; `as u32` wrapped from 4 GiB.
+    /// The zeroed pages are never touched.
+    #[test]
+    fn binaries_over_2_gib_are_errors() {
+        let big = vec![0u8; 1 << 31];
+
+        for out in [false, true] {
+            let err = ColumnData::Binary(Some(big.as_slice().into()))
+                .encode_rpc_param(&mut BytesMut::new(), out)
+                .unwrap_err();
+            assert!(matches!(err, Error::Conversion(_)), "{out}: {err:?}");
+        }
     }
 }
