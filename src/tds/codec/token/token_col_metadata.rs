@@ -41,7 +41,9 @@ impl<'a> MetaDataColumn<'a> {
 
 impl<'a> Display for MetaDataColumn<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}] ", self.col_name)?;
+        // The output is an INSERT BULK column definition: the name is quoted
+        // the way SqlBulkCopy quotes it, the type is the column's own.
+        write!(f, "[{}] ", self.col_name.replace(']', "]]"))?;
 
         match &self.base.ty {
             TypeInfo::FixedLen(fixed) => match fixed {
@@ -912,6 +914,12 @@ mod tests {
             let expected = expected.replacen("c ", "[c] ", 1);
             assert_eq!(format!("{}", meta(ty, "c")), expected);
         }
+    }
+
+    #[test]
+    fn display_quotes_the_column_name() {
+        let m = meta(TypeInfo::FixedLen(FixedLenType::Int4), "a]b");
+        assert_eq!(format!("{m}"), "[a]]b] int");
     }
 
     #[test]

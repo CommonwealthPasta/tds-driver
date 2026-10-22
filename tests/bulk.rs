@@ -586,3 +586,27 @@ where
 
     Ok(())
 }
+
+#[test_on_runtimes]
+async fn bulk_load_escapes_column_names<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let table = format!("##{}", random_table().await);
+    conn.simple_query(format!("CREATE TABLE {table} ([we]]ird] INT, [x y] INT)"))
+        .await?
+        .into_results()
+        .await?;
+
+    let mut req = conn.bulk_insert(&table).await?;
+    let mut row = TokenRow::new();
+    row.push(1i32.into_sql());
+    row.push(2i32.into_sql());
+    req.send(row).await?;
+    assert_eq!(1, within(req.finalize()).await?.total());
+
+    let sum = format!("SELECT [we]]ird] * 10 + [x y] FROM {table}");
+    assert_eq!(Some(12), select_int(&mut conn, &sum).await?);
+
+    Ok(())
+}

@@ -147,6 +147,8 @@ that land will be documented here.
   stays usable for further rows and `finalize`.
 - **Dropping a `BulkLoadRequest` without `finalize` cancels the bulk insert**;
   the next request on the connection used to hang.
+- **`INSERT BULK` column names are quoted with `]` doubled** (a column named
+  `we]ird` broke the statement).
 
 ### Changed
 
