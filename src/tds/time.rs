@@ -281,6 +281,10 @@ impl PartialEq for Time {
 #[cfg(feature = "tds73")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tds73")))]
 impl Time {
+    /// What a chrono leap second converts to: `ToSql` cannot fail, so the
+    /// encoder rejects it.
+    pub(crate) const LEAP_SECOND: u64 = u64::MAX;
+
     /// Construct a new `Time`
     pub fn new(increments: u64, scale: u8) -> Self {
         Self { increments, scale }
@@ -294,13 +298,14 @@ impl Time {
             return Ok(());
         }
 
-        Err(crate::Error::Conversion(
-            format!(
-                "time out of range: {} increments of 10^-{} s is 24 hours or more",
-                self.increments, self.scale
+        Err(crate::Error::Conversion(match self.increments {
+            Self::LEAP_SECOND => "time: SQL Server has no leap seconds (second 60)".into(),
+            n => format!(
+                "time out of range: {n} increments of 10^-{} s is 24 hours or more",
+                self.scale
             )
             .into(),
-        ))
+        }))
     }
 
     #[inline]
@@ -688,8 +693,8 @@ mod tests {
     #[cfg(feature = "tds73")]
     #[test]
     fn times_from_24_hours_up_are_encode_errors() {
-        // Over the field's 3/4/5 bytes (these asserted), and within them but at
-        // or past 24 h.
+        // Over the field's 3/4/5 bytes (these asserted), within them but at or
+        // past 24 h, and the chrono leap second.
         for time in [
             Time::new(1 << 24, 0),
             Time::new(1 << 32, 4),
@@ -697,6 +702,7 @@ mod tests {
             Time::new(86_400, 0),
             Time::new(8_640_000, 2),
             Time::new(864_000_000_000, 7),
+            Time::new(Time::LEAP_SECOND, 7),
         ] {
             let err = time.encode(&mut BytesMut::new()).unwrap_err();
             assert!(matches!(err, crate::Error::Conversion(_)), "{time:?}");

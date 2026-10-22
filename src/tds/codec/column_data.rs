@@ -2597,7 +2597,7 @@ mod tests {
         let at = |increments| DateTime2::new(Date::new(739_011), Time::new(increments, 7));
 
         // u64::MAX overflowed converting to datetime's 1/300 s.
-        for increments in [u64::MAX, 864_000_000_000] {
+        for increments in [u64::MAX, Time::LEAP_SECOND, 864_000_000_000] {
             for (ti, data) in [
                 (
                     column(VarLenType::Timen, 3),

@@ -172,6 +172,9 @@ that land will be documented here.
 - **A `time` of 24 hours or more is a `Conversion` error.** A hand-built `Time`
   too large for its scale's 3 to 5 bytes panicked in `encode`; one that fit was
   sent, and the server rejected it (8023).
+- **A chrono leap second is a `Conversion` error** instead of a time past
+  23:59:59.9999999 (8023) or, at any other minute, the next second (12:34:60.5
+  was stored as 12:35:00.5).
 - **A TLS handshake over OpenSSL survives a socket that can't take a flight at
   once.** OpenSSL fails the handshake on a flush that would block, which
   affected `native-tls` on Linux and `vendored-openssl`.

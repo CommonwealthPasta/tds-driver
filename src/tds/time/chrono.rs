@@ -137,14 +137,17 @@ from_sql!(
     })
 );
 
-/// 10^-7 s since midnight.
+/// 10^-7 s since midnight. A leap second (nanosecond >= 1e9) becomes
+/// `Time::LEAP_SECOND`: counted on, it would read as the next second, or
+/// past 24:00.
 #[cfg(feature = "tds73")]
 fn to_time(time: NaiveTime) -> Time {
     use chrono::Timelike;
 
-    let increments = (u64::from(time.num_seconds_from_midnight()) * 1_000_000_000
-        + u64::from(time.nanosecond()))
-        / 100;
+    let increments = match time.nanosecond() {
+        n if n >= 1_000_000_000 => Time::LEAP_SECOND,
+        n => (u64::from(time.num_seconds_from_midnight()) * 1_000_000_000 + u64::from(n)) / 100,
+    };
 
     Time {
         increments,
@@ -454,6 +457,42 @@ mod tests {
                 encode(data).unwrap();
             }
         }
+    }
+
+    #[cfg(feature = "tds73")]
+    #[test]
+    fn leap_seconds_are_encode_errors() {
+        use crate::ToSql;
+
+        // At 23:59 it went past 24:00; at 12:34 the server read 12:35:00.5.
+        for (h, m) in [(23, 59), (12, 34)] {
+            let time = NaiveTime::from_hms_nano_opt(h, m, 59, 1_500_000_000).unwrap();
+            let naive = NaiveDate::from_ymd_opt(2016, 12, 31)
+                .unwrap()
+                .and_time(time);
+            let utc = chrono::DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
+            let fixed = utc.fixed_offset();
+
+            for data in [
+                time.to_sql(),
+                naive.to_sql(),
+                utc.to_sql(),
+                fixed.to_sql(),
+                time.into_sql(),
+                naive.into_sql(),
+                utc.into_sql(),
+                fixed.into_sql(),
+            ] {
+                let err = encode(data).unwrap_err();
+                assert!(
+                    matches!(&err, crate::Error::Conversion(m) if m.contains("leap")),
+                    "{time}: {err:?}"
+                );
+            }
+        }
+
+        let last = NaiveTime::from_hms_nano_opt(23, 59, 59, 999_999_999).unwrap();
+        encode(last.to_sql()).unwrap();
     }
 
     #[cfg(feature = "tds73")]

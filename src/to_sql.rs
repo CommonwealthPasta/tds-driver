@@ -47,9 +47,9 @@ use uuid::Uuid;
 /// See the [`time`] module for more information about the date and time structs.
 ///
 /// A value the server cannot hold, such as a date outside 0001-01-01 to
-/// 9999-12-31 (in UTC, for `datetimeoffset`) or a [`BigDecimal`] that
-/// `decimal(38, s)` cannot hold exactly, still converts, and the query
-/// using it fails with [`Error::Conversion`].
+/// 9999-12-31 (in UTC, for `datetimeoffset`), a [`BigDecimal`] that
+/// `decimal(38, s)` cannot hold exactly or a chrono leap second, still
+/// converts, and the query using it fails with [`Error::Conversion`].
 ///
 /// [`Error::Conversion`]: crate::error::Error::Conversion
 /// [`Client#query`]: struct.Client.html#method.query
