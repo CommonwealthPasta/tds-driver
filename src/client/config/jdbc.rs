@@ -19,9 +19,23 @@ impl FromStr for JdbcConfig {
     }
 }
 
-/// mssql-jdbc's name for a lowercase property name.
+/// mssql-jdbc's name for a lowercase property name (`SQLServerDriver`'s
+/// `driverPropertiesSynonyms`), so that the last of a set of synonyms wins.
 fn property(name: &str) -> String {
-    name.to_owned()
+    match name {
+        "database" => "databasename",
+        "username" | "uid" => "user",
+        "server" => "servername",
+        "domainname" => "domain",
+        "port" => "portnumber",
+        "trusted_connection" => "integratedsecurity",
+        "app" => "applicationname",
+        "connecttimeout" => "logintimeout",
+        "columnencryption" => "columnencryptionsetting",
+        "quotedid" => "quotedidentifier",
+        other => other,
+    }
+    .to_owned()
 }
 
 /// Java's `String.trim`.
@@ -236,7 +250,7 @@ impl ConfigString for JdbcConfig {
     /// `loginTimeout` (alias `connectTimeout`): seconds, 0..=65535, where 0
     /// means the driver default (mssql-jdbc).
     fn connect_timeout(&self) -> crate::Result<Option<Duration>> {
-        match self.first(&["logintimeout", "connecttimeout"]) {
+        match self.get("logintimeout") {
             None => Ok(Some(JDBC_DEFAULT_LOGIN_TIMEOUT)),
             Some(v) => match v.trim().parse::<u16>() {
                 Ok(0) => Ok(Some(JDBC_DEFAULT_LOGIN_TIMEOUT)),
@@ -251,7 +265,7 @@ impl ConfigString for JdbcConfig {
     /// As mssql-jdbc's `connectInternal`: `serverName` may end in
     /// `\instance`, and an `instanceName` property wins over that.
     fn server(&self) -> crate::Result<ServerDefinition> {
-        let (host, instance) = match self.first(&["servername", "server"]) {
+        let (host, instance) = match self.get("servername") {
             Some(name) => match name.split_once('\\') {
                 Some((host, instance)) => (Some(host), Some(instance)),
                 None => (Some(name), None),
@@ -260,7 +274,7 @@ impl ConfigString for JdbcConfig {
         };
         let instance = self.get("instancename").or(instance);
         let port = self
-            .first(&["portnumber", "port"])
+            .get("portnumber")
             .map(|port| port.trim().parse())
             .transpose()?;
 
@@ -656,8 +670,11 @@ mod tests {
         );
         assert_eq!(v("password={ü\\{x}").as_deref(), Some("ü\\{x"));
         assert_eq!(v("password=").as_deref(), Some(""));
-        // The last occurrence wins.
+        // The last occurrence wins, also among mssql-jdbc's synonyms.
         assert_eq!(v("password=a;password=b").as_deref(), Some("b"));
+        let s = "jdbc:sqlserver://h;userName=a;user=b;uid=c;database=x;databaseName=y";
+        assert_eq!(value(s, "user").as_deref(), Some("c"));
+        assert_eq!(value(s, "databasename").as_deref(), Some("y"));
 
         for bad in [
             "password={abc",   // unclosed brace

@@ -228,6 +228,9 @@ that land will be documented here.
 - **`Integrated Security` without an authentication backend is an error** naming
   the feature (`winauth`; `integrated-auth-gssapi` or `sspi-rs`), instead of a
   SQL login as user "".
+- **JDBC URLs are split as mssql-jdbc splits them:** a bare `\` and non-ASCII
+  values parse, `}}` in braces is `}`, names and unbraced values are trimmed,
+  and the last of a property's synonyms wins.
 
 ### Changed
 

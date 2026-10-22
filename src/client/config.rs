@@ -584,7 +584,7 @@ impl Config {
     /// See [`from_ado_string`] method for supported parameters. The URL is
     /// split as mssql-jdbc splits it: a value containing `;` goes in braces,
     /// `{like;this}`, with `}}` for a `}`; other values and all names are
-    /// trimmed; the last occurrence of a property wins.
+    /// trimmed; the last of a property and its synonyms wins.
     ///
     /// [JDBC connection string]: https://docs.microsoft.com/en-us/sql/connect/jdbc/building-the-connection-url?view=sql-server-ver15
     /// [`from_ado_string`]: #method.from_ado_string
