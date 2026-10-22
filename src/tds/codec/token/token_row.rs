@@ -162,18 +162,22 @@ impl TokenRow<'static> {
 /// This would mean columns 0, 3 and 5 are null and should not be parsed at all.
 /// For more than eight columns, more bits need to be reserved for the bitmap
 /// (see the size calculation).
-struct RowBitmap {
-    data: Vec<u8>,
+enum RowBitmap {
+    /// Up to 256 columns, so most rows don't allocate.
+    Inline([u8; 32]),
+    Heap(Vec<u8>),
 }
 
 impl RowBitmap {
     /// Is the given column index null or not.
     #[inline]
     fn is_null(&self, i: usize) -> bool {
-        let index = i / 8;
-        let bit = i % 8;
+        let data = match self {
+            Self::Inline(data) => &data[..],
+            Self::Heap(data) => &data[..],
+        };
 
-        self.data[index] & (1 << bit) > 0
+        data[i / 8] & (1 << (i % 8)) > 0
     }
 
     /// Decode the bitmap data from the beginning of the row. Only doable if the
@@ -183,10 +187,18 @@ impl RowBitmap {
         R: SqlReadBytes + Unpin,
     {
         let size = columns.div_ceil(8);
-        let mut data = vec![0; size];
-        src.read_exact(&mut data[0..size]).await?;
+        let mut bitmap = if size <= 32 {
+            Self::Inline([0; 32])
+        } else {
+            Self::Heap(vec![0; size])
+        };
+        let data = match &mut bitmap {
+            Self::Inline(data) => &mut data[..size],
+            Self::Heap(data) => &mut data[..],
+        };
+        src.read_exact(data).await?;
 
-        Ok(Self { data })
+        Ok(bitmap)
     }
 }
 
@@ -263,15 +275,32 @@ mod tests {
         // Only bit 3 is set in the single bitmap byte. is_null must consult that
         // exact bit; a `<<`->`>>` mutation would look at bit -3 (i.e. 0) and
         // report the wrong columns.
-        let bitmap = RowBitmap {
-            data: vec![0b0000_1000],
-        };
+        let mut inline = [0; 32];
+        inline[0] = 0b0000_1000;
+        for bitmap in [
+            RowBitmap::Inline(inline),
+            RowBitmap::Heap(vec![0b0000_1000]),
+        ] {
+            assert!(bitmap.is_null(3));
+            assert!(!bitmap.is_null(0));
+            assert!(!bitmap.is_null(1));
+            assert!(!bitmap.is_null(2));
+            assert!(!bitmap.is_null(4));
+        }
+    }
 
-        assert!(bitmap.is_null(3));
-        assert!(!bitmap.is_null(0));
-        assert!(!bitmap.is_null(1));
-        assert!(!bitmap.is_null(2));
-        assert!(!bitmap.is_null(4));
+    #[tokio::test]
+    async fn row_bitmap_over_256_columns_is_read_whole() {
+        use crate::sql_read_bytes::test_utils::IntoSqlReadBytes;
+
+        let mut bytes = vec![0u8; 38];
+        bytes[37] = 0b0000_1000; // column 299
+        let mut src = bytes::BytesMut::from(&bytes[..]).into_sql_read_bytes();
+        let bitmap = RowBitmap::decode(&mut src, 300).await.unwrap();
+
+        assert!(matches!(bitmap, RowBitmap::Heap(_)));
+        assert!(bitmap.is_null(299));
+        assert!(!bitmap.is_null(298));
     }
 
     #[test]
