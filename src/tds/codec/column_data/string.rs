@@ -19,14 +19,7 @@ where
         // Codepages other than UTF
         (Some(buf), BigChar) | (Some(buf), BigVarChar) => {
             let collation = collation.as_ref().unwrap();
-            let encoder = collation.encoding()?;
-
-            let s = encoder
-                .decode_without_bom_handling_and_without_replacement(buf.as_ref())
-                .ok_or_else(|| Error::Encoding("invalid sequence".into()))?
-                .to_string();
-
-            Ok(Some(s.into()))
+            Ok(Some(decode_varchar(buf, collation)?.into()))
         }
         // UTF-16
         (Some(buf), _) => {
@@ -44,5 +37,40 @@ where
             Ok(Some(s.into()))
         }
         _ => Ok(None),
+    }
+}
+
+/// Decodes `buf` in the collation's code page.
+pub(crate) fn decode_varchar(buf: Vec<u8>, collation: &Collation) -> crate::Result<String> {
+    let encoder = collation.encoding()?;
+    let decoded = encoder
+        .decode_without_bom_handling_and_without_replacement(&buf)
+        .ok_or_else(|| Error::Encoding("invalid sequence".into()))?;
+
+    match decoded {
+        // Borrowed means the bytes are valid UTF-8 as they are, so keep them
+        // instead of copying.
+        Cow::Borrowed(_) => {
+            String::from_utf8(buf).map_err(|_| Error::Encoding("invalid sequence".into()))
+        }
+        Cow::Owned(s) => Ok(s),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_varchar_keeps_ascii_and_converts_the_rest() {
+        let collation = Collation::new(0x0409, 0); // Windows-1252
+        assert_eq!(
+            decode_varchar(b"plain".to_vec(), &collation).unwrap(),
+            "plain"
+        );
+        assert_eq!(
+            decode_varchar(vec![0xe5, 0xe4, 0xf6], &collation).unwrap(),
+            "åäö"
+        );
     }
 }
