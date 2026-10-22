@@ -1,4 +1,5 @@
-//! Integration tests for requests whose response is left partly unread.
+//! Integration tests for requests whose response is left partly unread, or
+//! that fail before they are sent.
 
 use futures_util::io::{AsyncRead, AsyncWrite};
 use futures_util::task::AtomicWaker;
@@ -10,12 +11,12 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Once};
 use std::task::{Context, Poll};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use runtimes_macro::test_on_runtimes;
-use tiberius::{Client, Config, QueryItem, Result};
+use tiberius::{Client, Command, Config, QueryItem, Result, SqlTableDataRow, TableValueRow};
 
 // This is used in the testing macro :)
 #[allow(dead_code)]
@@ -67,6 +68,56 @@ where
 
     read_one_row(&mut conn, "SELECT 1 AS a; COMMIT; SELECT 2 AS b").await?;
     assert_eq!(0, trancount(&mut conn).await?);
+
+    Ok(())
+}
+
+struct Text(&'static str);
+
+impl<'a> TableValueRow<'a> for Text {
+    fn bind_fields(&self, row: &mut SqlTableDataRow<'a>) {
+        row.add_field(self.0);
+    }
+
+    // Bound with an explicit type instead.
+    fn get_db_type() -> &'static str {
+        ""
+    }
+}
+
+#[tokio::test]
+async fn a_request_that_fails_to_encode_leaves_the_connection_usable() -> Result<()> {
+    let (mut conn, _) = throttled().await?;
+    let id = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let (ty, proc) = (format!("unread_t{id}"), format!("unread_p{id}"));
+    conn.simple_query(format!("CREATE TYPE {ty} AS TABLE (s varchar(4))"))
+        .await?
+        .into_results()
+        .await?;
+    conn.simple_query(format!(
+        "CREATE PROCEDURE {proc} @p {ty} READONLY AS SELECT COUNT(*) FROM @p"
+    ))
+    .await?
+    .into_results()
+    .await?;
+
+    // Too long for varchar(4), which only the encoder checks.
+    let mut cmd = Command::new(&proc);
+    cmd.bind_table_with_dbtype("@p", &ty, vec![Text("too long")]);
+    let sent = cmd.exec(&mut conn).await.map(|_| ());
+    assert!(sent.is_err());
+
+    // Before, this waited forever for a response to the request never sent.
+    let next = tokio::time::timeout(Duration::from_secs(10), trancount(&mut conn)).await;
+    assert_eq!(0, next.expect("the connection hung")?);
+
+    conn.simple_query(format!("DROP PROCEDURE {proc}; DROP TYPE {ty}"))
+        .await?
+        .into_results()
+        .await?;
 
     Ok(())
 }

@@ -51,6 +51,9 @@ that land will be documented here.
   one (3971). It is now read to the end. A token abandoned partway, its stream
   dropped while waiting for the next packet, is read again from its start unless
   it is over 1 MiB; then the rest of that message is still discarded.
+- **A request that fails to encode no longer hangs the connection.** After an
+  encode error, such as a TVP value too long for its column, the next request
+  waited for a response to the request never sent.
 
 ### Changed
 

@@ -257,15 +257,18 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         E: Sized + Encode<BytesMut>,
     {
         self.ensure_not_poisoned()?;
+
+        // First, so an encode error leaves the connection as it was instead
+        // of awaiting a response to a request never sent.
+        let mut payload = BytesMut::new();
+        item.encode(&mut payload)?;
+
         self.flushed = false;
         // A cancel requested before this request is not for it.
         self.cancel.clear();
         self.awaiting_response = true;
         self.attention = Attention::None;
         let packet_size = (self.context.packet_size() as usize) - HEADER_BYTES;
-
-        let mut payload = BytesMut::new();
-        item.encode(&mut payload)?;
 
         // Mark the connection poisoned across the multi-packet write; a clean
         // completion clears it below. A future dropped mid-loop leaves it set.
