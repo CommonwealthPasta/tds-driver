@@ -888,30 +888,49 @@ pub(crate) trait ConfigString {
 
         let pw = self.first(&["password", "pwd"]);
 
-        match self.integrated_security()? {
-            #[cfg(all(windows, feature = "winauth"))]
-            true => match (user, pw) {
-                (None, None) => Ok(AuthMethod::Integrated),
-                _ => Ok(AuthMethod::windows(user.unwrap_or(""), pw.unwrap_or(""))),
-            },
-            // On Unix with `sspi-rs`, `IntegratedSecurity=SSPI` (or a truthy
-            // value) uses NTLM when a username/password is supplied, and falls
-            // back to Kerberos (`Integrated`) only if `integrated-auth-gssapi`
-            // is also enabled and no credentials are given.
-            #[cfg(all(unix, feature = "sspi-rs"))]
-            true => match (user, pw) {
-                (Some(user), Some(pw)) => Ok(AuthMethod::windows(user, pw)),
-                #[cfg(feature = "integrated-auth-gssapi")]
-                (None, None) => Ok(AuthMethod::Integrated),
-                _ => Ok(AuthMethod::windows(user.unwrap_or(""), pw.unwrap_or(""))),
-            },
-            #[cfg(all(
-                feature = "integrated-auth-gssapi",
-                not(all(unix, feature = "sspi-rs"))
-            ))]
-            true => Ok(AuthMethod::Integrated),
-            _ => Ok(AuthMethod::sql_server(user.unwrap_or(""), pw.unwrap_or(""))),
+        if !self.integrated_security()? {
+            return Ok(AuthMethod::sql_server(user.unwrap_or(""), pw.unwrap_or("")));
         }
+
+        // Without a backend this used to log in with SQL authentication.
+        #[allow(unused)]
+        let missing = |what: &str| -> crate::Result<AuthMethod> {
+            Err(crate::Error::Conversion(
+                format!("Connection string: Integrated Security needs {what}").into(),
+            ))
+        };
+
+        #[cfg(all(windows, feature = "winauth"))]
+        return match (user, pw) {
+            (None, None) => Ok(AuthMethod::Integrated),
+            _ => Ok(AuthMethod::windows(user.unwrap_or(""), pw.unwrap_or(""))),
+        };
+        #[cfg(all(windows, not(feature = "winauth")))]
+        return missing("the crate's `winauth` feature");
+
+        // `sspi-rs` is NTLM, so it needs a user name; Kerberos takes the
+        // logged-in user's ticket.
+        #[cfg(all(unix, feature = "sspi-rs"))]
+        return match (user, pw) {
+            (Some(user), Some(pw)) => Ok(AuthMethod::windows(user, pw)),
+            #[cfg(feature = "integrated-auth-gssapi")]
+            (None, None) => Ok(AuthMethod::Integrated),
+            #[cfg(not(feature = "integrated-auth-gssapi"))]
+            (None, None) => missing("a User ID, or the crate's `integrated-auth-gssapi` feature"),
+            _ => Ok(AuthMethod::windows(user.unwrap_or(""), pw.unwrap_or(""))),
+        };
+        #[cfg(all(unix, feature = "integrated-auth-gssapi", not(feature = "sspi-rs")))]
+        return Ok(AuthMethod::Integrated);
+        #[cfg(all(
+            unix,
+            not(any(feature = "integrated-auth-gssapi", feature = "sspi-rs"))
+        ))]
+        return missing(
+            "the crate's `integrated-auth-gssapi` (Kerberos) or `sspi-rs` (NTLM) feature",
+        );
+
+        #[cfg(not(any(windows, unix)))]
+        return missing("Windows or Unix");
     }
 
     fn database(&self) -> Option<String> {

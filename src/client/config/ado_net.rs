@@ -1094,4 +1094,33 @@ mod tests {
             }
         }
     }
+
+    /// Without an integrated-auth backend, `Integrated Security` used to log
+    /// in with SQL authentication as user "".
+    #[test]
+    #[cfg(not(any(
+        all(windows, feature = "winauth"),
+        all(unix, any(feature = "integrated-auth-gssapi", feature = "sspi-rs"))
+    )))]
+    fn integrated_security_without_a_backend_is_an_error() {
+        for s in [
+            "IntegratedSecurity=SSPI",
+            "Integrated Security=true",
+            "Trusted_Connection=yes;uid=a;pwd=b",
+        ] {
+            match crate::Config::from_ado_string(s) {
+                Err(crate::Error::Conversion(msg)) => {
+                    #[cfg(windows)]
+                    assert!(msg.contains("`winauth`"), "{msg}");
+                    #[cfg(unix)]
+                    assert!(msg.contains("`integrated-auth-gssapi`"), "{msg}");
+                }
+                other => panic!("{s}: {other:?}"),
+            }
+        }
+        assert!(matches!(
+            config("Integrated Security=false;uid=a").auth,
+            AuthMethod::SqlServer(_)
+        ));
+    }
 }

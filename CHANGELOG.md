@@ -225,6 +225,9 @@ that land will be documented here.
   `Server=a;Data Source=b` connects to `b`, not `a`.
 - **`Data Source` takes `TCP:` in any case and spaces around the port;** `np:`,
   `lpc:`, `admin:` and pipe paths are errors instead of host names.
+- **`Integrated Security` without an authentication backend is an error** naming
+  the feature (`winauth`; `integrated-auth-gssapi` or `sspi-rs`), instead of a
+  SQL login as user "".
 
 ### Changed
 

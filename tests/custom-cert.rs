@@ -21,11 +21,10 @@ fn connect_to_custom_cert_instance_ado() -> Result<()> {
     let rt = Runtime::new()?;
 
     rt.block_on(async {
-        let mut config = Config::from_ado_string("server=tcp:localhost,1433;IntegratedSecurity=true;TrustServerCertificateCA=docker/certs/customCA.crt")?;
-        config.authentication(AuthMethod::sql_server(
-            "sa",
-            "<YourStrong@Passw0rd>",
-        ));
+        let mut config = Config::from_ado_string(
+            "server=tcp:localhost,1433;TrustServerCertificateCA=docker/certs/customCA.crt",
+        )?;
+        config.authentication(AuthMethod::sql_server("sa", "<YourStrong@Passw0rd>"));
 
         let tcp = TcpStream::connect(config.get_addr()).await?;
 
