@@ -193,6 +193,17 @@ mod tests {
     }
 
     #[test]
+    fn varchar_in_a_utf8_collation() {
+        // Latin1_General_100_CI_AS_SC_UTF8: LCID 0x409 with fUTF8 set.
+        let utf8 = Collation::new(0x0409 | 0x0400_0000, 0);
+        assert_eq!(
+            decode_varchar("héllo 日😀".as_bytes().to_vec(), &utf8).unwrap(),
+            "héllo 日😀"
+        );
+        assert_eq!(encode_varchar("héllo", &utf8).unwrap(), "héllo".as_bytes());
+    }
+
+    #[test]
     fn decode_varchar_keeps_ascii_and_converts_the_rest() {
         let collation = Collation::new(0x0409, 0); // Windows-1252
         assert_eq!(

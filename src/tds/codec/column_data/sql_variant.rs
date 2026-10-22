@@ -933,6 +933,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn decode_varchar_in_a_utf8_collation() {
+        // Latin1_General_100_CI_AS_SC_UTF8: LCID 0x409 with fUTF8 set.
+        let mut payload = vec![VarLenType::BigVarChar as u8, 7];
+        payload.extend_from_slice(&(0x0409u32 | 0x0400_0000).to_le_bytes());
+        payload.push(0);
+        payload.extend_from_slice(&40u16.to_le_bytes());
+        payload.extend_from_slice("héllo 日".as_bytes());
+
+        let data = decode(&mut variant_reader(&payload)).await.unwrap();
+        assert_eq!(data, ColumnData::String(Some("héllo 日".into())));
+    }
+
+    #[tokio::test]
     async fn decode_varchar_in_cp850() {
         let mut payload = vec![VarLenType::BigVarChar as u8, 7];
         payload.extend_from_slice(&0x0409u32.to_le_bytes());

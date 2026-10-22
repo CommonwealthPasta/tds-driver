@@ -47,6 +47,12 @@ impl Collation {
     /// Fails for the CP437/CP850 SQL collations (sort IDs 30-61), which
     /// `encoding_rs` lacks; the driver itself still reads and writes them.
     pub fn encoding(&self) -> crate::Result<&'static Encoding> {
+        // Checked first, as SqlClient does: a UTF-8 collation keeps the LCID of
+        // its locale, which would otherwise select a single-byte code page.
+        if self.info & UTF8_FLAG != 0 {
+            return Ok(encoding_rs::UTF_8);
+        }
+
         let res = if self.sort_id == 0 {
             lcid_to_encoding(self.lcid())
         } else {
@@ -85,6 +91,9 @@ impl fmt::Display for Collation {
         }
     }
 }
+
+/// The collation's fUTF8 bit; SqlClient's `TdsEnums.UTF8_IN_TDSCOLLATION`.
+const UTF8_FLAG: u32 = 0x0400_0000;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Charset {

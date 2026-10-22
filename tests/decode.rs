@@ -158,6 +158,24 @@ where
     Ok(())
 }
 
+#[test_on_runtimes]
+async fn sql_variant_utf8_varchar<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let r = rows(
+        &mut conn,
+        "SELECT CAST(CAST(N'héllo 日€😀' COLLATE Latin1_General_100_CI_AS_SC_UTF8 AS varchar(50)) AS sql_variant), \
+         CAST(N'héllo' COLLATE Latin1_General_100_CI_AS_SC_UTF8 AS varchar(50))",
+    )
+    .await?;
+
+    assert_eq!(r[0].get::<&str, _>(0), Some("héllo 日€😀"));
+    assert_eq!(r[0].get::<&str, _>(1), Some("héllo"));
+
+    Ok(())
+}
+
 #[cfg(feature = "rust_decimal")]
 #[test_on_runtimes]
 async fn rust_decimal_out_of_range<S>(mut conn: tiberius::Client<S>) -> Result<()>
