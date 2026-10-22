@@ -987,6 +987,21 @@ where
         vec![
             ("TIME(3)", t.into_sql(), rb, "13:14:15.123"),
             ("TIME(0) NOT NULL", t.into_sql(), rb, "13:14:15"),
+            // Truncated, not rounded, as SqlBulkCopy does.
+            (
+                "TIME(0)",
+                NaiveTime::from_hms_nano_opt(13, 14, 15, 999_999_900)
+                    .unwrap()
+                    .into_sql(),
+                rb,
+                "13:14:15",
+            ),
+            (
+                "DATETIME2(2)",
+                ndt(13, 14, 15, 129_999_900).into_sql(),
+                rb,
+                "2024-05-06 13:14:15.12",
+            ),
             (
                 "DATETIMEOFFSET(3)",
                 dto.into_sql(),

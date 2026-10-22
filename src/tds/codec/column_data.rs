@@ -397,7 +397,9 @@ fn datetime2_for_column<'a>(data: ColumnData<'a>, ti: Option<&TypeInfo>) -> Colu
 }
 
 /// Puts `time` at the column's scale. Dropped digits are truncated, as
-/// SqlClient's TdsParser does.
+/// SqlClient does for bulk copy (`value.Ticks / TICKS_FROM_SCALE[scale]` in
+/// TdsParser.WriteTime and WriteDateTime2, TdsParser.cs:8172 and :8200) and
+/// TVPs (TdsValueSetter.cs:588, :660, :694), dotnet/SqlClient@5394363.
 #[cfg(feature = "tds73")]
 fn rescale_time(time: Time, scale: u8) -> crate::Result<Time> {
     time.validate()?;
