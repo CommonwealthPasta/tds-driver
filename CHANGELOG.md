@@ -169,6 +169,9 @@ that land will be documented here.
 - **Bulk/TVP `datetime2` into `datetime` rounds to 1/300 s** as `CAST` does,
   instead of truncating, and accepts dates from 1753-01-01 rather than
   1900-01-01.
+- **A TLS handshake over OpenSSL survives a socket that can't take a flight at
+  once.** OpenSSL fails the handshake on a flush that would block, which
+  affected `native-tls` on Linux and `vendored-openssl`.
 
 ### Changed
 

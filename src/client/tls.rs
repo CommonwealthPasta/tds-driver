@@ -191,6 +191,27 @@ impl<S> TlsPreloginWrapper<S> {
         self.pending_handshake = false;
     }
 
+    /// Writes the framed packets still queued from a flush that would have
+    /// blocked.
+    fn poll_drain(&mut self, cx: &mut task::Context<'_>) -> Poll<io::Result<()>>
+    where
+        S: AsyncWrite + Unpin,
+    {
+        while self.out_pos < self.out.len() {
+            let written =
+                ready!(Pin::new(self.stream.as_mut().unwrap())
+                    .poll_write(cx, &self.out[self.out_pos..]))?;
+
+            if written == 0 {
+                return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
+            }
+
+            self.out_pos += written;
+        }
+
+        Poll::Ready(Ok(()))
+    }
+
     /// Moves `wr_buf` into `out` as one PRELOGIN message of packets no
     /// larger than `PRELOGIN_PACKET_SIZE`.
     fn frame_pending(&mut self) {
@@ -225,17 +246,20 @@ impl<S> TlsPreloginWrapper<S> {
 ))]
 impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncRead for TlsPreloginWrapper<S> {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
+        let inner = self.get_mut();
+
+        // The answer can't come before the flight it answers is on the wire.
+        ready!(inner.poll_drain(cx))?;
+
         // Normal operation does not need any extra treatment, we handle packets
         // in the codec.
-        if !self.pending_handshake {
-            return Pin::new(&mut self.stream.as_mut().unwrap()).poll_read(cx, buf);
+        if !inner.pending_handshake {
+            return Pin::new(inner.stream.as_mut().unwrap()).poll_read(cx, buf);
         }
-
-        let inner = self.get_mut();
 
         if buf.is_empty() {
             return Poll::Ready(Ok(0));
@@ -310,7 +334,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for TlsPreloginWrapper
         // Normal operation does not need any extra treatment, we handle
         // packets in the codec.
         if !self.pending_handshake {
-            return Pin::new(&mut self.stream.as_mut().unwrap()).poll_write(cx, buf);
+            let inner = self.get_mut();
+            ready!(inner.poll_drain(cx))?;
+            return Pin::new(inner.stream.as_mut().unwrap()).poll_write(cx, buf);
         }
 
         // Framed on flush, which is where a TLS flight ends.
@@ -324,30 +350,35 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for TlsPreloginWrapper
 
         // Bytes written while a flight is partly on the wire become the next
         // message, never the tail of the current one.
-        while inner.out_pos < inner.out.len() || !inner.wr_buf.is_empty() {
-            if inner.out_pos == inner.out.len() {
-                inner.out.clear();
-                inner.out_pos = 0;
-                inner.frame_pending();
+        loop {
+            match inner.poll_drain(cx) {
+                Poll::Ready(result) => result?,
+                // OpenSSL fails the handshake on a flush that would block
+                // (rust-openssl sets no retry flag for BIO flush). Reporting
+                // it done is safe: `poll_read` sends the rest first.
+                Poll::Pending if inner.pending_handshake => return Poll::Ready(Ok(())),
+                Poll::Pending => return Poll::Pending,
             }
+
+            if inner.wr_buf.is_empty() {
+                break;
+            }
+
+            inner.out.clear();
+            inner.out_pos = 0;
+            inner.frame_pending();
 
             event!(
                 Level::TRACE,
                 "Writing {} bytes of pre-login packets",
-                inner.out.len() - inner.out_pos,
+                inner.out.len(),
             );
-
-            let written = ready!(Pin::new(inner.stream.as_mut().unwrap())
-                .poll_write(cx, &inner.out[inner.out_pos..]))?;
-
-            if written == 0 {
-                return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
-            }
-
-            inner.out_pos += written;
         }
 
-        Pin::new(&mut inner.stream.as_mut().unwrap()).poll_flush(cx)
+        match Pin::new(inner.stream.as_mut().unwrap()).poll_flush(cx) {
+            Poll::Pending if inner.pending_handshake => Poll::Ready(Ok(())),
+            flushed => flushed,
+        }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
@@ -450,12 +481,15 @@ mod tests {
         );
     }
 
+    /// Flushes until nothing is queued; mid-handshake, a flush that would
+    /// block reports done and leaves the rest queued.
     fn flush(w: &mut TlsPreloginWrapper<Choppy>) {
-        while Pin::new(&mut *w)
-            .poll_flush(&mut cx())
-            .map(Result::unwrap)
-            .is_pending()
-        {}
+        loop {
+            let flushed = Pin::new(&mut *w).poll_flush(&mut cx()).map(Result::unwrap);
+            if flushed.is_ready() && w.out_pos == w.out.len() && w.wr_buf.is_empty() {
+                return;
+            }
+        }
     }
 
     /// Splits wire bytes into messages, checking every packet header.
@@ -505,6 +539,22 @@ mod tests {
                 "len {len}"
             );
         }
+    }
+
+    #[test]
+    fn a_flush_that_would_block_mid_handshake_is_finished_by_the_next_read() {
+        let flight = pattern(100, 5);
+        let mut w = TlsPreloginWrapper::new(Choppy::new(7, Vec::new()));
+        write(&mut w, &flight);
+
+        // The first write is `Pending`; OpenSSL would fail the handshake if
+        // the flush were.
+        assert!(Pin::new(&mut w).poll_flush(&mut cx()).is_ready());
+        assert!(w.stream.as_ref().unwrap().written.is_empty());
+
+        let mut buf = [0u8; 16];
+        while Pin::new(&mut w).poll_read(&mut cx(), &mut buf).is_pending() {}
+        assert_eq!(messages(&w.stream.as_ref().unwrap().written), vec![flight]);
     }
 
     #[test]
