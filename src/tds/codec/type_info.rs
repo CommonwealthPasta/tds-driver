@@ -4,7 +4,7 @@ use bytes::BufMut;
 use crate::{tds::Collation, xml::XmlSchema, Error, SqlReadBytes};
 use std::{convert::TryFrom, sync::Arc};
 
-use super::Encode;
+use super::{put_b_varchar, put_us_varchar, Encode};
 
 /// A length of a column in bytes or characters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,30 +319,14 @@ impl Encode<BytesMut> for TypeInfo {
             TypeInfo::Udt(info) => {
                 dst.put_u8(VarLenType::Udt as u8);
                 dst.put_u16_le(info.max_byte_size);
-
-                let db_name: Vec<u16> = info.db_name.encode_utf16().collect();
-                dst.put_u8(db_name.len() as u8);
-                for chr in db_name {
-                    dst.put_u16_le(chr);
-                }
-
-                let schema_name: Vec<u16> = info.schema_name.encode_utf16().collect();
-                dst.put_u8(schema_name.len() as u8);
-                for chr in schema_name {
-                    dst.put_u16_le(chr);
-                }
-
-                let type_name: Vec<u16> = info.type_name.encode_utf16().collect();
-                dst.put_u8(type_name.len() as u8);
-                for chr in type_name {
-                    dst.put_u16_le(chr);
-                }
-
-                let aqn: Vec<u16> = info.assembly_qualified_name.encode_utf16().collect();
-                dst.put_u16_le(aqn.len() as u16);
-                for chr in aqn {
-                    dst.put_u16_le(chr);
-                }
+                put_b_varchar(dst, &info.db_name, "UDT database name")?;
+                put_b_varchar(dst, &info.schema_name, "UDT schema name")?;
+                put_b_varchar(dst, &info.type_name, "UDT name")?;
+                put_us_varchar(
+                    dst,
+                    &info.assembly_qualified_name,
+                    "UDT assembly-qualified name",
+                )?;
             }
         }
 
@@ -722,5 +706,33 @@ mod tests {
             .await
             .expect_err("scale > precision must error");
         assert!(matches!(err, Error::Protocol(_)));
+    }
+
+    #[test]
+    fn names_too_long_for_their_length_prefix_are_errors() {
+        // 256 wrapped a B_VARCHAR length to 0, 65,536 a US_VARCHAR's.
+        let (b, b_over) = ("a".repeat(255), "a".repeat(256));
+        let (us, us_over) = ("a".repeat(65_535), "a".repeat(65_536));
+        let udt = |db: &str, schema: &str, ty: &str, aqn: &str| {
+            TypeInfo::Udt(UdtInfo {
+                max_byte_size: 0xffff,
+                db_name: db.into(),
+                schema_name: schema.into(),
+                type_name: ty.into(),
+                assembly_qualified_name: aqn.into(),
+            })
+        };
+
+        for ti in [
+            udt(&b_over, "", "", ""),
+            udt("", &b_over, "", ""),
+            udt("", "", &b_over, ""),
+            udt("", "", "", &us_over),
+        ] {
+            let err = ti.encode(&mut BytesMut::new()).unwrap_err();
+            assert!(matches!(err, Error::Conversion(_)), "{err:?}");
+        }
+
+        udt(&b, &b, &b, &us).encode(&mut BytesMut::new()).unwrap();
     }
 }
