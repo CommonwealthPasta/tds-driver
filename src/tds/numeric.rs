@@ -134,16 +134,12 @@ impl Numeric {
                 9 => src.read_u64_le().await? as i128 * sign,
                 13 => {
                     let mut bytes = [0u8; 12]; //u96
-                    for item in &mut bytes {
-                        *item = src.read_u8().await?;
-                    }
+                    futures_util::io::AsyncReadExt::read_exact(src, &mut bytes).await?;
                     decode_d128(&bytes) as i128 * sign
                 }
                 17 => {
                     let mut bytes = [0u8; 16];
-                    for item in &mut bytes {
-                        *item = src.read_u8().await?;
-                    }
+                    futures_util::io::AsyncReadExt::read_exact(src, &mut bytes).await?;
                     let magnitude = decode_d128(&bytes);
                     // A legal `decimal(38, s)` magnitude is < 10^38 < i128::MAX,
                     // so any 16-byte magnitude that does not fit in i128 is
