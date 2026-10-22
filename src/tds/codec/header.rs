@@ -161,6 +161,15 @@ impl PacketHeader {
         self.ty
     }
 
+    // Only the TLS handshake reads it outside tests.
+    #[cfg_attr(
+        not(any(
+            feature = "rustls",
+            feature = "native-tls",
+            feature = "vendored-openssl"
+        )),
+        allow(dead_code)
+    )]
     pub fn length(&self) -> u16 {
         self.length
     }

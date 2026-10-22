@@ -20,13 +20,18 @@ impl Decoder for PacketCodec {
             return Ok(None);
         }
 
-        let header = PacketHeader::decode(&mut BytesMut::from(&src[0..HEADER_BYTES]))?;
-        let length = header.length() as usize;
+        let length = u16::from_be_bytes([src[2], src[3]]) as usize;
+
+        if length < HEADER_BYTES {
+            return Err(Error::Protocol("Invalid packet length".into()));
+        }
 
         if src.len() < length {
             src.reserve(length - src.len());
             return Ok(None);
         }
+
+        let header = PacketHeader::decode(src)?;
 
         event!(
             Level::TRACE,
@@ -34,12 +39,6 @@ impl Decoder for PacketCodec {
             header.r#type(),
             length,
         );
-
-        let header = PacketHeader::decode(src)?;
-
-        if length < HEADER_BYTES {
-            return Err(Error::Protocol("Invalid packet length".into()));
-        }
 
         let payload = src.split_to(length - HEADER_BYTES);
 
