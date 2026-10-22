@@ -130,9 +130,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
     /// Note: `tcp_stream` is a connected stream, so some parts of the
     /// [`Config`] need to be handled outside of this method.
     pub(crate) async fn connect(mut config: Config, tcp_stream: S) -> crate::Result<Connection<S>> {
+        // SqlClient takes a non-blank `ServerSPN` as is
+        // (SniProxy.GetSqlServerSPNs).
         let context = {
             let mut context = Context::new();
-            context.set_spn(config.get_host(), config.get_port());
+            match config.get_server_spn() {
+                Some(spn) => context.set_server_spn(spn),
+                None => context.set_spn(config.get_host(), config.get_port()),
+            }
             context
         };
 
@@ -187,6 +192,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
             .instance_name
             .clone()
             .filter(|_| config.port.is_none());
+
+        // Without a port the SQL Browser's answer went into the caller's
+        // stream, and the derived SPN was given the browser's own 1434.
+        if let (None, Some(instance)) = (config.get_server_spn(), &instance_name) {
+            connection.context.set_spn_instance(instance);
+        }
 
         let prelogin = connection
             .prelogin(config.encryption, fed_auth_required, instance_name)
@@ -636,12 +647,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         fed_auth_required: bool,
         instance_name: Option<String>,
     ) -> crate::Result<PreloginMessage> {
-        // Set only without a port: the SQL Browser's answer went into the
-        // caller's stream, and the SPN was given the browser's own 1434.
-        if let Some(instance) = &instance_name {
-            self.context.set_spn_instance(instance);
-        }
-
         let mut msg = PreloginMessage::new();
         msg.encryption = encryption;
         msg.fed_auth_required = fed_auth_required;

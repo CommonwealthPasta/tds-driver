@@ -352,6 +352,14 @@ mod tests {
     }
 
     #[test]
+    fn server_spn_parsing() -> crate::Result<()> {
+        let config =
+            crate::Config::from_jdbc_string("jdbc:sqlserver://h;serverSpn=MSSQLSvc/h:1433")?;
+        assert_eq!(config.server_spn.as_deref(), Some("MSSQLSvc/h:1433"));
+        Ok(())
+    }
+
+    #[test]
     fn database_parsing() -> crate::Result<()> {
         let test_str = "jdbc:sqlserver://myserver.com:4200;database=Foo";
         let jdbc: JdbcConfig = test_str.parse()?;

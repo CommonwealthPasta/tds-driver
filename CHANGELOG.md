@@ -35,6 +35,9 @@ that land will be documented here.
 - **`Config::connect_timeout`** carries `Connect Timeout` / `Connection Timeout`
   / `Timeout` (ADO.NET, 0 = none, default 15 s) and `loginTimeout` /
   `connectTimeout` (JDBC); wrap TCP connect and `Client::connect` in it.
+- **`Config::server_spn`** carries `Server SPN` / `ServerSPN` (ADO.NET) and
+  `serverSpn` (JDBC): integrated authentication uses a non-blank one as given,
+  as SqlClient does. With integrated security it was an error.
 
 ### Fixed
 

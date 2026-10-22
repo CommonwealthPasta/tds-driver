@@ -47,6 +47,7 @@ pub struct Config {
     pub(crate) client_name: Option<String>,
     pub(crate) multi_subnet_failover: bool,
     pub(crate) connect_timeout: Option<Duration>,
+    pub(crate) server_spn: Option<String>,
     #[cfg(any(
         feature = "rustls",
         feature = "native-tls",
@@ -153,6 +154,7 @@ impl Default for Config {
             client_name: None,
             multi_subnet_failover: false,
             connect_timeout: Some(DEFAULT_CONNECT_TIMEOUT),
+            server_spn: None,
             #[cfg(any(
                 feature = "rustls",
                 feature = "native-tls",
@@ -397,6 +399,23 @@ impl Config {
         self.connect_timeout = timeout;
     }
 
+    /// The service principal name integrated authentication asks a ticket
+    /// for, as given, like SqlClient's `Server SPN`. A blank one is ignored.
+    ///
+    /// - Defaults to `MSSQLSvc/<host>:<port>`, or `MSSQLSvc/<host>:<instance>`
+    ///   for a named instance without a port.
+    pub fn server_spn(&mut self, spn: impl ToString) {
+        self.server_spn = Some(spn.to_string());
+    }
+
+    /// The SPN set with [`server_spn`](Config::server_spn), unless blank:
+    /// SqlClient derives one for a null or white-space `ServerSPN`.
+    pub(crate) fn get_server_spn(&self) -> Option<&str> {
+        self.server_spn
+            .as_deref()
+            .filter(|spn| !spn.trim().is_empty())
+    }
+
     /// Supplies a client certificate and private key used to authenticate the
     /// client to the server during the TLS handshake (mutual TLS). This is
     /// required for TDS 8.0 "strict" connections that use client-certificate
@@ -563,6 +582,7 @@ impl Config {
     /// |`Multi Subnet Failover`, `MultiSubnetFailover`|`true`,`false`,`yes`,`no`|When enabled, connections are attempted in parallel to all IP addresses the server resolves to, and the first to succeed is used.|
     /// |`Connect Timeout`, `Connection Timeout`, `Timeout`|`<seconds>`|See [`Config::connect_timeout`].|
     /// |`Packet Size`|`512` to `32768`|See [`Config::packet_size`].|
+    /// |`Server SPN`, `ServerSPN`|`<string>`|See [`Config::server_spn`].|
     ///
     /// SqlClient's pooling, retry, `Command Timeout`, `Enlist` and similar
     /// keywords are accepted and ignored. Those this crate can't honour without
@@ -570,8 +590,7 @@ impl Config {
     /// `Failover Partner`, `Column Encryption Setting=Enabled`,
     /// `AttachDbFilename`, `Current Language`, `Server Certificate`,
     /// `User Instance=true`, `Replication=true`, Entra ID `Authentication`
-    /// values, `Network Library` other than `dbmssocn`, and `Server SPN` with
-    /// integrated security.
+    /// values and `Network Library` other than `dbmssocn`.
     ///
     /// [ADO.NET connection string]: https://docs.microsoft.com/en-us/dotnet/framework/data/adonet/connection-strings
     pub fn from_ado_string(s: &str) -> crate::Result<Self> {
@@ -658,6 +677,9 @@ impl Config {
             builder.packet_size(size);
         }
         builder.set_connect_timeout(s.connect_timeout()?);
+        if let Some(spn) = s.server_spn() {
+            builder.server_spn(spn);
+        }
 
         Ok(builder)
     }
@@ -801,6 +823,13 @@ impl ConfigBuilder {
     /// Sets the connect timeout; see [`Config::connect_timeout`].
     pub fn connect_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.inner.connect_timeout = timeout;
+        self
+    }
+
+    /// Sets the SPN for integrated authentication; see
+    /// [`Config::server_spn`].
+    pub fn server_spn(mut self, spn: impl ToString) -> Self {
+        self.inner.server_spn(spn);
         self
     }
 
@@ -980,6 +1009,11 @@ pub(crate) trait ConfigString {
             .map(|name| name.to_string())
     }
 
+    /// ADO.NET `Server SPN`, JDBC `serverSpn`.
+    fn server_spn(&self) -> Option<String> {
+        self.first(&["server spn", "serverspn"]).map(str::to_owned)
+    }
+
     #[cfg(any(
         feature = "rustls",
         feature = "native-tls",
@@ -1098,6 +1132,19 @@ mod tests {
         assert_eq!(config.get_packet_size(), None);
         config.packet_size(8192);
         assert_eq!(config.get_packet_size(), Some(8192));
+    }
+
+    #[test]
+    fn server_spn_setters() {
+        let mut config = Config::new();
+        assert_eq!(config.get_server_spn(), None);
+        config.server_spn("MSSQLSvc/a:1");
+        assert_eq!(config.get_server_spn(), Some("MSSQLSvc/a:1"));
+        config.server_spn("");
+        assert_eq!(config.get_server_spn(), None);
+
+        let config = Config::builder().server_spn("MSSQLSvc/b:2").build();
+        assert_eq!(config.get_server_spn(), Some("MSSQLSvc/b:2"));
     }
 
     #[test]

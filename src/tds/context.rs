@@ -84,6 +84,11 @@ impl Context {
         self.spn = Some(format!("MSSQLSvc/{}:{}", host.as_ref(), port));
     }
 
+    /// `Config::server_spn`, used as given.
+    pub fn set_server_spn(&mut self, spn: &str) {
+        self.spn = Some(spn.to_owned());
+    }
+
     /// Names `instance` instead of the port: SqlClient's SPN for a named
     /// instance whose port it doesn't know (`SniProxy.GetSqlServerSPNs`),
     /// which SQL Server registers alongside `MSSQLSvc/<host>:<port>`.

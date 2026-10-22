@@ -285,6 +285,52 @@ fn ntlm_challenge() -> Vec<u8> {
 #[cfg(all(windows, feature = "winauth"))]
 #[tokio::test]
 async fn spn_of_a_named_instance_without_a_port_names_the_instance() {
+    let mut config = Config::new();
+    config.host("127.0.0.1");
+    config.instance_name("INST");
+    config.encryption(EncryptionLevel::NotSupported);
+    config.authentication(AuthMethod::windows(r"DOMAIN\user", "pw"));
+
+    let has = ntlm_authenticate(config).await;
+    assert!(has("MSSQLSvc/127.0.0.1:INST"));
+    assert!(!has("MSSQLSvc/127.0.0.1:1434"));
+}
+
+/// A non-blank `Server SPN` (`serverSpn` in JDBC) is the SPN as given, as
+/// in SqlClient; it was an error with integrated security.
+#[cfg(all(windows, feature = "winauth"))]
+#[tokio::test]
+async fn server_spn_is_used_as_given() {
+    let spn = "MSSQLSvc/db.example.com:1433";
+    for s in [
+        format!(
+            r"Server=tcp:127.0.0.1\INST;Integrated Security=true;User ID=DOMAIN\user;Password=pw;Encrypt=DANGER_PLAINTEXT;Server SPN={spn}"
+        ),
+        format!(
+            r"Server=127.0.0.1\INST;Trusted_Connection=yes;UID=DOMAIN\user;PWD=pw;Encrypt=DANGER_PLAINTEXT;ServerSPN={spn}"
+        ),
+    ] {
+        let has = ntlm_authenticate(Config::from_ado_string(&s).unwrap()).await;
+        assert!(has(spn), "{s}");
+        assert!(!has("MSSQLSvc/127.0.0.1:INST"), "{s}");
+    }
+
+    let s = format!(
+        r"jdbc:sqlserver://127.0.0.1\INST;integratedSecurity=true;user=DOMAIN\user;password=pw;encrypt=DANGER_PLAINTEXT;serverSpn={spn}"
+    );
+    let has = ntlm_authenticate(Config::from_jdbc_string(&s).unwrap()).await;
+    assert!(has(spn));
+
+    // A blank one is no SPN, as SqlClient's IsNullOrWhiteSpace has it.
+    let s = r"Server=127.0.0.1\INST;Integrated Security=true;User ID=DOMAIN\user;Password=pw;Encrypt=DANGER_PLAINTEXT;Server SPN=' '";
+    let has = ntlm_authenticate(Config::from_ado_string(s).unwrap()).await;
+    assert!(has("MSSQLSvc/127.0.0.1:INST"));
+}
+
+/// Connects with `config` to a fake server that answers LOGIN7 with an NTLM
+/// challenge; tells whether the AUTHENTICATE message names an SPN.
+#[cfg(all(windows, feature = "winauth"))]
+async fn ntlm_authenticate(config: Config) -> impl Fn(&str) -> bool {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = tokio::spawn(async move {
@@ -297,17 +343,10 @@ async fn spn_of_a_named_instance_without_a_port_names_the_instance() {
         read_message_body(&mut s).await.unwrap().1
     });
 
-    let mut config = Config::new();
-    config.host("127.0.0.1");
-    config.instance_name("INST");
-    config.encryption(EncryptionLevel::NotSupported);
-    config.authentication(AuthMethod::windows(r"DOMAIN\user", "pw"));
     let tcp = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     let connect = Client::connect(config, tcp.compat_write());
     let _ = tokio::time::timeout(Duration::from_secs(10), connect).await;
 
     let authenticate = server.await.unwrap();
-    let has = |spn: &str| authenticate.windows(spn.len() * 2).any(|w| w == utf16(spn));
-    assert!(has("MSSQLSvc/127.0.0.1:INST"));
-    assert!(!has("MSSQLSvc/127.0.0.1:1434"));
+    move |spn: &str| authenticate.windows(spn.len() * 2).any(|w| w == utf16(spn))
 }

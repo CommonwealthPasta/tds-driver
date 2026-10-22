@@ -156,10 +156,6 @@ impl AdoNetConfig {
         if self.get("network library").is_some() && !is("network library", "dbmssocn") {
             return unsupported("a Network Library other than dbmssocn (TCP)");
         }
-        // The SPN is derived from the server name and port.
-        if self.get("server spn").is_some() && self.integrated_security()? {
-            return unsupported("Server SPN");
-        }
         Ok(())
     }
 }
@@ -1212,6 +1208,19 @@ mod tests {
     }
 
     #[test]
+    fn server_spn_and_its_synonym() {
+        for s in ["Server SPN=MSSQLSvc/h:1433", "serverspn = MSSQLSvc/h:1433 "] {
+            assert_eq!(config(s).server_spn.as_deref(), Some("MSSQLSvc/h:1433"));
+        }
+        assert_eq!(
+            config("ServerSPN=a;Server SPN=b").server_spn.as_deref(),
+            Some("b")
+        );
+        assert_eq!(config("Server SPN=' '").get_server_spn(), None);
+        assert_eq!(config("").server_spn, None);
+    }
+
+    #[test]
     fn known_keywords_that_would_change_the_connection_are_errors() {
         for s in [
             "MultipleActiveResultSets=true",
@@ -1231,7 +1240,6 @@ mod tests {
             "Authentication=Kerberos",
             "Network Library=dbnmpntw",
             "MultipleActiveResultSets=maybe",
-            "Integrated Security=true;Server SPN=MSSQLSvc/h:1433",
         ] {
             assert!(
                 matches!(
