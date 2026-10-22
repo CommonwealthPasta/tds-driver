@@ -126,6 +126,11 @@ impl<'a> Command<'a> {
     /// Binds a by-ref (OUT) scalar parameter. The returned value can be found by
     /// the same name in the [`CommandResult`] returned values.
     ///
+    /// The value is returned in the type `data` is sent as. A
+    /// [`Numeric`](crate::numeric::Numeric) sets the scale of the result (a
+    /// `None` gives scale 0): bind e.g. `Numeric::new_with_scale(0, 4)` for a
+    /// `decimal(10, 4)` parameter.
+    ///
     /// [`CommandResult`]: crate::CommandResult
     pub fn bind_out_param(&mut self, name: impl Into<Cow<'a, str>>, data: impl IntoSql<'a> + 'a) {
         self.params.push(CommandParam {

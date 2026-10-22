@@ -68,6 +68,8 @@ fn fits_nvarchar_4000(s: &str) -> bool {
     s.len() <= 4000 || (s.len() <= 12000 && s.encode_utf16().count() <= 4000)
 }
 
+const PLP_NULL: u64 = 0xffffffffffffffff;
+
 /// Number of days between `0001-01-01` (the `DateTime2`/`Date` epoch) and
 /// `1900-01-01` (the `datetime`/`Datetimen` epoch).
 #[cfg(feature = "tds73")]
@@ -891,9 +893,54 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
             (data, Some(TypeInfo::VarLenSized(vlc))) if vlc.r#type() == VarLenType::SSVariant => {
                 sql_variant::encode(&mut *dst, data)?;
             }
-            (_, None) => {
-                // None/null
-                dst.put_u8(FixedLenType::Null as u8);
+            // Typed NULLs: an OUT parameter may not be an untyped NULL (8015).
+            // Maximum precision and scale, so an OUT value loses nothing,
+            // except numeric's scale 0, SqlClient's default for a NULL decimal.
+            (ColumnData::String(None), None) => {
+                dst.put_u8(VarLenType::NVarchar as u8);
+                dst.put_u16_le(8000);
+                dst.extend_from_slice(&[0u8; 5]);
+                dst.put_u16_le(0xffff);
+            }
+            (ColumnData::Binary(None), None) => {
+                dst.put_u8(VarLenType::BigVarBin as u8);
+                dst.put_u16_le(8000);
+                dst.put_u16_le(0xffff);
+            }
+            (ColumnData::Numeric(None), None) => {
+                dst.extend_from_slice(&[
+                    VarLenType::Numericn as u8,
+                    17,
+                    NUMERIC_PARAM_PRECISION,
+                    0,
+                    0,
+                ]);
+            }
+            (ColumnData::Xml(None), None) => {
+                dst.extend_from_slice(&[VarLenType::Xml as u8, 0]);
+                dst.put_u64_le(PLP_NULL);
+            }
+            (ColumnData::DateTime(None), None) => {
+                dst.extend_from_slice(&[VarLenType::Datetimen as u8, 8, 0]);
+            }
+            (ColumnData::SmallDateTime(None), None) => {
+                dst.extend_from_slice(&[VarLenType::Datetimen as u8, 4, 0]);
+            }
+            #[cfg(feature = "tds73")]
+            (ColumnData::Date(None), None) => {
+                dst.extend_from_slice(&[VarLenType::Daten as u8, 0]);
+            }
+            #[cfg(feature = "tds73")]
+            (ColumnData::Time(None), None) => {
+                dst.extend_from_slice(&[VarLenType::Timen as u8, 7, 0]);
+            }
+            #[cfg(feature = "tds73")]
+            (ColumnData::DateTime2(None), None) => {
+                dst.extend_from_slice(&[VarLenType::Datetime2 as u8, 7, 0]);
+            }
+            #[cfg(feature = "tds73")]
+            (ColumnData::DateTimeOffset(None), None) => {
+                dst.extend_from_slice(&[VarLenType::DatetimeOffsetn as u8, 7, 0]);
             }
             (v, ref ti) => {
                 return Err(crate::Error::BulkInput(
@@ -998,6 +1045,57 @@ mod tests {
             ColumnData::String(Some("a".repeat(4001).into())).type_name(),
             "nvarchar(max)"
         );
+    }
+
+    /// Decodes what a parameter's `encode` wrote: TYPE_INFO, then the value.
+    async fn decode_rpc_param(buf: BytesMut) -> (TypeInfo, ColumnData<'static>) {
+        let reader = &mut buf.into_sql_read_bytes();
+        let ti = TypeInfo::decode(reader).await.unwrap();
+        let data = ColumnData::decode(reader, &ti).await.unwrap();
+        reader
+            .read_u8()
+            .await
+            .expect_err("decode must consume entire buffer");
+        (ti, data)
+    }
+
+    #[tokio::test]
+    async fn rpc_nulls_are_typed() {
+        let nulls = vec![
+            ColumnData::U8(None),
+            ColumnData::I16(None),
+            ColumnData::I32(None),
+            ColumnData::I64(None),
+            ColumnData::F32(None),
+            ColumnData::F64(None),
+            ColumnData::Bit(None),
+            ColumnData::String(None),
+            ColumnData::Guid(None),
+            ColumnData::Binary(None),
+            ColumnData::Numeric(None),
+            ColumnData::Xml(None),
+            ColumnData::DateTime(None),
+            ColumnData::SmallDateTime(None),
+            #[cfg(feature = "tds73")]
+            ColumnData::Time(None),
+            #[cfg(feature = "tds73")]
+            ColumnData::Date(None),
+            #[cfg(feature = "tds73")]
+            ColumnData::DateTime2(None),
+            #[cfg(feature = "tds73")]
+            ColumnData::DateTimeOffset(None),
+        ];
+
+        for null in nulls {
+            let mut buf = BytesMut::new();
+            null.clone()
+                .encode(&mut BytesMutWithTypeInfo::new(&mut buf))
+                .unwrap();
+            assert_ne!(buf[0], FixedLenType::Null as u8, "{null:?}");
+
+            let (_, decoded) = decode_rpc_param(buf).await;
+            assert_eq!(decoded, null);
+        }
     }
 
     #[test]

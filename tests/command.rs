@@ -416,3 +416,84 @@ where
 
     Ok(())
 }
+
+/// Runs `proc_` with `value` bound as its OUT parameter `@x`.
+async fn out_param<'a, S>(
+    conn: &mut tiberius::Client<S>,
+    proc_: &str,
+    value: impl tiberius::IntoSql<'a> + 'a,
+) -> Result<tiberius::CommandResult>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let mut cmd = Command::new(proc_.to_string());
+    cmd.bind_out_param("@x", value);
+    cmd.exec(conn).await?.into_command_result().await
+}
+
+#[test_on_runtimes]
+async fn out_params_round_trip_null<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    // (declaration, value the procedure sets)
+    let procs = [
+        ("nvarchar(50)", "replicate(N'q', 40)"),
+        ("decimal(10,4)", "12.3456"),
+        ("datetime2(7)", "'2024-01-02T03:04:05.1234567'"),
+        ("int", "-7"),
+        ("xml", "'<a>1</a>'"),
+    ];
+
+    let mut names = Vec::new();
+    for (decl, value) in procs {
+        let name = random_table().await;
+        conn.simple_query(format!(
+            "create or alter procedure {name} @x {decl} output as set @x = {value}"
+        ))
+        .await?;
+        names.push(name);
+    }
+
+    let q = "q".repeat(40);
+
+    for bound in [None, Some("a")] {
+        let res = out_param(&mut conn, &names[0], bound).await?;
+        assert_eq!(Some(q.as_str()), res.try_return_value::<&str>("@x")?);
+    }
+
+    // The scale of a bound Numeric sets the output's scale; NULL gives scale 0.
+    let res = out_param(&mut conn, &names[1], Numeric::new_with_scale(0, 4)).await?;
+    assert_eq!(
+        Some(Numeric::new_with_scale(123456, 4)),
+        res.try_return_value("@x")?
+    );
+    let res = out_param(&mut conn, &names[1], None::<Numeric>).await?;
+    assert_eq!(
+        Some(Numeric::new_with_scale(12, 0)),
+        res.try_return_value("@x")?
+    );
+
+    #[cfg(all(feature = "tds73", feature = "chrono"))]
+    {
+        let res = out_param(&mut conn, &names[2], None::<chrono::NaiveDateTime>).await?;
+        let expected = chrono::NaiveDate::from_ymd_opt(2024, 1, 2)
+            .unwrap()
+            .and_hms_nano_opt(3, 4, 5, 123_456_700)
+            .unwrap();
+        assert_eq!(Some(expected), res.try_return_value("@x")?);
+    }
+
+    let res = out_param(&mut conn, &names[3], None::<i32>).await?;
+    assert_eq!(Some(-7i32), res.try_return_value("@x")?);
+
+    let res = out_param(&mut conn, &names[4], None::<tiberius::xml::XmlData>).await?;
+    let xml: Option<&tiberius::xml::XmlData> = res.try_return_value("@x")?;
+    assert_eq!(Some("<a>1</a>"), xml.map(|x| x.as_ref()));
+
+    for name in names {
+        conn.simple_query(format!("drop procedure {name}")).await?;
+    }
+
+    Ok(())
+}
