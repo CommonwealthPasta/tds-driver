@@ -13,14 +13,14 @@ use uuid::Uuid;
 /// |`i16`|`smallint`|
 /// |`i32`|`int`|
 /// |`i64`|`bigint`|
-/// |`f32`|`float(24)`|
-/// |`f64`|`float(53)`|
+/// |`f32`|`float(24)`; `numeric`/`decimal`/`money`/`smallmoney`, rounded|
+/// |`f64`|`float(53)`; `numeric`/`decimal`/`money`/`smallmoney`, rounded|
 /// |`bool`|`bit`|
 /// |`String`/`&str`|`nvarchar`/`varchar`/`nchar`/`char`/`ntext`/`text`|
 /// |`Vec<u8>`/`&[u8]`|`binary`/`varbinary`/`image`|
 /// |[`Uuid`]|`uniqueidentifier`|
-/// |[`Numeric`]|`numeric`/`decimal`|
-/// |[`Decimal`] (with feature flag `rust_decimal`)|`numeric`/`decimal`|
+/// |[`Numeric`]|`numeric`/`decimal`/`money`/`smallmoney`|
+/// |[`Decimal`] (with feature flag `rust_decimal`)|`numeric`/`decimal`/`money`/`smallmoney`|
 /// |[`XmlData`]|`xml`|
 /// |[`NaiveDateTime`] (with feature flag `chrono`)|`datetime`/`datetime2`/`smalldatetime`|
 /// |[`NaiveDate`] (with feature flag `chrono`)|`date`|
@@ -62,8 +62,9 @@ from_sql!(u8: ColumnData::U8(val) => (*val, val), ColumnData::I32(None) => (None
 from_sql!(i16: ColumnData::I16(val) => (*val, val), ColumnData::U8(None) => (None, None), ColumnData::I32(None) => (None, None));
 from_sql!(i32: ColumnData::I32(val) => (*val, val), ColumnData::I16(val) => (val.map(i32::from), val.map(i32::from)), ColumnData::U8(None) => (None, None));
 from_sql!(i64: ColumnData::I64(val) => (*val, val), ColumnData::U8(None) => (None, None), ColumnData::I32(None) => (None, None));
-from_sql!(f32: ColumnData::F32(val) => (*val, val));
-from_sql!(f64: ColumnData::F64(val) => (*val, val));
+// Numeric: money/smallmoney decode exactly to it, and used to decode to f64.
+from_sql!(f32: ColumnData::F32(val) => (*val, val), ColumnData::Numeric(n) => (n.map(Numeric::to_f32), n.map(Numeric::to_f32)));
+from_sql!(f64: ColumnData::F64(val) => (*val, val), ColumnData::Numeric(n) => (n.map(Numeric::to_f64), n.map(Numeric::to_f64)));
 from_sql!(Uuid: ColumnData::Guid(val) => (*val, val));
 from_sql!(Numeric: ColumnData::Numeric(n) => (*n, n));
 
@@ -193,6 +194,19 @@ mod tests {
 
         let f64_data = ColumnData::F64(Some(2.5));
         assert_eq!(Some(2.5f64), f64::from_sql(&f64_data).unwrap());
+    }
+
+    #[test]
+    fn floats_from_numeric() {
+        let money = ColumnData::Numeric(Some(Numeric::new_with_scale(12300, 4)));
+        assert_eq!(Some(1.23f64), f64::from_sql(&money).unwrap());
+        assert_eq!(Some(1.23f32), f32::from_sql(&money).unwrap());
+        assert_eq!(Some(1.23f64), f64::from_sql_owned(money.clone()).unwrap());
+        assert_eq!(Some(1.23f32), f32::from_sql_owned(money).unwrap());
+
+        let null = ColumnData::Numeric(None);
+        assert_eq!(None, f64::from_sql(&null).unwrap());
+        assert_eq!(None, f32::from_sql_owned(null).unwrap());
     }
 
     #[test]

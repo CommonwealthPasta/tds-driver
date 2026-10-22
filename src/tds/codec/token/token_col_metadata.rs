@@ -187,10 +187,10 @@ impl BaseMetaDataColumn {
                 FixedLenType::Int4 => ColumnData::I32(None),
                 FixedLenType::Datetime4 => ColumnData::SmallDateTime(None),
                 FixedLenType::Float4 => ColumnData::F32(None),
-                FixedLenType::Money => ColumnData::F64(None),
+                FixedLenType::Money => ColumnData::Numeric(None),
                 FixedLenType::Datetime => ColumnData::DateTime(None),
                 FixedLenType::Float8 => ColumnData::F64(None),
-                FixedLenType::Money4 => ColumnData::F32(None),
+                FixedLenType::Money4 => ColumnData::Numeric(None),
                 FixedLenType::Int8 => ColumnData::I64(None),
             },
             TypeInfo::VarLenSized(cx) => match cx.r#type() {
@@ -208,7 +208,7 @@ impl BaseMetaDataColumn {
                     4 => ColumnData::F32(None),
                     _ => ColumnData::F64(None),
                 },
-                VarLenType::Money => ColumnData::F64(None),
+                VarLenType::Money => ColumnData::Numeric(None),
                 VarLenType::Datetimen => ColumnData::DateTime(None),
                 #[cfg(feature = "tds73")]
                 VarLenType::Daten => ColumnData::Date(None),
@@ -244,7 +244,7 @@ impl BaseMetaDataColumn {
                 VarLenType::Decimaln => ColumnData::Numeric(None),
                 VarLenType::Numericn => ColumnData::Numeric(None),
                 VarLenType::Floatn => ColumnData::F32(None),
-                VarLenType::Money => ColumnData::F64(None),
+                VarLenType::Money => ColumnData::Numeric(None),
                 VarLenType::Datetimen => ColumnData::DateTime(None),
                 #[cfg(feature = "tds73")]
                 VarLenType::Daten => ColumnData::Date(None),
@@ -930,10 +930,10 @@ mod tests {
             (Int4, ColumnData::I32(None)),
             (Datetime4, ColumnData::SmallDateTime(None)),
             (Float4, ColumnData::F32(None)),
-            (Money, ColumnData::F64(None)),
+            (Money, ColumnData::Numeric(None)),
             (Datetime, ColumnData::DateTime(None)),
             (Float8, ColumnData::F64(None)),
-            (Money4, ColumnData::F32(None)),
+            (Money4, ColumnData::Numeric(None)),
             (Int8, ColumnData::I64(None)),
         ];
 
@@ -961,7 +961,8 @@ mod tests {
         assert_eq!(vsize_null(Bitn, 1), ColumnData::Bit(None));
         assert_eq!(vsize_null(Decimaln, 17), ColumnData::Numeric(None));
         assert_eq!(vsize_null(Numericn, 17), ColumnData::Numeric(None));
-        assert_eq!(vsize_null(Money, 8), ColumnData::F64(None));
+        assert_eq!(vsize_null(Money, 4), ColumnData::Numeric(None));
+        assert_eq!(vsize_null(Money, 8), ColumnData::Numeric(None));
         assert_eq!(vsize_null(Datetimen, 8), ColumnData::DateTime(None));
         assert_eq!(vsize_null(BigVarBin, 100), ColumnData::Binary(None));
         assert_eq!(vsize_null(BigVarChar, 100), ColumnData::String(None));
@@ -1012,7 +1013,7 @@ mod tests {
         assert_eq!(vprec_null(Decimaln), ColumnData::Numeric(None));
         assert_eq!(vprec_null(Numericn), ColumnData::Numeric(None));
         assert_eq!(vprec_null(Floatn), ColumnData::F32(None));
-        assert_eq!(vprec_null(Money), ColumnData::F64(None));
+        assert_eq!(vprec_null(Money), ColumnData::Numeric(None));
         assert_eq!(vprec_null(Datetimen), ColumnData::DateTime(None));
         assert_eq!(vprec_null(BigVarBin), ColumnData::Binary(None));
         assert_eq!(vprec_null(BigVarChar), ColumnData::String(None));

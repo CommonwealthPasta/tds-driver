@@ -162,6 +162,40 @@ impl Numeric {
             Ok(Some(Numeric::new_with_scale(value, scale)))
         }
     }
+
+    /// The nearest `f64`. Exact operands make one division correctly rounded;
+    /// otherwise the decimal string is, by `str::parse`.
+    pub(crate) fn to_f64(self) -> f64 {
+        const POW10: [f64; 23] = [
+            1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
+            1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
+        ];
+
+        match POW10.get(self.scale as usize) {
+            Some(pow) if self.value.unsigned_abs() < 1 << f64::MANTISSA_DIGITS => {
+                self.value as f64 / pow
+            }
+            _ => self
+                .to_string()
+                .parse()
+                .expect("Display is a float literal"),
+        }
+    }
+
+    /// The nearest `f32`, as [`Numeric::to_f64`].
+    pub(crate) fn to_f32(self) -> f32 {
+        const POW10: [f32; 11] = [1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10];
+
+        match POW10.get(self.scale as usize) {
+            Some(pow) if self.value.unsigned_abs() < 1 << f32::MANTISSA_DIGITS => {
+                self.value as f32 / pow
+            }
+            _ => self
+                .to_string()
+                .parse()
+                .expect("Display is a float literal"),
+        }
+    }
 }
 
 impl Encode<BytesMut> for Numeric {
@@ -215,7 +249,7 @@ impl Eq for Numeric {}
 
 impl From<Numeric> for f64 {
     fn from(n: Numeric) -> f64 {
-        n.dec_part() as f64 / n.pow_scale() as f64 + n.int_part() as f64
+        n.to_f64()
     }
 }
 
@@ -580,6 +614,24 @@ mod tests {
         let n = Numeric::new_with_scale(5, 2);
         assert_eq!(n.int_part(), 0);
         assert_eq!(n.precision(), 3);
+    }
+
+    #[test]
+    fn to_float_is_correctly_rounded() {
+        let money_max = Numeric::new_with_scale(i64::MAX as i128, 4);
+        let nearest: f64 = "922337203685477.5807".parse().unwrap();
+        assert_eq!(money_max.to_f64(), nearest);
+        assert_eq!(f64::from(money_max), nearest);
+        assert_eq!(Numeric::new_with_scale(12300, 4).to_f64(), 1.23);
+        assert_eq!(Numeric::new_with_scale(-233, 2).to_f64(), -2.33);
+        let tiny = Numeric::new_with_scale(123, 38);
+        assert_eq!(tiny.to_f64(), 1.23e-36);
+
+        assert_eq!(Numeric::new_with_scale(23300, 4).to_f32(), 2.33f32);
+        assert_eq!(
+            money_max.to_f32(),
+            "922337203685477.5807".parse::<f32>().unwrap()
+        );
     }
 
     #[cfg(all(feature = "rust_decimal", feature = "tds73"))]

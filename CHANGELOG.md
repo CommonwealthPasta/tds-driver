@@ -94,6 +94,10 @@ that land will be documented here.
   `CommandItem::as_return_status() -> Option<i32>`,
   `CommandResult::return_code() -> i32`. `RETURN -1` used to come back as
   4294967295.
+- **`money`/`smallmoney` decode to an exact scale-4 `ColumnData::Numeric`
+  instead of a lossy `F64`** (`922337203685477.5807` and `.5806` both read as
+  `…477.6`); `f64`/`f32` `FromSql` now accept `Numeric`, so `row.get::<f64,
+  _>()` keeps working.
 
 ## [0.13.1] - 2026-08-30
 

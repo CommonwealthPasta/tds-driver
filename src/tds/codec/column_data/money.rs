@@ -1,4 +1,4 @@
-use crate::{error::Error, sql_read_bytes::SqlReadBytes, ColumnData};
+use crate::{error::Error, sql_read_bytes::SqlReadBytes, tds::Numeric, ColumnData};
 use bytes::BufMut;
 
 /// Encode an `f64` as a money/smallmoney value into `dst`, prefixed with a
@@ -22,19 +22,22 @@ where
     }
 }
 
+/// Decodes to an exact scale-4 [`Numeric`], as SqlClient decodes to `decimal`;
+/// an `f64` can't hold money's 19 digits.
 pub(crate) async fn decode<R>(src: &mut R, len: u8) -> crate::Result<ColumnData<'static>>
 where
     R: SqlReadBytes + Unpin,
 {
-    let res = match len {
-        0 => ColumnData::F64(None),
-        4 => ColumnData::F64(Some(src.read_i32_le().await? as f64 / 1e4)),
-        8 => ColumnData::F64(Some({
+    let scaled = match len {
+        0 => return Ok(ColumnData::Numeric(None)),
+        4 => src.read_i32_le().await? as i64,
+        8 => {
+            // Two 32-bit words, high word first.
             let high = src.read_i32_le().await? as i64;
-            let low = src.read_u32_le().await? as f64;
+            let low = src.read_u32_le().await? as i64;
 
-            ((high << 32) as f64 + low) / 1e4
-        })),
+            (high << 32) | low
+        }
         _ => {
             return Err(Error::Protocol(
                 format!("money: length of {} is invalid", len).into(),
@@ -42,7 +45,10 @@ where
         }
     };
 
-    Ok(res)
+    Ok(ColumnData::Numeric(Some(Numeric::new_with_scale(
+        scaled as i128,
+        4,
+    ))))
 }
 
 #[cfg(test)]
@@ -51,38 +57,45 @@ mod tests {
     use crate::sql_read_bytes::test_utils::IntoSqlReadBytes;
     use bytes::{BufMut, BytesMut};
 
-    // `smallmoney` (len 4) is a single scaled `i32` divided by 1e4. Uses a value
-    // that is not a boundary: kills "delete match arm 4" (would fall through to
-    // the error arm) and "replace `/` with `%`/`*`" (12345/1e4 = 1.2345, whereas
-    // 12345 % 1e4 = 2345.0 and 12345 * 1e4 = 1.2345e8).
+    async fn decode_scaled(len: u8, wire: &[u8]) -> ColumnData<'static> {
+        let buf = BytesMut::from(wire);
+        decode(&mut buf.into_sql_read_bytes(), len).await.unwrap()
+    }
+
+    fn money(scaled: i64) -> ColumnData<'static> {
+        ColumnData::Numeric(Some(Numeric::new_with_scale(scaled as i128, 4)))
+    }
+
     #[tokio::test]
     async fn decode_smallmoney_arm() {
-        let mut buf = BytesMut::new();
-        buf.put_i32_le(12345);
-
-        let data = decode(&mut buf.into_sql_read_bytes(), 4).await.unwrap();
-        match data {
-            ColumnData::F64(Some(v)) => assert!((v - 1.2345).abs() < 1e-9, "v={}", v),
-            other => panic!("expected F64, got {:?}", other),
+        for v in [12345, i32::MIN, i32::MAX, -1] {
+            assert_eq!(decode_scaled(4, &v.to_le_bytes()).await, money(v as i64));
         }
     }
 
-    // `money` (len 8) is two 32-bit words: `((high << 32) + low) / 1e4`.
-    // high = 1, low = 30000 gives ((1 << 32) + 30000) / 1e4 = 429499.7296.
-    // Kills: "delete match arm 8" (error fallthrough); "replace `<<` with `>>`"
-    // (1 >> 32 = 0 => 3.0); "replace `+` with `-`/`*`" (subtraction/mult differ);
-    // and "replace outer `/` with `%`/`*`" (4294997296 % 1e4 = 7296.0).
+    // Two 32-bit words, high word first; f64 rounded the low digits away.
     #[tokio::test]
-    async fn decode_money_arm() {
-        let mut buf = BytesMut::new();
-        buf.put_i32_le(1); // high word
-        buf.put_u32_le(30000); // low word
-
-        let data = decode(&mut buf.into_sql_read_bytes(), 8).await.unwrap();
-        match data {
-            ColumnData::F64(Some(v)) => assert!((v - 429499.7296).abs() < 1e-6, "v={}", v),
-            other => panic!("expected F64, got {:?}", other),
+    async fn decode_money_arm_is_exact() {
+        for v in [
+            (1i64 << 32) + 30000,
+            i64::MAX,
+            i64::MAX - 1,
+            i64::MIN,
+            -1,
+            -(1i64 << 32),
+        ] {
+            let mut wire = ((v >> 32) as i32).to_le_bytes().to_vec();
+            wire.extend_from_slice(&(v as u32).to_le_bytes());
+            assert_eq!(decode_scaled(8, &wire).await, money(v), "{v}");
         }
+
+        let max = decode_scaled(8, &[0xff, 0xff, 0xff, 0x7f, 0xff, 0xff, 0xff, 0xff]).await;
+        assert_eq!(format!("{max:?}"), "Numeric(Some(922337203685477.5807))");
+    }
+
+    #[tokio::test]
+    async fn decode_null() {
+        assert_eq!(decode_scaled(0, &[]).await, ColumnData::Numeric(None));
     }
 
     // Reverses the on-wire money representation the same way `decode` does,

@@ -6,7 +6,7 @@ use std::env;
 use std::sync::Once;
 
 use runtimes_macro::test_on_runtimes;
-use tiberius::{Result, Row};
+use tiberius::{numeric::Numeric, Result, Row};
 
 // This is used in the testing macro :)
 #[allow(dead_code)]
@@ -71,6 +71,47 @@ where
 
     let r = rows(&mut conn, "SELECT 42").await?;
     assert_eq!(r[0].get::<i32, _>(0), Some(42));
+
+    Ok(())
+}
+
+#[test_on_runtimes]
+async fn money_decodes_exactly<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let r = rows(
+        &mut conn,
+        "SELECT CAST(922337203685477.5807 AS money), CAST(922337203685477.5806 AS money), \
+         CAST(-922337203685477.5808 AS money), CAST(214748.3647 AS smallmoney), \
+         CAST(-214748.3648 AS smallmoney), CAST(1.23 AS money), CAST(2.33 AS smallmoney)",
+    )
+    .await?;
+    let r = &r[0];
+
+    let n = |i: usize| r.get::<Numeric, _>(i).unwrap().to_string();
+    assert_eq!(n(0), "922337203685477.5807");
+    assert_eq!(n(1), "922337203685477.5806");
+    assert_eq!(n(2), "-922337203685477.5808");
+    assert_eq!(n(3), "214748.3647");
+    assert_eq!(n(4), "-214748.3648");
+
+    // Existing f64 reads keep working.
+    assert_eq!(r.get::<f64, _>(5), Some(1.23));
+    assert_eq!(r.get::<f64, _>(6), Some(2.33));
+
+    #[cfg(feature = "rust_decimal")]
+    assert_eq!(
+        r.get::<rust_decimal::Decimal, _>(0).unwrap().to_string(),
+        "922337203685477.5807"
+    );
+    #[cfg(feature = "bigdecimal")]
+    assert_eq!(
+        r.get::<tiberius::numeric::BigDecimal, _>(2)
+            .unwrap()
+            .to_string(),
+        "-922337203685477.5808"
+    );
 
     Ok(())
 }
