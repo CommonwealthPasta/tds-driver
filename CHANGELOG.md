@@ -115,6 +115,8 @@ that land will be documented here.
   quote, non-ASCII values are accepted, whitespace (TAB, CR, LF) before a key is
   skipped instead of making it a different key, and `Encrypt` accepts
   `Mandatory`/`Optional`.
+- **`TrustServerCertificate=true` with `TrustServerCertificateCA`** returns an
+  error from `from_ado_string`/`from_jdbc_string` instead of panicking.
 
 ### Changed
 

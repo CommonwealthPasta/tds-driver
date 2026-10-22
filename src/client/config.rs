@@ -528,12 +528,16 @@ impl Config {
             builder.application_name(name);
         }
 
-        if s.trust_cert()? {
-            builder.trust_cert();
-        }
-
-        if let Some(ca) = s.trust_cert_ca() {
-            builder.trust_cert_ca(ca);
+        match (s.trust_cert()?, s.trust_cert_ca()) {
+            (true, Some(_)) => {
+                return Err(crate::Error::Conversion(
+                    "Connection string: TrustServerCertificate=true and TrustServerCertificateCA are mutually exclusive"
+                        .into(),
+                ))
+            }
+            (true, None) => builder.trust_cert(),
+            (false, Some(ca)) => builder.trust_cert_ca(ca),
+            (false, None) => (),
         }
 
         if let Some(hostname_in_cert) = s.hostname_in_certificate() {
@@ -1226,5 +1230,18 @@ mod tests {
             }
             other => panic!("expected Windows auth, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn trust_cert_with_trust_cert_ca_is_an_error_not_a_panic() {
+        let res = Config::from_ado_string(
+            "server=tcp:h,1433;TrustServerCertificate=true;TrustServerCertificateCA=ca.pem",
+        );
+        assert!(matches!(res, Err(crate::Error::Conversion(_))));
+
+        let res = Config::from_jdbc_string(
+            "jdbc:sqlserver://h:1433;trustServerCertificate=true;TrustServerCertificateCA=ca.pem",
+        );
+        assert!(matches!(res, Err(crate::Error::Conversion(_))));
     }
 }
