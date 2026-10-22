@@ -163,6 +163,9 @@ that land will be documented here.
   8001).
 - **`INSERT BULK` column names are quoted with `]` doubled** (a column named
   `we]ird` broke the statement).
+- **Bulk/TVP `datetime2` into `datetime` rounds to 1/300 s** as `CAST` does,
+  instead of truncating, and accepts dates from 1753-01-01 rather than
+  1900-01-01.
 
 ### Changed
 

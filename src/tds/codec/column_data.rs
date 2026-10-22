@@ -139,6 +139,13 @@ fn put_varbinary_max(dst: &mut BytesMut, bytes: Option<&[u8]>) {
 #[cfg(feature = "tds73")]
 const DAYS_YEAR_1_TO_1900: u32 = 693_595;
 
+/// Time of day unit for converting between `datetime` (1/300 s),
+/// `smalldatetime` (minutes) and `datetime2` (10^-7 s) without rounding twice.
+#[cfg(feature = "tds73")]
+const UNITS_PER_SECOND: u64 = 3_000_000_000;
+#[cfg(feature = "tds73")]
+const UNITS_PER_DAY: u64 = 86_400 * UNITS_PER_SECOND;
+
 fn not_null_error() -> crate::Error {
     crate::Error::BulkInput("NULL for a NOT NULL column".into())
 }
@@ -243,39 +250,34 @@ fn float_bytes(value: f64, width: usize) -> crate::Result<[u8; 8]> {
     Ok(bytes)
 }
 
-/// Converts a [`DateTime2`] value into the legacy `datetime` ([`DateTime`])
-/// wire representation.
-///
-/// This is used when bulk-inserting a `DateTime2`/`Date` value into a column
-/// whose server-side type is `datetime` (`Datetimen`). The `datetime` type
-/// counts days from `1900-01-01` and stores the time of day as 1/300-second
-/// fragments, so the sub-second precision of the source value is degraded to
-/// match. Returns a [`Conversion`] error if the date is earlier than
-/// `1900-01-01`, which `datetime` cannot represent.
-///
-/// [`Conversion`]: crate::Error::Conversion
+/// Rounds half up to 1/300 s, carrying into the next day.
 #[cfg(feature = "tds73")]
-fn datetime2_to_datetime(dt2: &DateTime2) -> crate::Result<DateTime> {
-    let dt2_days = dt2.date().days();
+fn to_datetime(days: i64, units: u64) -> crate::Result<DateTime> {
+    const PER_FRAGMENT: u64 = UNITS_PER_SECOND / 300;
+    const FRAGMENTS_PER_DAY: u64 = UNITS_PER_DAY / PER_FRAGMENT;
 
-    let days = dt2_days.checked_sub(DAYS_YEAR_1_TO_1900).ok_or_else(|| {
-        crate::Error::Conversion(
-            format!(
-                "invalid datetime, expecting a date not earlier than 1900-01-01 but got {} days after year 1",
-                dt2_days
-            )
-            .into(),
-        )
-    })? as i32;
+    let fragments = (units + PER_FRAGMENT / 2) / PER_FRAGMENT;
+    let days = days + (fragments / FRAGMENTS_PER_DAY) as i64;
 
-    // `increments` are counted in 10^-scale seconds; convert to nanoseconds and
-    // then to the 1/300-second fragments used by `datetime`, degrading the
-    // sub-second precision in the process.
-    let time = dt2.time();
-    let nanos = time.increments() as u128 * 10u128.pow(9 - time.scale() as u32);
-    let seconds_fragments = (nanos * 300 / 1_000_000_000) as u32;
+    // 1753-01-01 ..= 9999-12-31
+    if !(-53_690..=2_958_463).contains(&days) {
+        return Err(crate::Error::Conversion(
+            "value is outside the datetime range of 1753-01-01 to 9999-12-31".into(),
+        ));
+    }
 
-    Ok(DateTime::new(days, seconds_fragments))
+    Ok(DateTime::new(
+        days as i32,
+        (fragments % FRAGMENTS_PER_DAY) as u32,
+    ))
+}
+
+#[cfg(feature = "tds73")]
+fn datetime2_parts(dt2: DateTime2) -> crate::Result<(i64, u64)> {
+    let time = rescale_time(dt2.time(), 7)?;
+    let days = i64::from(dt2.date().days()) - i64::from(DAYS_YEAR_1_TO_1900);
+
+    Ok((days, time.increments() * (UNITS_PER_SECOND / 10_000_000)))
 }
 
 /// Puts `time` at the column's scale. Dropped digits are truncated, as
@@ -858,7 +860,8 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                 if vlc.r#type() == VarLenType::Datetimen =>
             {
                 if let Some(dt2) = opt {
-                    let dt = datetime2_to_datetime(&dt2)?;
+                    let (days, units) = datetime2_parts(dt2)?;
+                    let dt = to_datetime(days, units)?;
                     dst.put_u8(8);
                     dt.encode(dst)?;
                 } else {
@@ -1999,31 +2002,6 @@ mod tests {
         assert_eq!(value.into_sql(), ColumnData::F64(Some(1.5)));
     }
 
-    #[cfg(feature = "tds73")]
-    #[test]
-    fn datetime2_to_datetime_conversion() {
-        use crate::tds::time::{Date, DateTime2, Time};
-
-        // 2020-01-01 00:00:00 with scale 7 (100ns increments).
-        // Days from year 1 to 2020-01-01 is 737_425.
-        let dt2 = DateTime2::new(Date::new(737_425), Time::new(0, 7));
-        let dt = datetime2_to_datetime(&dt2).expect("conversion must succeed");
-
-        assert_eq!(dt.days(), (737_425 - DAYS_YEAR_1_TO_1900) as i32);
-        assert_eq!(dt.seconds_fragments(), 0);
-
-        // 12:00:00 exactly => half a day of 1/300s fragments.
-        let noon_increments = 12u64 * 3600 * 10u64.pow(7);
-        let dt2 = DateTime2::new(Date::new(737_425), Time::new(noon_increments, 7));
-        let dt = datetime2_to_datetime(&dt2).expect("conversion must succeed");
-
-        assert_eq!(dt.seconds_fragments(), 12 * 3600 * 300);
-
-        // Dates earlier than 1900-01-01 cannot be represented by `datetime`.
-        let dt2 = DateTime2::new(Date::new(0), Time::new(0, 7));
-        assert!(datetime2_to_datetime(&dt2).is_err());
-    }
-
     // ----- helpers for the coverage tests below -----
 
     fn encode_with_ti(ti: &TypeInfo, d: ColumnData<'_>) -> crate::Result<BytesMut> {
@@ -2436,6 +2414,40 @@ mod tests {
         let ti = TypeInfo::FixedLen(FixedLenType::Int4);
         let err = encode_with_ti(&ti, ColumnData::I32(None)).unwrap_err();
         assert!(matches!(err, Error::BulkInput(_)), "got {err:?}");
+    }
+
+    /// `hh:mm:ss` plus 10^-7 s increments on 2024-05-06.
+    #[cfg(feature = "tds73")]
+    fn dt2(h: u64, m: u64, s: u64, increments: u64) -> ColumnData<'static> {
+        let time = ((h * 60 + m) * 60 + s) * 10_000_000 + increments;
+        ColumnData::DateTime2(Some(DateTime2::new(Date::new(739_011), Time::new(time, 7))))
+    }
+
+    #[cfg(feature = "tds73")]
+    async fn as_datetime(ti: &TypeInfo, value: ColumnData<'static>) -> ColumnData<'static> {
+        decode_with(ti, encode_with_ti(ti, value).unwrap()).await
+    }
+
+    #[cfg(feature = "tds73")]
+    #[tokio::test]
+    async fn bulk_datetime2_into_datetime_rounds_like_cast() {
+        let ti = TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Datetimen, 8, None));
+        let day = 739_011 - DAYS_YEAR_1_TO_1900 as i32;
+
+        // CAST(datetime2 AS datetime) on SQL Server 2022: .1234567 -> .123,
+        // .9983333 -> .997, .9983334 -> next day.
+        assert_eq!(
+            as_datetime(&ti, dt2(13, 14, 15, 1_234_567)).await,
+            ColumnData::DateTime(Some(DateTime::new(day, 47_655 * 300 + 37)))
+        );
+        assert_eq!(
+            as_datetime(&ti, dt2(23, 59, 59, 9_983_333)).await,
+            ColumnData::DateTime(Some(DateTime::new(day, 86_400 * 300 - 1)))
+        );
+        assert_eq!(
+            as_datetime(&ti, dt2(23, 59, 59, 9_983_334)).await,
+            ColumnData::DateTime(Some(DateTime::new(day + 1, 0)))
+        );
     }
 
     #[cfg(feature = "tds73")]

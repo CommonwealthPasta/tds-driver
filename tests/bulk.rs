@@ -927,3 +927,37 @@ where
     )
     .await
 }
+
+#[cfg(all(feature = "tds73", feature = "chrono"))]
+#[test_on_runtimes]
+async fn bulk_load_datetime_from_datetime2<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let rb = "CONVERT(varchar(40), v, 121)";
+    let early = chrono::NaiveDate::from_ymd_opt(1800, 1, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+
+    assert_bulk(
+        &mut conn,
+        vec![
+            // Rounded to 1/300 s as CAST(datetime2 AS datetime) rounds.
+            (
+                "DATETIME",
+                ndt(23, 59, 59, 999_000_000).into_sql(),
+                rb,
+                "2024-05-07 00:00:00.000",
+            ),
+            (
+                "DATETIME",
+                ndt(13, 14, 15, 1_900_000).into_sql(),
+                rb,
+                "2024-05-06 13:14:15.003",
+            ),
+            ("DATETIME", early.into_sql(), rb, "1800-01-01 00:00:00.000"),
+        ],
+    )
+    .await
+}
