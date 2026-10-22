@@ -31,21 +31,7 @@ use crate::{
     ColumnData, FixedLenType, VarLenType,
 };
 
-/// Reads exactly `len` raw bytes from the stream.
-///
-/// Uses the packet-aware `read_u8` (a `sql_variant` value can span TDS packet
-/// boundaries; `AsyncReadExt::read_exact` would treat a boundary as EOF). `len`
-/// is bounded by the caller to `MAX_VARIANT_PAYLOAD`.
-async fn read_bytes<R>(src: &mut R, len: usize) -> crate::Result<Vec<u8>>
-where
-    R: SqlReadBytes + Unpin,
-{
-    let mut buf = Vec::with_capacity(len);
-    for _ in 0..len {
-        buf.push(src.read_u8().await?);
-    }
-    Ok(buf)
-}
+use super::plp::read_bytes;
 
 pub(crate) async fn decode<R>(src: &mut R) -> crate::Result<ColumnData<'static>>
 where
