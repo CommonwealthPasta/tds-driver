@@ -62,6 +62,10 @@ that land will be documented here.
   `rows_affected()`.
 - **`into_command_result` keeps empty result sets.** An empty result set after
   the first vanished and shifted later ones down an index.
+- **Later server errors and info messages are no longer dropped.**
+  `Error::Server` still carries the first error; `TokenError::other_errors` and
+  `TokenError::info_messages` (new) return the rest of the response's ERROR and
+  INFO tokens.
 
 ### Changed
 

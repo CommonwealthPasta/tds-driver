@@ -312,7 +312,10 @@ implement their manager trait with the `connect`/`is_valid` logic above.
 
 All fallible calls return `tiberius::Result<T>` (`Err` is [`tiberius::error::Error`]).
 Server-side errors surface as `Error::Server(TokenError { .. })` carrying the SQL
-Server error code, state, class, message, procedure and line.
+Server error code, state, class, message, procedure and line. That is the
+response's first error; `TokenError::other_errors` lists any later ones and
+`TokenError::info_messages` the response's `PRINT` and other informational
+messages.
 
 [`Client`]: https://docs.rs/tiberius-ng/latest/tiberius/struct.Client.html
 [`Config`]: https://docs.rs/tiberius-ng/latest/tiberius/struct.Config.html

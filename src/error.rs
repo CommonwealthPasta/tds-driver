@@ -35,7 +35,9 @@ pub enum Error {
     /// Tried to parse an integer that was not an integer.
     ParseInt(std::num::ParseIntError),
     #[error("Token error: {}", _0)]
-    /// An error returned by the server.
+    /// The first error the server returned for the request. The response's
+    /// other errors and info messages are on it: see
+    /// [`TokenError::other_errors`] and [`TokenError::info_messages`].
     Server(TokenError),
     #[error("Error forming TLS connection: {}", _0)]
     /// An error in the TLS handshake.
@@ -178,6 +180,7 @@ mod tests {
             server: "srv".to_string(),
             procedure: "proc".to_string(),
             line: 3,
+            related: None,
         }
     }
 

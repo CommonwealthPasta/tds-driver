@@ -3075,3 +3075,47 @@ where
 
     Ok(())
 }
+
+#[test_on_runtimes]
+async fn server_error_keeps_later_errors_and_info_messages<S>(
+    mut conn: tiberius::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let res = conn
+        .simple_query(
+            "PRINT 'before'; RAISERROR('first', 16, 1); RAISERROR('second', 16, 2); \
+             RAISERROR('notice', 10, 1); SELECT 5 AS c",
+        )
+        .await?
+        .into_results()
+        .await;
+
+    let err = match res {
+        Err(tiberius::error::Error::Server(err)) => err,
+        other => panic!("expected a server error, got {:?}", other),
+    };
+    assert_eq!((err.code(), err.message()), (50000, "first"));
+
+    let others: Vec<_> = err
+        .other_errors()
+        .iter()
+        .map(|e| (e.message(), e.state()))
+        .collect();
+    assert_eq!(others, [("second", 2)]);
+
+    let infos: Vec<_> = err.info_messages().iter().map(|e| e.message()).collect();
+    assert_eq!(infos, ["before", "notice"]);
+
+    // The connection is still in step.
+    let row = conn
+        .query("SELECT 1", &[])
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+    assert_eq!(Some(1), row.get::<i32, _>(0));
+
+    Ok(())
+}

@@ -2,9 +2,9 @@ use crate::tds::codec::TokenSspi;
 use crate::{
     client::Connection,
     tds::codec::{
-        TokenAltMetaData, TokenAltRow, TokenColInfo, TokenColMetaData, TokenDone, TokenEnvChange,
-        TokenError, TokenFeatureExtAck, TokenFedAuthInfo, TokenInfo, TokenLoginAck, TokenOrder,
-        TokenReturnValue, TokenRow, TokenSessionState, TokenTabName,
+        RelatedMessages, TokenAltMetaData, TokenAltRow, TokenColInfo, TokenColMetaData, TokenDone,
+        TokenEnvChange, TokenError, TokenFeatureExtAck, TokenFedAuthInfo, TokenInfo, TokenLoginAck,
+        TokenOrder, TokenReturnValue, TokenRow, TokenSessionState, TokenTabName,
     },
     Error, SqlReadBytes, TokenType,
 };
@@ -52,9 +52,45 @@ impl ReceivedToken {
     }
 }
 
+/// SqlClient keeps every message; the cap stops a `PRINT` loop in a long
+/// batch from growing memory without bound.
+const MAX_RELATED_MESSAGES: usize = 1000;
+
+/// The ERROR and INFO tokens of one response. The first ERROR is what the
+/// request fails with; the others are attached to it.
+#[derive(Debug, Default)]
+struct ServerMessages {
+    first_error: Option<TokenError>,
+    related: RelatedMessages,
+}
+
+impl ServerMessages {
+    fn error(&mut self, error: TokenError) {
+        if self.first_error.is_none() {
+            self.first_error = Some(error);
+        } else if self.related.errors.len() < MAX_RELATED_MESSAGES {
+            self.related.errors.push(error);
+        }
+    }
+
+    fn info(&mut self, info: &TokenInfo) {
+        if self.related.infos.len() < MAX_RELATED_MESSAGES {
+            self.related.infos.push(info.into());
+        }
+    }
+
+    fn into_error(self) -> Option<Error> {
+        let mut error = self.first_error?;
+        if !self.related.is_empty() {
+            error.related = Some(Box::new(self.related));
+        }
+        Some(Error::Server(error))
+    }
+}
+
 pub(crate) struct TokenStream<'a, S: AsyncRead + AsyncWrite + Unpin + Send> {
     conn: &'a mut Connection<S>,
-    last_error: Option<Error>,
+    messages: ServerMessages,
 }
 
 impl<'a, S> TokenStream<'a, S>
@@ -64,24 +100,21 @@ where
     pub(crate) fn new(conn: &'a mut Connection<S>) -> Self {
         Self {
             conn,
-            last_error: None,
+            messages: ServerMessages::default(),
         }
     }
 
     pub(crate) async fn flush_done(self) -> crate::Result<TokenDone> {
         let mut stream = self.try_unfold();
-        let mut last_error = None;
+        let mut messages = ServerMessages::default();
         let mut routing = None;
 
         loop {
             match stream.try_next().await? {
-                Some(ReceivedToken::Error(error)) => {
-                    if last_error.is_none() {
-                        last_error = Some(error);
-                    }
-                }
-                Some(ReceivedToken::Done(token)) => match (last_error, routing) {
-                    (Some(error), _) => return Err(Error::Server(error)),
+                Some(ReceivedToken::Error(error)) => messages.error(error),
+                Some(ReceivedToken::Info(info)) => messages.info(&info),
+                Some(ReceivedToken::Done(token)) => match (messages.into_error(), routing) {
+                    (Some(error), _) => return Err(error),
                     (_, Some(routing)) => return Err(routing),
                     (_, _) => return Ok(token),
                 },
@@ -135,19 +168,16 @@ where
     #[cfg(any(windows, feature = "integrated-auth-gssapi", feature = "sspi-rs"))]
     pub(crate) async fn flush_sspi(self) -> crate::Result<TokenSspi> {
         let mut stream = self.try_unfold();
-        let mut last_error = None;
+        let mut messages = ServerMessages::default();
 
         loop {
             match stream.try_next().await? {
-                Some(ReceivedToken::Error(error)) => {
-                    if last_error.is_none() {
-                        last_error = Some(error);
-                    }
-                }
+                Some(ReceivedToken::Error(error)) => messages.error(error),
+                Some(ReceivedToken::Info(info)) => messages.info(&info),
                 Some(ReceivedToken::Sspi(token)) => return Ok(token),
                 Some(_) => (),
-                None => match last_error {
-                    Some(err) => return Err(crate::Error::Server(err)),
+                None => match messages.into_error() {
+                    Some(err) => return Err(err),
                     None => return Err(crate::Error::Protocol("Never got SSPI token.".into())),
                 },
             }
@@ -215,10 +245,7 @@ where
 
     async fn get_error(&mut self) -> crate::Result<ReceivedToken> {
         let err = TokenError::decode(self.conn).await?;
-
-        if self.last_error.is_none() {
-            self.last_error = Some(Error::Server(err.clone()));
-        }
+        self.messages.error(err.clone());
 
         event!(Level::ERROR, message = %err.message, code = err.code);
         Ok(ReceivedToken::Error(err))
@@ -295,6 +322,7 @@ where
 
     async fn get_info(&mut self) -> crate::Result<ReceivedToken> {
         let info = TokenInfo::decode(self.conn).await?;
+        self.messages.info(&info);
         event!(Level::DEBUG, "{}", info.message);
         Ok(ReceivedToken::Info(info))
     }
@@ -342,10 +370,10 @@ where
     pub fn try_unfold(self) -> BoxStream<'a, crate::Result<ReceivedToken>> {
         let stream = futures_util::stream::try_unfold(self, |mut this| async move {
             if this.conn.is_eof() {
-                match this.last_error {
-                    None => return Ok(None),
-                    Some(error) => return Err(error),
-                }
+                return match std::mem::take(&mut this.messages).into_error() {
+                    None => Ok(None),
+                    Some(error) => Err(error),
+                };
             }
 
             this.conn.begin_token()?;
@@ -413,5 +441,84 @@ where
         };
 
         Ok(token)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn error(code: u32, message: &str) -> TokenError {
+        TokenError {
+            code,
+            state: 1,
+            class: 16,
+            message: message.into(),
+            server: String::new(),
+            procedure: String::new(),
+            line: 1,
+            related: None,
+        }
+    }
+
+    fn info(number: u32, message: &str) -> TokenInfo {
+        TokenInfo {
+            number,
+            state: 1,
+            class: 0,
+            message: message.into(),
+            server: String::new(),
+            procedure: String::new(),
+            line: 1,
+        }
+    }
+
+    #[test]
+    fn server_messages_keep_every_error_and_info() {
+        let mut messages = ServerMessages::default();
+        messages.info(&info(0, "before"));
+        messages.error(error(50000, "first"));
+        messages.error(error(50001, "second"));
+        messages.info(&info(0, "after"));
+
+        let Some(Error::Server(err)) = messages.into_error() else {
+            panic!("expected a server error");
+        };
+        assert_eq!((err.code(), err.message()), (50000, "first"));
+        let others: Vec<_> = err.other_errors().iter().map(|e| e.message()).collect();
+        assert_eq!(others, ["second"]);
+        let infos: Vec<_> = err.info_messages().iter().map(|e| e.message()).collect();
+        assert_eq!(infos, ["before", "after"]);
+    }
+
+    #[test]
+    fn server_messages_without_error_are_not_an_error() {
+        let mut messages = ServerMessages::default();
+        messages.info(&info(5701, "Changed database context"));
+        assert!(messages.into_error().is_none());
+    }
+
+    #[test]
+    fn server_messages_lone_error_has_nothing_attached() {
+        let mut messages = ServerMessages::default();
+        messages.error(error(208, "Invalid object name"));
+        assert_eq!(
+            messages.into_error(),
+            Some(Error::Server(error(208, "Invalid object name")))
+        );
+    }
+
+    #[test]
+    fn server_messages_are_capped() {
+        let mut messages = ServerMessages::default();
+        for i in 0..=MAX_RELATED_MESSAGES as u32 + 1 {
+            messages.error(error(i, "e"));
+            messages.info(&info(i, "i"));
+        }
+        let Some(Error::Server(err)) = messages.into_error() else {
+            panic!("expected a server error");
+        };
+        assert_eq!(err.other_errors().len(), MAX_RELATED_MESSAGES);
+        assert_eq!(err.info_messages().len(), MAX_RELATED_MESSAGES);
     }
 }

@@ -1,4 +1,7 @@
-use crate::{tds::codec::FeatureLevel, SqlReadBytes};
+use crate::{
+    tds::codec::{FeatureLevel, TokenInfo},
+    SqlReadBytes,
+};
 use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -15,6 +18,38 @@ pub struct TokenError {
     pub(crate) server: String,
     pub(crate) procedure: String,
     pub(crate) line: u32,
+    /// The response's other messages, attached only to the error a request
+    /// fails with. Boxed so `Error` stays small.
+    pub(crate) related: Option<Box<RelatedMessages>>,
+}
+
+/// The ERROR and INFO tokens of a response besides its first ERROR. SqlClient
+/// reports all of them too: in `SqlException.Errors`, warnings after errors.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RelatedMessages {
+    pub(crate) errors: Vec<TokenError>,
+    pub(crate) infos: Vec<TokenError>,
+}
+
+impl RelatedMessages {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.errors.is_empty() && self.infos.is_empty()
+    }
+}
+
+impl From<&TokenInfo> for TokenError {
+    fn from(info: &TokenInfo) -> Self {
+        Self {
+            code: info.number,
+            state: info.state,
+            class: info.class,
+            message: info.message.clone(),
+            server: info.server.clone(),
+            procedure: info.procedure.clone(),
+            line: info.line,
+            related: None,
+        }
+    }
 }
 
 impl TokenError {
@@ -50,6 +85,7 @@ impl TokenError {
             server,
             procedure,
             line,
+            related: None,
         };
 
         Ok(token)
@@ -94,6 +130,20 @@ impl TokenError {
     pub fn line(&self) -> u32 {
         self.line
     }
+
+    /// The ERROR tokens that followed this one in the same response, in
+    /// order. A batch keeps running after most errors, so later statements
+    /// can fail too. Empty on the entries themselves.
+    pub fn other_errors(&self) -> &[TokenError] {
+        self.related.as_deref().map_or(&[], |r| &r.errors)
+    }
+
+    /// The INFO messages of the same response, before and after this error,
+    /// in order: `PRINT` output, `RAISERROR` at severity 10 or less, and
+    /// server notices. [`code`](Self::code) is the message number.
+    pub fn info_messages(&self) -> &[TokenError] {
+        self.related.as_deref().map_or(&[], |r| &r.infos)
+    }
 }
 
 impl fmt::Display for TokenError {
@@ -119,6 +169,7 @@ mod tests {
             server: "myserver".to_string(),
             procedure: "myproc".to_string(),
             line: 42,
+            related: None,
         }
     }
 
@@ -132,6 +183,8 @@ mod tests {
         assert_eq!(e.server(), "myserver");
         assert_eq!(e.procedure(), "myproc");
         assert_eq!(e.line(), 42);
+        assert!(e.other_errors().is_empty());
+        assert!(e.info_messages().is_empty());
     }
 
     #[test]
