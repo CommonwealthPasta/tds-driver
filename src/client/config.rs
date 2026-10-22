@@ -570,7 +570,8 @@ impl Config {
     /// `Failover Partner`, `Column Encryption Setting=Enabled`,
     /// `AttachDbFilename`, `Current Language`, `Server Certificate`,
     /// `User Instance=true`, `Replication=true`, Entra ID `Authentication`
-    /// values and `Network Library` other than `dbmssocn`.
+    /// values, `Network Library` other than `dbmssocn`, and `Server SPN` with
+    /// integrated security.
     ///
     /// [ADO.NET connection string]: https://docs.microsoft.com/en-us/dotnet/framework/data/adonet/connection-strings
     pub fn from_ado_string(s: &str) -> crate::Result<Self> {

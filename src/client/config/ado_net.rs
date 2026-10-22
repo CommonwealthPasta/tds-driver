@@ -156,6 +156,10 @@ impl AdoNetConfig {
         if self.get("network library").is_some() && !is("network library", "dbmssocn") {
             return unsupported("a Network Library other than dbmssocn (TCP)");
         }
+        // The SPN is derived from the server name and port.
+        if self.get("server spn").is_some() && self.integrated_security()? {
+            return unsupported("Server SPN");
+        }
         Ok(())
     }
 }
@@ -1227,6 +1231,7 @@ mod tests {
             "Authentication=Kerberos",
             "Network Library=dbnmpntw",
             "MultipleActiveResultSets=maybe",
+            "Integrated Security=true;Server SPN=MSSQLSvc/h:1433",
         ] {
             assert!(
                 matches!(
