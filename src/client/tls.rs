@@ -237,10 +237,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncRead for TlsPreloginWrapper<
 
         let inner = self.get_mut();
 
-        // Read the headers separately and do not send them to the Tls
-        // connection handling.
-        if !inner.header_buf[inner.header_pos..].is_empty() {
-            while !inner.header_buf[inner.header_pos..].is_empty() {
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+
+        // Strip packet headers; an empty packet has no bytes for TLS.
+        while inner.read_remaining == 0 {
+            while inner.header_pos < HEADER_BYTES {
                 let read = ready!(Pin::new(inner.stream.as_mut().unwrap())
                     .poll_read(cx, &mut inner.header_buf[inner.header_pos..]))?;
 
@@ -254,9 +257,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncRead for TlsPreloginWrapper<
             let header = PacketHeader::decode(&mut BytesMut::from(&inner.header_buf[..]))
                 .map_err(io::Error::other)?;
 
-            // We only get pre-login packets in the handshake process. This runs
-            // before any certificate has been validated, so the bytes are fully
-            // untrusted: reject anything unexpected instead of panicking.
+            // This runs before any certificate has been validated, so the
+            // bytes are fully untrusted: reject anything unexpected instead of
+            // panicking.
             if header.r#type() != PacketType::PreLogin {
                 return Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -264,7 +267,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncRead for TlsPreloginWrapper<
                 )));
             }
 
-            // And we know from this point on how much data we should expect.
             inner.read_remaining = (header.length() as usize)
                 .checked_sub(HEADER_BYTES)
                 .ok_or_else(|| {
@@ -273,6 +275,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncRead for TlsPreloginWrapper<
                         "pre-login packet length shorter than its header",
                     )
                 })?;
+            inner.header_pos = 0;
 
             event!(
                 Level::TRACE,
@@ -283,17 +286,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncRead for TlsPreloginWrapper<
 
         let max_read = cmp::min(inner.read_remaining, buf.len());
 
-        // TLS connector gets whatever we have after the header.
         let read = ready!(
             Pin::new(&mut inner.stream.as_mut().unwrap()).poll_read(cx, &mut buf[..max_read])
         )?;
 
         inner.read_remaining -= read;
-
-        // All data is read, after this we're expecting a new header.
-        if inner.read_remaining == 0 {
-            inner.header_pos = 0;
-        }
 
         Poll::Ready(Ok(read))
     }
@@ -521,5 +518,34 @@ mod tests {
         write(&mut w, &b);
         flush(&mut w);
         assert_eq!(messages(&w.stream.as_ref().unwrap().written), vec![a, b]);
+    }
+
+    #[test]
+    fn reads_strip_headers_and_skip_empty_packets() {
+        let packet = |status: PacketStatus, payload: &[u8]| {
+            let mut header = PacketHeader::new(payload.len() + HEADER_BYTES, 1);
+            header.set_type(PacketType::PreLogin);
+            header.set_status(status);
+            let mut out = Vec::new();
+            header.encode(&mut out).unwrap();
+            out.extend_from_slice(payload);
+            out
+        };
+        let (a, b) = (pattern(5000, 3), pattern(10, 4));
+        let mut wire = packet(PacketStatus::NormalMessage, &a);
+        wire.extend(packet(PacketStatus::NormalMessage, &[]));
+        wire.extend(packet(PacketStatus::EndOfMessage, &b));
+
+        let mut w = TlsPreloginWrapper::new(Choppy::new(5, wire));
+        let mut read = Vec::new();
+        let mut buf = [0u8; 64];
+        while read.len() < a.len() + b.len() {
+            if let Poll::Ready(n) = Pin::new(&mut w).poll_read(&mut cx(), &mut buf) {
+                let n = n.unwrap();
+                assert_ne!(n, 0, "early EOF after {} bytes", read.len());
+                read.extend_from_slice(&buf[..n]);
+            }
+        }
+        assert_eq!(read, [a, b].concat());
     }
 }
