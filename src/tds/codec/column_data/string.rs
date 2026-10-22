@@ -53,9 +53,8 @@ pub(crate) fn decode_varchar(buf: Vec<u8>, collation: &Collation) -> crate::Resu
 /// Decodes UTF-16LE bytes (even length) into a `String` allocated at its exact
 /// UTF-8 size. ASCII-only input is copied byte by byte without decoding.
 pub(crate) fn decode_utf16le(buf: &[u8]) -> crate::Result<String> {
-    let units = buf
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]));
+    let pairs = buf.as_chunks::<2>().0;
+    let units = pairs.iter().map(|&pair| u16::from_le_bytes(pair));
 
     // A surrogate half counts 2, so a valid pair counts 4. Unpaired halves
     // fail below anyway.
@@ -71,7 +70,7 @@ pub(crate) fn decode_utf16le(buf: &[u8]) -> crate::Result<String> {
     }
 
     if ascii {
-        let bytes: Vec<u8> = buf.chunks_exact(2).map(|c| c[0]).collect();
+        let bytes: Vec<u8> = pairs.iter().map(|pair| pair[0]).collect();
         return String::from_utf8(bytes)
             .map_err(|_| Error::Protocol("nvarchar: invalid UTF-16 sequence".into()));
     }
