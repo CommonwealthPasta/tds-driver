@@ -5,25 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-This is a maintained community fork of [`tiberius`](https://github.com/prisma/tiberius),
-published on crates.io under the package name
-[`tiberius-ng`](https://crates.io/crates/tiberius-ng). The library name remains
-`tiberius`, so `use tiberius::…` code is unaffected. Entries up to and including
-version 0.12.3 reflect the history of the upstream project prior to the fork.
+`tds-driver` began as a fork of
+[`tiberius-ng`](https://github.com/MattJackson/tiberius-ng) 0.13.1, itself a fork
+of [`tiberius`](https://github.com/prisma/tiberius). The entries for 0.13.1 and
+earlier are that history, under those names; up to 0.12.3 it is upstream's.
 
 ## [Unreleased]
 
-**0.13.1 is a stable settling point** — the fork has cleared the
-security advisories, worked through the upstream backlog, and hardened the
-codebase (100% mutation score, ~93% line coverage against a live SQL Server in
-CI). No further releases are planned in the immediate term; the crate is
-considered stable for production use.
-
-Bug reports and feature requests are welcome via
-[GitHub Issues](https://github.com/MattJackson/tiberius-ng/issues); usage
-questions and general discussion via
-[Discussions](https://github.com/MattJackson/tiberius-ng/discussions). Fixes
-that land will be documented here.
+The first release as `tds-driver` (0.1.0). It breaks compatibility with
+`tiberius` and `tiberius-ng`; see **Breaking** below.
 
 ### Added
 
@@ -860,6 +850,6 @@ has completely settled on Tokio 1.0.
 - Support for many more types
 - Async/await, futures 0.3
 
-[Unreleased]: https://github.com/MattJackson/tiberius-ng/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/CommonwealthPasta/tds-driver/commits/main
 [0.13.1]: https://github.com/MattJackson/tiberius-ng/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/MattJackson/tiberius-ng/compare/v0.12.3...v0.13.0
