@@ -188,6 +188,10 @@ that land will be documented here.
   instead of a precision taken from the value, so values of different digit
   counts share a cached plan. A value of more than 38 digits is now a
   client-side `Error::Conversion`.
+- `MetaDataColumn`'s `Display` output is a valid `INSERT BULK` column
+  definition: n-type lengths count characters, `time`/`datetimeoffset` show
+  their scale, nullable 4-byte `datetime` shows as `smalldatetime`, and `]` in
+  names is doubled.
 
 ### Security
 

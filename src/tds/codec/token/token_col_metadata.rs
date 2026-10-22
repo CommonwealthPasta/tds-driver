@@ -73,7 +73,10 @@ impl<'a> Display for MetaDataColumn<'a> {
                 VarLenType::Timen => write!(f, "time({})", ctx.len())?,
                 #[cfg(feature = "tds73")]
                 VarLenType::Datetime2 => write!(f, "datetime2({})", ctx.len())?,
-                VarLenType::Datetimen => write!(f, "datetime")?,
+                VarLenType::Datetimen => match ctx.len() {
+                    4 => write!(f, "smalldatetime")?,
+                    _ => write!(f, "datetime")?,
+                },
                 VarLenType::Money => match ctx.len() {
                     4 => write!(f, "smallmoney")?,
                     _ => write!(f, "money")?,
@@ -823,6 +826,10 @@ mod tests {
             (
                 TypeInfo::VarLenSized(VarLenContext::new(VarLenType::NChar, 10, None)),
                 "c nchar(5)",
+            ),
+            (
+                TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Datetimen, 4, None)),
+                "c smalldatetime",
             ),
             (
                 TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Text, 0, None)),

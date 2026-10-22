@@ -957,6 +957,24 @@ where
                 "2024-05-06 13:14:15.003",
             ),
             ("DATETIME", early.into_sql(), rb, "1800-01-01 00:00:00.000"),
+            (
+                "DATETIME NOT NULL",
+                ndt(13, 14, 15, 123_456_700).into_sql(),
+                rb,
+                "2024-05-06 13:14:15.123",
+            ),
+            (
+                "SMALLDATETIME NOT NULL",
+                ndt(13, 14, 31, 0).into_sql(),
+                rb,
+                "2024-05-06 13:15:00.000",
+            ),
+            (
+                "SMALLDATETIME",
+                ndt(13, 14, 29, 999_000_000).into_sql(),
+                rb,
+                "2024-05-06 13:14:00.000",
+            ),
         ],
     )
     .await

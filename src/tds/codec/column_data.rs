@@ -141,9 +141,7 @@ const DAYS_YEAR_1_TO_1900: u32 = 693_595;
 
 /// Time of day unit for converting between `datetime` (1/300 s),
 /// `smalldatetime` (minutes) and `datetime2` (10^-7 s) without rounding twice.
-#[cfg(feature = "tds73")]
 const UNITS_PER_SECOND: u64 = 3_000_000_000;
-#[cfg(feature = "tds73")]
 const UNITS_PER_DAY: u64 = 86_400 * UNITS_PER_SECOND;
 
 fn not_null_error() -> crate::Error {
@@ -250,8 +248,65 @@ fn float_bytes(value: f64, width: usize) -> crate::Result<[u8; 8]> {
     Ok(bytes)
 }
 
+/// Bulk/TVP `datetime`/`smalldatetime` values go out in the column's own
+/// format, rounded the way SQL Server's CAST rounds them.
+fn encode_legacy_datetime(
+    data: &ColumnData<'_>,
+    ti: &TypeInfo,
+    dst: &mut BytesMutWithTypeInfo<'_>,
+) -> Option<crate::Result<()>> {
+    let (small, nullable) = match ti {
+        TypeInfo::FixedLen(FixedLenType::Datetime) => (false, false),
+        TypeInfo::FixedLen(FixedLenType::Datetime4) => (true, false),
+        TypeInfo::VarLenSized(vlc) if vlc.r#type() == VarLenType::Datetimen => {
+            (vlc.len() == 4, true)
+        }
+        _ => return None,
+    };
+
+    // Days since 1900-01-01 and the time of day in `UNITS_PER_SECOND`.
+    let parts = match *data {
+        ColumnData::DateTime(v) => v.map(|v| {
+            Ok((
+                i64::from(v.days()),
+                u64::from(v.seconds_fragments()) * (UNITS_PER_SECOND / 300),
+            ))
+        }),
+        // `seconds_fragments` of a smalldatetime counts minutes.
+        ColumnData::SmallDateTime(v) => v.map(|v| {
+            Ok((
+                i64::from(v.days()),
+                u64::from(v.seconds_fragments()) * 60 * UNITS_PER_SECOND,
+            ))
+        }),
+        #[cfg(feature = "tds73")]
+        ColumnData::DateTime2(v) => v.map(datetime2_parts),
+        _ => return None,
+    };
+
+    Some(match parts.transpose() {
+        Err(e) => Err(e),
+        Ok(None) if nullable => {
+            dst.put_u8(0);
+            Ok(())
+        }
+        Ok(None) => Err(not_null_error()),
+        Ok(Some((days, units))) if small => to_smalldatetime(days, units).and_then(|v| {
+            if nullable {
+                dst.put_u8(4);
+            }
+            v.encode(dst)
+        }),
+        Ok(Some((days, units))) => to_datetime(days, units).and_then(|v| {
+            if nullable {
+                dst.put_u8(8);
+            }
+            v.encode(dst)
+        }),
+    })
+}
+
 /// Rounds half up to 1/300 s, carrying into the next day.
-#[cfg(feature = "tds73")]
 fn to_datetime(days: i64, units: u64) -> crate::Result<DateTime> {
     const PER_FRAGMENT: u64 = UNITS_PER_SECOND / 300;
     const FRAGMENTS_PER_DAY: u64 = UNITS_PER_DAY / PER_FRAGMENT;
@@ -270,6 +325,23 @@ fn to_datetime(days: i64, units: u64) -> crate::Result<DateTime> {
         days as i32,
         (fragments % FRAGMENTS_PER_DAY) as u32,
     ))
+}
+
+/// Rounds half up to the minute, carrying into the next day.
+fn to_smalldatetime(days: i64, units: u64) -> crate::Result<SmallDateTime> {
+    const PER_MINUTE: u64 = 60 * UNITS_PER_SECOND;
+
+    let minutes = (units + PER_MINUTE / 2) / PER_MINUTE;
+    let days = days + (minutes / 1440) as i64;
+
+    // 1900-01-01 ..= 2079-06-06
+    let days = u16::try_from(days).map_err(|_| {
+        crate::Error::Conversion(
+            "value is outside the smalldatetime range of 1900-01-01 to 2079-06-06".into(),
+        )
+    })?;
+
+    Ok(SmallDateTime::new(days, (minutes % 1440) as u16))
 }
 
 #[cfg(feature = "tds73")]
@@ -464,6 +536,9 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
     fn encode(self, dst: &mut BytesMutWithTypeInfo<'a>) -> crate::Result<()> {
         if let Some(ti) = dst.type_info() {
             if let Some(res) = encode_number(&self, ti, dst) {
+                return res;
+            }
+            if let Some(res) = encode_legacy_datetime(&self, ti, dst) {
                 return res;
             }
         }
@@ -785,38 +860,9 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                 dst.extend(bytes.into_owned());
             }
             (ColumnData::Binary(Some(bytes)), None) => put_varbinary_max(dst, Some(&bytes)),
-            (ColumnData::DateTime(opt), Some(TypeInfo::VarLenSized(vlc)))
-                if vlc.r#type() == VarLenType::Datetimen =>
-            {
-                if let Some(dt) = opt {
-                    dst.put_u8(8);
-                    dt.encode(dst)?;
-                } else {
-                    dst.put_u8(0);
-                }
-            }
-            (ColumnData::DateTime(Some(dt)), Some(TypeInfo::FixedLen(FixedLenType::Datetime))) => {
-                dt.encode(dst)?;
-            }
             (ColumnData::DateTime(Some(dt)), None) => {
                 dst.extend_from_slice(&[VarLenType::Datetimen as u8, 8, 8]);
                 dt.encode(&mut *dst)?;
-            }
-            (ColumnData::SmallDateTime(opt), Some(TypeInfo::VarLenSized(vlc)))
-                if vlc.r#type() == VarLenType::Datetimen =>
-            {
-                if let Some(dt) = opt {
-                    dst.put_u8(4);
-                    dt.encode(dst)?;
-                } else {
-                    dst.put_u8(0);
-                }
-            }
-            (
-                ColumnData::SmallDateTime(Some(dt)),
-                Some(TypeInfo::FixedLen(FixedLenType::Datetime4)),
-            ) => {
-                dt.encode(dst)?;
             }
             (ColumnData::SmallDateTime(Some(dt)), None) => {
                 dst.extend_from_slice(&[VarLenType::Datetimen as u8, 4, 4]);
@@ -854,19 +900,6 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
             (ColumnData::Time(Some(time)), None) => {
                 dst.extend_from_slice(&[VarLenType::Timen as u8, time.scale(), time.len()?]);
                 time.encode(&mut *dst)?;
-            }
-            #[cfg(feature = "tds73")]
-            (ColumnData::DateTime2(opt), Some(TypeInfo::VarLenSized(vlc)))
-                if vlc.r#type() == VarLenType::Datetimen =>
-            {
-                if let Some(dt2) = opt {
-                    let (days, units) = datetime2_parts(dt2)?;
-                    let dt = to_datetime(days, units)?;
-                    dst.put_u8(8);
-                    dt.encode(dst)?;
-                } else {
-                    dst.put_u8(0);
-                }
             }
             #[cfg(feature = "tds73")]
             (ColumnData::DateTime2(opt), Some(TypeInfo::VarLenSized(vlc)))
@@ -2447,6 +2480,50 @@ mod tests {
         assert_eq!(
             as_datetime(&ti, dt2(23, 59, 59, 9_983_334)).await,
             ColumnData::DateTime(Some(DateTime::new(day + 1, 0)))
+        );
+    }
+
+    #[cfg(feature = "tds73")]
+    #[tokio::test]
+    async fn bulk_datetime_range_starts_in_1753() {
+        let ti = TypeInfo::FixedLen(FixedLenType::Datetime);
+        let at =
+            |days| ColumnData::DateTime2(Some(DateTime2::new(Date::new(days), Time::new(0, 7))));
+
+        // 1753-01-01 is day 639_905 after 0001-01-01.
+        assert_eq!(
+            as_datetime(&ti, at(639_905)).await,
+            ColumnData::DateTime(Some(DateTime::new(-53_690, 0)))
+        );
+        let err = encode_with_ti(&ti, at(639_904)).unwrap_err();
+        assert!(matches!(err, Error::Conversion(_)), "got {err:?}");
+    }
+
+    #[cfg(feature = "tds73")]
+    #[tokio::test]
+    async fn bulk_smalldatetime_rounds_like_cast() {
+        let ti = TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Datetimen, 4, None));
+        let day = (739_011 - DAYS_YEAR_1_TO_1900) as u16;
+
+        // CAST(datetime2 AS smalldatetime): 29.999 s rounds down, 30 s up.
+        assert_eq!(
+            as_datetime(&ti, dt2(10, 0, 29, 9_990_000)).await,
+            ColumnData::SmallDateTime(Some(SmallDateTime::new(day, 600)))
+        );
+        assert_eq!(
+            as_datetime(&ti, dt2(10, 0, 30, 0)).await,
+            ColumnData::SmallDateTime(Some(SmallDateTime::new(day, 601)))
+        );
+        assert_eq!(
+            as_datetime(&ti, dt2(23, 59, 30, 0)).await,
+            ColumnData::SmallDateTime(Some(SmallDateTime::new(day + 1, 0)))
+        );
+
+        let ti = TypeInfo::FixedLen(FixedLenType::Datetime4);
+        let buf = encode_with_ti(&ti, ColumnData::DateTime(Some(DateTime::new(5, 9_000)))).unwrap();
+        assert_eq!(
+            decode_with(&ti, buf).await,
+            ColumnData::SmallDateTime(Some(SmallDateTime::new(5, 1)))
         );
     }
 
