@@ -215,6 +215,10 @@ impl std::fmt::Debug for LoginMessage<'_> {
 /// Maximum length in characters of the LOGIN7 strings (MS-TDS 2.2.6.4).
 const MAX_FIELD_CHARS: usize = 128;
 
+/// LOGIN7 fixed part: header, flags and the offset/length table, up to the
+/// first variable-length byte.
+const FIXED_PART_BYTES: usize = 94;
+
 impl<'a> LoginMessage<'a> {
     pub fn new() -> LoginMessage<'a> {
         Self {
@@ -387,10 +391,23 @@ impl<'a> LoginMessage<'a> {
         self.packet_size = size;
     }
 
-    pub(crate) fn encode_to_vec(self) -> crate::Result<Zeroizing<Vec<u8>>> {
-        self.field_lengths()?;
+    pub(crate) fn encode_to_vec(mut self) -> crate::Result<Zeroizing<Vec<u8>>> {
+        let fed_auth = self.fed_auth_ext.take();
+        let token_bytes = fed_auth
+            .as_ref()
+            .map_or(0, |f| f.fed_auth_token.encode_utf16().count() * 2);
 
-        let mut cursor = Cursor::new(Vec::with_capacity(512));
+        // Sized exactly: growing the buffer would free copies of the
+        // obfuscated password and the token without zeroizing them.
+        let capacity = FIXED_PART_BYTES
+            + 2 * self.field_lengths()?.iter().sum::<usize>()
+            + self.integrated_security.as_ref().map_or(0, Vec::len)
+            + fed_auth.as_ref().map_or(0, |f| {
+                // ibExtension target, FeatureId, FeatureDataLen, options,
+                // token length, token, nonce, terminator
+                4 + 1 + 4 + 1 + 4 + token_bytes + f.nonce.map_or(0, |n| n.len()) + 1
+            });
+        let mut cursor = Cursor::new(Vec::with_capacity(capacity));
 
         // Space for the length
         cursor.write_u32::<LittleEndian>(0)?;
@@ -497,7 +514,7 @@ impl<'a> LoginMessage<'a> {
         cursor.write_u32::<LittleEndian>(0)?;
 
         // FeatureExt
-        if let Some(fed_auth_ext) = self.fed_auth_ext {
+        if let Some(fed_auth_ext) = fed_auth {
             // update fea_ext_offset
             cursor.set_position(fea_ext_offset);
             cursor.write_u16::<LittleEndian>(data_offset as u16)?;
@@ -509,15 +526,9 @@ impl<'a> LoginMessage<'a> {
 
             cursor.write_u8(FEA_EXT_FEDAUTH)?;
 
-            let mut token = Cursor::new(Vec::new());
-            for codepoint in fed_auth_ext.fed_auth_token.encode_utf16() {
-                token.write_u16::<LittleEndian>(codepoint)?;
-            }
-            let mut token = token.into_inner();
-
             // options (1) + TokenLength(4) + Token.length + nonce.length
             let feature_ext_length =
-                1 + 4 + token.len() + if fed_auth_ext.nonce.is_some() { 32 } else { 0 };
+                1 + 4 + token_bytes + if fed_auth_ext.nonce.is_some() { 32 } else { 0 };
 
             cursor.write_u32::<LittleEndian>(feature_ext_length as u32)?;
 
@@ -528,9 +539,10 @@ impl<'a> LoginMessage<'a> {
 
             cursor.write_u8(options)?;
 
-            cursor.write_u32::<LittleEndian>(token.len() as u32)?;
-            cursor.write_all(token.as_slice())?;
-            token.zeroize();
+            cursor.write_u32::<LittleEndian>(token_bytes as u32)?;
+            for codepoint in fed_auth_ext.fed_auth_token.encode_utf16() {
+                cursor.write_u16::<LittleEndian>(codepoint)?;
+            }
 
             if let Some(nonce) = fed_auth_ext.nonce {
                 cursor.write_all(nonce.as_ref())?;
@@ -542,13 +554,16 @@ impl<'a> LoginMessage<'a> {
         cursor.set_position(0);
         cursor.write_u32::<LittleEndian>(cursor.get_ref().len() as u32)?;
 
-        Ok(Zeroizing::new(cursor.into_inner()))
+        let encoded = Zeroizing::new(cursor.into_inner());
+        debug_assert_eq!(encoded.len(), capacity, "LOGIN7 size estimate is off");
+        Ok(encoded)
     }
 }
 
 impl<'a> Encode<BytesMut> for LoginMessage<'a> {
     fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
         let mut encoded = self.encode_to_vec()?;
+        dst.reserve(encoded.len());
         dst.extend_from_slice(encoded.as_slice());
         encoded.zeroize();
 
@@ -916,5 +931,26 @@ mod tests {
         let mut login = LoginMessage::new();
         login.app_name("😀".repeat(65));
         assert!(login.encode_to_vec().is_err());
+    }
+
+    #[test]
+    fn encoding_never_reallocates() {
+        // A reallocation would free a copy of the obfuscated password or the
+        // token without zeroizing it.
+        let mut login = LoginMessage::new();
+        login.app_name("a".repeat(128));
+        login.db_name("d".repeat(128));
+        login.user_name("u".repeat(128));
+        login.password("p".repeat(128));
+        login.integrated_security = Some(vec![7; 3000]);
+        let encoded = login.encode_to_vec().unwrap();
+        assert_eq!(encoded.capacity(), encoded.len());
+
+        for nonce in [None, Some([1u8; 32])] {
+            let mut login = LoginMessage::new();
+            login.aad_token("t".repeat(5000), true, nonce);
+            let encoded = login.encode_to_vec().unwrap();
+            assert_eq!(encoded.capacity(), encoded.len());
+        }
     }
 }
