@@ -204,6 +204,16 @@ async fn sql_variant_utf8_varchar<S>(mut conn: tiberius::Client<S>) -> Result<()
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
+    // UTF-8 collations arrived in SQL Server 2019.
+    let utf8 = rows(
+        &mut conn,
+        "SELECT COUNT(*) FROM sys.fn_helpcollations() WHERE name = 'Latin1_General_100_CI_AS_SC_UTF8'",
+    )
+    .await?;
+    if utf8[0].get::<i32, _>(0) == Some(0) {
+        return Ok(());
+    }
+
     let r = rows(
         &mut conn,
         "SELECT CAST(CAST(N'héllo 日€😀' COLLATE Latin1_General_100_CI_AS_SC_UTF8 AS varchar(50)) AS sql_variant), \
