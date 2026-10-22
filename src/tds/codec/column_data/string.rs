@@ -27,14 +27,7 @@ where
                 return Err(Error::Protocol("nvarchar: invalid plp length".into()));
             }
 
-            // Decode UTF-16LE straight from the byte pairs, without first
-            // collecting an intermediate `Vec<u16>` (one fewer full-buffer
-            // allocation + copy per value). Invalid surrogates still error,
-            // matching the previous `String::from_utf16` behaviour.
-            let s = char::decode_utf16(buf.chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])))
-                .collect::<Result<String, _>>()
-                .map_err(|_| Error::Protocol("nvarchar: invalid UTF-16 sequence".into()))?;
-            Ok(Some(s.into()))
+            Ok(Some(decode_utf16le(&buf)?.into()))
         }
         _ => Ok(None),
     }
@@ -57,9 +50,62 @@ pub(crate) fn decode_varchar(buf: Vec<u8>, collation: &Collation) -> crate::Resu
     }
 }
 
+/// Decodes UTF-16LE bytes (even length) into a `String` allocated at its exact
+/// UTF-8 size. ASCII-only input is copied byte by byte without decoding.
+pub(crate) fn decode_utf16le(buf: &[u8]) -> crate::Result<String> {
+    let units = buf
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]));
+
+    // A surrogate half counts 2, so a valid pair counts 4. Unpaired halves
+    // fail below anyway.
+    let mut utf8_len = 0usize;
+    let mut ascii = true;
+    for u in units.clone() {
+        utf8_len += match u {
+            0..=0x7f => 1,
+            0x80..=0x7ff | 0xd800..=0xdfff => 2,
+            _ => 3,
+        };
+        ascii &= u < 0x80;
+    }
+
+    if ascii {
+        let bytes: Vec<u8> = buf.chunks_exact(2).map(|c| c[0]).collect();
+        return String::from_utf8(bytes)
+            .map_err(|_| Error::Protocol("nvarchar: invalid UTF-16 sequence".into()));
+    }
+
+    let mut s = String::with_capacity(utf8_len);
+    for c in char::decode_utf16(units) {
+        s.push(c.map_err(|_| Error::Protocol("nvarchar: invalid UTF-16 sequence".into()))?);
+    }
+    Ok(s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn utf16le(s: &str) -> Vec<u8> {
+        s.encode_utf16().flat_map(u16::to_le_bytes).collect()
+    }
+
+    #[test]
+    fn decode_utf16le_ascii_and_multibyte() {
+        assert_eq!(decode_utf16le(&utf16le("")).unwrap(), "");
+        assert_eq!(decode_utf16le(&utf16le("hello")).unwrap(), "hello");
+        let s = "åäö €𝄞 ascii";
+        let decoded = decode_utf16le(&utf16le(s)).unwrap();
+        assert_eq!(decoded, s);
+        assert_eq!(decoded.capacity(), s.len());
+    }
+
+    #[test]
+    fn decode_utf16le_rejects_an_unpaired_surrogate() {
+        let err = decode_utf16le(&[0x00, 0xd8, b'a', 0]).unwrap_err();
+        assert!(matches!(err, Error::Protocol(_)));
+    }
 
     #[test]
     fn decode_varchar_keeps_ascii_and_converts_the_rest() {
