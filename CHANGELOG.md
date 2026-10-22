@@ -251,6 +251,10 @@ that land will be documented here.
   wrapped LOGIN7's u32 lengths.
 - **A `time::OffsetDateTime` offset with seconds is a `Conversion` error**, as a
   chrono one is, instead of being cut to whole minutes.
+- **A `DateTime` or `SmallDateTime` of 24 hours or more is a `Conversion`
+  error**, and so is a chrono leap second without `tds73`: 12:34:60.5 was sent
+  as 12:35:00.5; past midnight, a parameter failed (8023) and a bulk value moved
+  to the next day.
 - **Bulk insert of a string into an `xml` column works**, as in SqlBulkCopy.
 
 ### Changed

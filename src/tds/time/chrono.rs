@@ -89,14 +89,19 @@ fn to_days(date: NaiveDate, start_year: i32) -> i64 {
         .num_days()
 }
 
+/// 1/300 s since midnight. A leap second (nanosecond >= 1e9) becomes
+/// `DateTime::LEAP_SECOND`: counted on, it would read as the next second, or
+/// past 24:00.
 #[inline]
 #[cfg(not(feature = "tds73"))]
-fn to_sec_fragments(time: NaiveTime) -> i64 {
-    time.signed_duration_since(NaiveTime::from_hms_opt(0, 0, 0).unwrap())
-        .num_nanoseconds()
-        .unwrap()
-        * 300
-        / (1e9 as i64)
+fn to_sec_fragments(time: NaiveTime) -> u32 {
+    use chrono::Timelike;
+
+    match time.nanosecond() {
+        n if n >= 1_000_000_000 => DateTime1::LEAP_SECOND,
+        // n * 300 / 10^9, within u32; the total is under 25,920,000.
+        n => time.num_seconds_from_midnight() * 300 + n * 3 / 10_000_000,
+    }
 }
 
 #[cfg(feature = "tds73")]
@@ -204,7 +209,7 @@ to_sql!(self_,
             let days = to_days(date, 1900) as i32;
             let seconds_fragments = to_sec_fragments(time);
 
-            DateTime1::new(days, seconds_fragments as u32)
+            DateTime1::new(days, seconds_fragments)
         });
 );
 
@@ -217,7 +222,7 @@ into_sql!(self_,
             let days = to_days(date, 1900) as i32;
             let seconds_fragments = to_sec_fragments(time);
 
-            DateTime1::new(days, seconds_fragments as u32)
+            DateTime1::new(days, seconds_fragments)
         });
 );
 
@@ -397,7 +402,6 @@ mod tests {
         assert_eq!(utc, dt);
     }
 
-    #[cfg(feature = "tds73")]
     fn encode(data: ColumnData<'_>) -> crate::Result<()> {
         use crate::tds::codec::Encode;
 
@@ -550,5 +554,34 @@ mod tests {
         let cd: ColumnData<'static> = dt.into_sql();
         assert!(matches!(cd, ColumnData::DateTime(Some(_))));
         assert_eq!(NaiveDateTime::from_sql(&cd).unwrap(), Some(dt));
+    }
+
+    #[cfg(not(feature = "tds73"))]
+    #[test]
+    fn leap_seconds_are_datetime_encode_errors() {
+        use crate::ToSql;
+
+        // At 23:59 it went past midnight (8023); at 12:34 it was the next
+        // second, 12:35:00.5.
+        for (h, m) in [(23, 59), (12, 34)] {
+            let time = NaiveTime::from_hms_nano_opt(h, m, 59, 1_500_000_000).unwrap();
+            let naive = NaiveDate::from_ymd_opt(2016, 12, 31)
+                .unwrap()
+                .and_time(time);
+
+            for data in [naive.to_sql(), naive.into_sql()] {
+                let err = encode(data).unwrap_err();
+                assert!(
+                    matches!(&err, crate::Error::Conversion(m) if m.contains("leap")),
+                    "{time}: {err:?}"
+                );
+            }
+        }
+
+        let last = NaiveDate::from_ymd_opt(2016, 12, 31)
+            .unwrap()
+            .and_hms_nano_opt(23, 59, 59, 999_999_999)
+            .unwrap();
+        encode(last.to_sql()).unwrap();
     }
 }

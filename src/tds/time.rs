@@ -52,6 +52,10 @@ pub struct DateTime {
 }
 
 impl DateTime {
+    /// What a chrono leap second converts to without `tds73`: `ToSql`
+    /// cannot fail, so the encoder rejects it.
+    pub(crate) const LEAP_SECOND: u32 = u32::MAX;
+
     /// Construct a new `DateTime` instance.
     pub fn new(days: i32, seconds_fragments: u32) -> Self {
         Self {
@@ -108,6 +112,11 @@ impl DateTime {
 
     /// Fails unless the server holds the value: under 24 hours.
     pub(crate) fn validate(self) -> crate::Result<()> {
+        if self.seconds_fragments == Self::LEAP_SECOND {
+            return Err(crate::Error::Conversion(
+                "datetime: SQL Server has no leap seconds (second 60)".into(),
+            ));
+        }
         self.millis_of_day().map(drop)
     }
 }
