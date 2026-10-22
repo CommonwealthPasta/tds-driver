@@ -1,6 +1,6 @@
 # TDS Protocol Compatibility
 
-This document tracks `tiberius-ng`'s coverage of the Microsoft Tabular Data
+This document tracks `tds-driver`'s coverage of the Microsoft Tabular Data
 Stream (MS-TDS) protocol. It is a maintained snapshot — code references may
 drift; treat the ratings as the source of truth and file an issue for
 discrepancies.

@@ -1,5 +1,5 @@
 //! A utility proc-macro crate that generates trivial trait implementations used
-//! in the Rust-to-SQL data exchange for tiberius table-valued parameters.
+//! in the Rust-to-SQL data exchange for tds-driver table-valued parameters.
 extern crate proc_macro;
 
 #[macro_use]

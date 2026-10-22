@@ -1,8 +1,8 @@
-# Tiberius Guide
+# tds-driver guide
 
-A practical tour of the driver. For the full API see [docs.rs](https://docs.rs/tiberius-ng).
-Every example imports the crate as `tiberius` (the package is `tiberius-ng`; see
-the [README](../README.md#installation)).
+A practical tour of the driver. For the full API see [docs.rs](https://docs.rs/tds-driver).
+Every example imports the crate as `tds_driver`; see the
+[README](../README.md#installation) for the dependency line.
 
 - [Connecting](#connecting)
 - [Configuration](#configuration)
@@ -21,7 +21,7 @@ the [README](../README.md#installation)).
 
 ## Connecting
 
-Tiberius is runtime-independent: you create the `TcpStream` and hand it to the
+tds-driver is runtime-independent: you create the `TcpStream` and hand it to the
 [`Client`].
 
 **Tokio** (wrap the stream with `tokio_util::compat`):
@@ -235,13 +235,13 @@ client.cancel_query().await?; // sends a TDS Attention signal
 ## Connection pooling
 
 Pooling is delegated to the async pool crates rather than built in. This keeps
-Tiberius runtime-agnostic (a pool has to pick a runtime's timers and tasks) and
+the driver runtime-agnostic (a pool has to pick a runtime's timers and tasks) and
 lets the connection lifecycle — sizing, health checks, idle reaping — evolve
 independently of the driver. Use [`bb8`](https://crates.io/crates/bb8),
 [`deadpool`](https://crates.io/crates/deadpool), or
 [`mobc`](https://crates.io/crates/mobc) with a small connection manager.
 
-Because Tiberius has no MARS (one in-flight request per connection), a pool is
+Because tds-driver has no MARS (one in-flight request per connection), a pool is
 also the natural way to get concurrency: check out a connection per task.
 
 Here is a minimal [`bb8`](https://crates.io/crates/bb8) manager over Tokio:
@@ -252,12 +252,12 @@ use tds_driver::{Client, Config};
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
-struct TiberiusManager {
+struct TdsManager {
     config: Config,
 }
 
 #[async_trait::async_trait]
-impl ManageConnection for TiberiusManager {
+impl ManageConnection for TdsManager {
     type Connection = Client<Compat<TcpStream>>;
     type Error = tds_driver::error::Error;
 
@@ -288,7 +288,7 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = Pool::builder()
         .max_size(16)
-        .build(TiberiusManager { config })
+        .build(TdsManager { config })
         .await?;
 
     // Check out a connection; it returns to the pool on drop.
@@ -317,8 +317,8 @@ response's first error; `TokenError::other_errors` lists any later ones and
 `TokenError::info_messages` the response's `PRINT` and other informational
 messages.
 
-[`Client`]: https://docs.rs/tiberius-ng/latest/tiberius/struct.Client.html
-[`Config`]: https://docs.rs/tiberius-ng/latest/tiberius/struct.Config.html
-[`Query`]: https://docs.rs/tiberius-ng/latest/tiberius/struct.Query.html
-[`Command`]: https://docs.rs/tiberius-ng/latest/tiberius/struct.Command.html
-[`tds_driver::error::Error`]: https://docs.rs/tiberius-ng/latest/tiberius/error/enum.Error.html
+[`Client`]: https://docs.rs/tds-driver/latest/tds_driver/struct.Client.html
+[`Config`]: https://docs.rs/tds-driver/latest/tds_driver/struct.Config.html
+[`Query`]: https://docs.rs/tds-driver/latest/tds_driver/struct.Query.html
+[`Command`]: https://docs.rs/tds-driver/latest/tds_driver/struct.Command.html
+[`tds_driver::error::Error`]: https://docs.rs/tds-driver/latest/tds_driver/error/enum.Error.html

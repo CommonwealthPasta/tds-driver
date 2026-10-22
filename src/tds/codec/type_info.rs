@@ -49,7 +49,7 @@ pub enum TypeInfo {
 /// `UDT_INFO` rule in MS-TDS §2.2.5.5.4.
 ///
 /// This carries only the identifying metadata of the type. The value bytes are
-/// surfaced verbatim (see [`ColumnData::Binary`]); tiberius does not attempt to
+/// surfaced verbatim (see [`ColumnData::Binary`]); the driver does not attempt to
 /// deserialize the CLR representation.
 ///
 /// [`ColumnData::Binary`]: crate::ColumnData::Binary

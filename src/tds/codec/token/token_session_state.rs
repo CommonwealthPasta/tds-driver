@@ -22,7 +22,7 @@ pub struct SessionStateValue {
 /// Sent by the server as part of the connection-resiliency / session-recovery
 /// feature (MS-TDS §2.2.7.22). It informs the client about the current session
 /// state so that the client can transparently reconnect and restore the
-/// session after an idle connection has been broken. Tiberius does not yet
+/// session after an idle connection has been broken. The driver does not yet
 /// initiate transparent reconnects, so the token is decoded and retained.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenSessionState {

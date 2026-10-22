@@ -1,14 +1,14 @@
 //! An asynchronous, runtime-independent, pure-rust Tabular Data Stream (TDS)
 //! implementation for Microsoft SQL Server.
 //!
-//! Tiberius is not bound to any single async runtime: a `TcpStream` is created
+//! tds-driver is not bound to any single async runtime: a `TcpStream` is created
 //! separately and injected into the [`Client`], so it works with Tokio, smol,
 //! and other runtimes that provide `futures::io::{AsyncRead, AsyncWrite}`.
 //!
 //! # Connecting with Tokio
 //!
 //! Tokio is using their own version of `AsyncRead` and `AsyncWrite` traits,
-//! meaning that when wanting to use Tiberius with Tokio, their `TcpStream`
+//! meaning that when wanting to use tds-driver with Tokio, their `TcpStream`
 //! needs to be wrapped in Tokio's `Compat` module.
 //!
 //! ```no_run
@@ -40,7 +40,7 @@
 //!
 //! # Ways of querying
 //!
-//! Tiberius offers two ways to query the database: directly from the [`Client`]
+//! tds-driver offers two ways to query the database: directly from the [`Client`]
 //! with the [`Client#query`] and [`Client#execute`], or additionally through
 //! the [`Query`] object.
 //!
@@ -101,7 +101,7 @@
 //!
 //! # Authentication
 //!
-//! Tiberius supports different [ways of authentication] to the SQL Server:
+//! tds-driver supports different [ways of authentication] to the SQL Server:
 //!
 //! - SQL Server authentication uses the facilities of the database to
 //!   authenticate the user.
@@ -112,9 +112,9 @@
 //!
 //! ## AAD(Azure Active Directory) Authentication
 //!
-//! Tiberius supports AAD authentication by taking an AAD token. Suggest using
+//! tds-driver supports AAD authentication by taking an AAD token. Suggest using
 //! [azure_identity](https://crates.io/crates/azure_identity) crate to retrieve
-//! the token, and config tiberius with token. There is an example in examples
+//! the token, and pass the token to the config. There is an example in examples
 //! folder on how to setup this.
 //!
 //! # TLS
@@ -179,7 +179,7 @@
 //! - If using an [ADO.NET connection string], it is possible to create a
 //!   [`Config`] from one. Please see the documentation for
 //!   [`from_ado_string`] for details.
-//! - If wanting to use Tiberius with SQL Server version 2005, one must
+//! - If wanting to use tds-driver with SQL Server version 2005, one must
 //!   disable the `tds73` feature.
 //!
 //! [`EncryptionLevel`]: enum.EncryptionLevel.html

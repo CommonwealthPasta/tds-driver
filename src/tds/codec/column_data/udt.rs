@@ -5,7 +5,7 @@ use crate::{sql_read_bytes::SqlReadBytes, ColumnData};
 /// Decode the value of a CLR user-defined type (UDT) column.
 ///
 /// UDT values are always transferred using the partially length-prefixed (PLP)
-/// byte-stream format (MS-TDS §2.2.5.5.4). tiberius does not attempt to
+/// byte-stream format (MS-TDS §2.2.5.5.4). the driver does not attempt to
 /// deserialize the CLR representation; the raw serialized bytes are surfaced
 /// verbatim as [`ColumnData::Binary`].
 pub(crate) async fn decode<R>(src: &mut R) -> crate::Result<ColumnData<'static>>

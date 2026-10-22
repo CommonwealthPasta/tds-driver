@@ -1,6 +1,6 @@
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=github-sponsors)](https://github.com/sponsors/MattJackson)
 
-<h1 align="center">Tiberius</h1>
+<h1 align="center">tds-driver</h1>
 
 <p align="center">
   <b>A modern, async, pure-Rust Microsoft SQL Server (TDS) driver.</b><br>
@@ -8,10 +8,10 @@
 </p>
 
 <p align="center">
-  <a href="https://crates.io/crates/tiberius-ng"><img src="https://img.shields.io/crates/v/tiberius-ng.svg" alt="crates.io"></a>
-  <a href="https://docs.rs/tiberius-ng"><img src="https://docs.rs/tiberius-ng/badge.svg" alt="docs.rs"></a>
-  <a href="https://crates.io/crates/tiberius-ng"><img src="https://img.shields.io/crates/d/tiberius-ng.svg" alt="downloads"></a>
-  <a href="#license"><img src="https://img.shields.io/crates/l/tiberius-ng.svg" alt="license"></a>
+  <a href="https://crates.io/crates/tds-driver"><img src="https://img.shields.io/crates/v/tds-driver.svg" alt="crates.io"></a>
+  <a href="https://docs.rs/tds-driver"><img src="https://docs.rs/tds-driver/badge.svg" alt="docs.rs"></a>
+  <a href="https://crates.io/crates/tds-driver"><img src="https://img.shields.io/crates/d/tds-driver.svg" alt="downloads"></a>
+  <a href="#license"><img src="https://img.shields.io/crates/l/tds-driver.svg" alt="license"></a>
   <br>
   <a href="https://github.com/MattJackson/tiberius-ng/actions/workflows/test.yml"><img src="https://github.com/MattJackson/tiberius-ng/actions/workflows/test.yml/badge.svg?branch=dev" alt="tests"></a>
   <a href="https://github.com/MattJackson/tiberius-ng/actions/workflows/security.yml"><img src="https://github.com/MattJackson/tiberius-ng/actions/workflows/security.yml/badge.svg?branch=dev" alt="security audit"></a>
@@ -21,7 +21,7 @@
 
 ---
 
-Tiberius speaks the TDS protocol directly, so you can talk to **Microsoft SQL
+tds-driver speaks the TDS protocol directly, so you can talk to **Microsoft SQL
 Server** and **Azure SQL** from Rust on Linux, macOS and Windows — with no ODBC,
 no FreeTDS, and no C toolchain in the default build. It is not tied to any async
 runtime: give it anything implementing `AsyncRead + AsyncWrite` (Tokio or
@@ -29,11 +29,10 @@ smol) and it does the rest.
 
 > ### ℹ️ About this project
 >
-> This is the **actively-maintained continuation** of the original
-> [`tiberius`](https://github.com/prisma/tiberius), which is no longer maintained
-> upstream. It is published on crates.io as **`tiberius-ng`** (the `tiberius`
-> name belongs to the original project) — but the **library is still imported as
-> `tiberius`**, so migrating is a one-line change. See [Installation](#installation).
+> tds-driver began as a fork of [`tiberius`](https://github.com/prisma/tiberius),
+> by way of [`tiberius-ng`](https://github.com/MattJackson/tiberius-ng). It has
+> since diverged far enough to be its own crate, with its own name and API, so it
+> is not a drop-in replacement for either. See [Installation](#installation).
 
 ## Highlights
 
@@ -56,25 +55,21 @@ smol) and it does the rest.
 
 ## Installation
 
-The published crate is `tiberius-ng`; the library name stays `tiberius`:
-
 ```toml
 [dependencies]
-tiberius = { package = "tiberius-ng", version = "0.13" }
+tds-driver = "0.1"
 ```
-
-Your code imports it as usual — **no source changes**:
 
 ```rust
 use tds_driver::{Client, Config, AuthMethod};
 ```
 
 <details>
-<summary>Migrating from the original <code>tiberius</code>?</summary>
+<summary>Coming from <code>tiberius</code> or <code>tiberius-ng</code>?</summary>
 
-Replace `tiberius = "0.12"` with the line above. The API is compatible and the
-import path is unchanged; you also gain the fixes and features in the
-[changelog](CHANGELOG.md).
+Replace the dependency with the line above and `use tiberius::` with
+`use tds_driver::`. The rest of the API is close, but not the same: the
+**Breaking** section of the [changelog](CHANGELOG.md) lists what changed.
 </details>
 
 ## Quick start
@@ -111,13 +106,13 @@ async fn main() -> anyhow::Result<()> {
 
 Prefer a connection string? `Config::from_ado_string("Server=tcp:localhost,1433;User Id=SA;Password=…;Encrypt=strict;")`
 and `Config::from_jdbc_string(…)` are both supported, or build one fluently with
-[`ConfigBuilder`](https://docs.rs/tiberius-ng/latest/tiberius/struct.ConfigBuilder.html).
+[`ConfigBuilder`](https://docs.rs/tds-driver/latest/tds_driver/struct.ConfigBuilder.html).
 
 ## Documentation
 
 - **[Guide](docs/GUIDE.md)** — a practical tour: connecting, config, TLS, auth,
   querying, bulk insert, stored procedures/TVPs, transactions, and more.
-- **[API docs](https://docs.rs/tiberius-ng)** — the full reference on docs.rs.
+- **[API docs](https://docs.rs/tds-driver)** — the full reference on docs.rs.
 - **[`examples/`](examples/)** — runnable examples (tokio, bulk, named pipes, AAD).
 - **[TDS compatibility](docs/TDS_COMPATIBILITY.md)** — the protocol coverage matrix.
 
@@ -137,17 +132,17 @@ and `Config::from_jdbc_string(…)` are both supported, or build one fluently wi
 | `integrated-auth-gssapi` | Kerberos/GSSAPI integrated auth (Unix) | |
 | `sspi-rs` | Windows-style NTLM auth on Linux/macOS without Kerberos | |
 
-The three TLS backends are mutually exclusive. See the [docs](https://docs.rs/tiberius-ng)
+The three TLS backends are mutually exclusive. See the [docs](https://docs.rs/tds-driver)
 for the full API.
 
 ## Runtimes
 
-Tiberius takes any `AsyncRead + AsyncWrite` socket, so it runs under:
+tds-driver takes any `AsyncRead + AsyncWrite` socket, so it runs under:
 
 - **Tokio** — wrap the stream with `tokio_util::compat`.
 - **smol** — pass the `TcpStream` directly.
 
-Connection pooling is delegated to the async pool crates — this keeps Tiberius
+Connection pooling is delegated to the async pool crates — this keeps the driver
 runtime-agnostic and lets the connection lifecycle evolve independently of the
 driver. Use [`bb8`](https://crates.io/crates/bb8),
 [`deadpool`](https://crates.io/crates/deadpool) or
@@ -226,6 +221,6 @@ shall be dual-licensed as above, without additional terms.
 ## Acknowledgements
 
 Built on the excellent foundation of the original
-[`tiberius`](https://github.com/prisma/tiberius) by Prisma and its contributors.
-This fork carries that work forward — thank you to everyone who has contributed
-patches, past and present.
+[`tiberius`](https://github.com/prisma/tiberius) by Prisma and its contributors,
+and on [`tiberius-ng`](https://github.com/MattJackson/tiberius-ng), which carried
+it forward. Thank you to everyone who has contributed patches, past and present.

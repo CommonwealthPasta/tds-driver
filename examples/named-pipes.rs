@@ -8,7 +8,7 @@
 //!
 //! Named pipes are a Windows-only transport, so the real example is compiled
 //! only on Windows; on other platforms `main` simply reports that it is
-//! unsupported. See tiberius issues #131 and #53 for background.
+//! unsupported. See prisma/tiberius issues #131 and #53 for background.
 
 #[cfg(windows)]
 #[tokio::main]

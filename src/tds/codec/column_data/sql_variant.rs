@@ -12,7 +12,7 @@
 //! value     (totalLen - 2 - propBytes bytes)
 //! ```
 //!
-//! Because tiberius exposes intrinsic values directly, the decoded value is
+//! Because the driver exposes intrinsic values directly, the decoded value is
 //! mapped onto the matching [`ColumnData`] variant of the base type (e.g. an
 //! `int` sql_variant becomes [`ColumnData::I32`]). A `NULL` sql_variant, which
 //! carries no base type, is surfaced as [`ColumnData::String`]`(None)`.
