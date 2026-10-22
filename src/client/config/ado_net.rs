@@ -1016,7 +1016,12 @@ mod tests {
             AuthMethod::SqlServer(_)
         ));
 
-        for bad in ["Packet Size=511", "Packet Size=32769", "Packet Size=big"] {
+        for bad in [
+            "Packet Size=511",
+            "Packet Size=32769",
+            "Packet Size=big",
+            "Trusted_Connection=maybe",
+        ] {
             assert!(crate::Config::from_ado_string(bad).is_err(), "{bad}");
         }
     }

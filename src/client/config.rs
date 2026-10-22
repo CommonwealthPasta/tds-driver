@@ -549,7 +549,7 @@ impl Config {
     /// |Parameter|Allowed values|Description|
     /// |--------|--------|--------|
     /// |`Data Source`, `server`, `addr`, `address`, `network address`|`<string>`|The name or network address of the instance of SQL Server to which to connect. The port number can be specified after the server name. The correct form of this parameter is either `tcp:host,port` or `tcp:host\\instance`; other protocols (`np:`, `lpc:`, `admin:`) are errors.|
-    /// |`Integrated Security`, `IntegratedSecurity`, `Trusted_Connection`|`true`,`false`,`yes`,`no`|Toggle between Windows/Kerberos authentication and SQL authentication.|
+    /// |`Integrated Security`, `IntegratedSecurity`, `Trusted_Connection`|`sspi`,`true`,`false`,`yes`,`no`|Toggle between Windows/Kerberos authentication and SQL authentication.|
     /// |`User ID`, `uid`, `user`, `username`|`<string>`|The SQL Server login account.|
     /// |`password`,`pwd`|`<string>`|The password for the SQL Server account logging on.|
     /// |`Initial Catalog`, `database`|`<string>`|The name of the database.|
@@ -873,15 +873,24 @@ pub(crate) trait ConfigString {
         Ok(None)
     }
 
+    /// `sspi`, `true` or `yes`; `false` or `no` (SqlClient's
+    /// `ConvertValueToIntegratedSecurityInternal`).
+    fn integrated_security(&self) -> crate::Result<bool> {
+        match self.first(&["integrated security", "integratedsecurity"]) {
+            Some(v) if v.trim().eq_ignore_ascii_case("sspi") => Ok(true),
+            Some(v) => Self::parse_bool(v),
+            None => Ok(false),
+        }
+    }
+
     fn authentication(&self) -> crate::Result<AuthMethod> {
         let user = self.first(&["uid", "username", "user", "user id"]);
 
         let pw = self.first(&["password", "pwd"]);
 
-        match self.first(&["integratedsecurity", "integrated security"]) {
+        match self.integrated_security()? {
             #[cfg(all(windows, feature = "winauth"))]
-            Some(val) if val.to_lowercase() == "sspi" || Self::parse_bool(val)? => match (user, pw)
-            {
+            true => match (user, pw) {
                 (None, None) => Ok(AuthMethod::Integrated),
                 _ => Ok(AuthMethod::windows(user.unwrap_or(""), pw.unwrap_or(""))),
             },
@@ -890,21 +899,17 @@ pub(crate) trait ConfigString {
             // back to Kerberos (`Integrated`) only if `integrated-auth-gssapi`
             // is also enabled and no credentials are given.
             #[cfg(all(unix, feature = "sspi-rs"))]
-            Some(val) if val.to_lowercase() == "sspi" || Self::parse_bool(val)? => {
-                match (user, pw) {
-                    (Some(user), Some(pw)) => Ok(AuthMethod::windows(user, pw)),
-                    #[cfg(feature = "integrated-auth-gssapi")]
-                    (None, None) => Ok(AuthMethod::Integrated),
-                    _ => Ok(AuthMethod::windows(user.unwrap_or(""), pw.unwrap_or(""))),
-                }
-            }
+            true => match (user, pw) {
+                (Some(user), Some(pw)) => Ok(AuthMethod::windows(user, pw)),
+                #[cfg(feature = "integrated-auth-gssapi")]
+                (None, None) => Ok(AuthMethod::Integrated),
+                _ => Ok(AuthMethod::windows(user.unwrap_or(""), pw.unwrap_or(""))),
+            },
             #[cfg(all(
                 feature = "integrated-auth-gssapi",
                 not(all(unix, feature = "sspi-rs"))
             ))]
-            Some(val) if val.to_lowercase() == "sspi" || Self::parse_bool(val)? => {
-                Ok(AuthMethod::Integrated)
-            }
+            true => Ok(AuthMethod::Integrated),
             _ => Ok(AuthMethod::sql_server(user.unwrap_or(""), pw.unwrap_or(""))),
         }
     }
