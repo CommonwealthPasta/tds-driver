@@ -293,7 +293,7 @@ mod tests {
     async fn row_bitmap_over_256_columns_is_read_whole() {
         use crate::sql_read_bytes::test_utils::IntoSqlReadBytes;
 
-        let mut bytes = vec![0u8; 38];
+        let mut bytes = [0u8; 38];
         bytes[37] = 0b0000_1000; // column 299
         let mut src = bytes::BytesMut::from(&bytes[..]).into_sql_read_bytes();
         let bitmap = RowBitmap::decode(&mut src, 300).await.unwrap();
