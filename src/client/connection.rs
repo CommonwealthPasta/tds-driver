@@ -18,7 +18,11 @@ use crate::{
 };
 use asynchronous_codec::Framed;
 use bytes::{Buf, BytesMut};
-#[cfg(any(windows, feature = "integrated-auth-gssapi", feature = "sspi-rs"))]
+#[cfg(any(
+    all(windows, feature = "winauth"),
+    feature = "integrated-auth-gssapi",
+    feature = "sspi-rs"
+))]
 use codec::TokenSspi;
 use futures_util::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use futures_util::ready;
@@ -219,7 +223,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         TokenStream::new(self).flush_done().await
     }
 
-    #[cfg(any(windows, feature = "integrated-auth-gssapi", feature = "sspi-rs"))]
+    #[cfg(any(
+        all(windows, feature = "winauth"),
+        feature = "integrated-auth-gssapi",
+        feature = "sspi-rs"
+    ))]
     /// Flush the incoming token stream until receiving `SSPI` token.
     async fn flush_sspi(&mut self) -> crate::Result<TokenSspi> {
         TokenStream::new(self).flush_sspi().await

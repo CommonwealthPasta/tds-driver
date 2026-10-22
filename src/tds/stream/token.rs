@@ -178,7 +178,11 @@ where
         }
     }
 
-    #[cfg(any(windows, feature = "integrated-auth-gssapi", feature = "sspi-rs"))]
+    #[cfg(any(
+        all(windows, feature = "winauth"),
+        feature = "integrated-auth-gssapi",
+        feature = "sspi-rs"
+    ))]
     pub(crate) async fn flush_sspi(self) -> crate::Result<TokenSspi> {
         let mut stream = self.try_unfold();
         let mut messages = ServerMessages::default();

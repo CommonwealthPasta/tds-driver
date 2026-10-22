@@ -97,7 +97,7 @@ impl Context {
     }
 
     #[cfg(any(
-        windows,
+        all(windows, feature = "winauth"),
         all(unix, any(feature = "integrated-auth-gssapi", feature = "sspi-rs"))
     ))]
     pub fn spn(&self) -> &str {
@@ -188,7 +188,7 @@ mod tests {
         ctx.set_spn("dbhost", 1433);
 
         #[cfg(any(
-            windows,
+            all(windows, feature = "winauth"),
             all(unix, any(feature = "integrated-auth-gssapi", feature = "sspi-rs"))
         ))]
         assert_eq!(ctx.spn(), "MSSQLSvc/dbhost:1433");
@@ -196,7 +196,7 @@ mod tests {
         // On platforms without an spn() accessor, at least make sure setting
         // it doesn't panic.
         #[cfg(not(any(
-            windows,
+            all(windows, feature = "winauth"),
             all(unix, any(feature = "integrated-auth-gssapi", feature = "sspi-rs"))
         )))]
         let _ = ctx;

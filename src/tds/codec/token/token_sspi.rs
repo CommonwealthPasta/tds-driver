@@ -13,7 +13,7 @@ impl AsRef<[u8]> for TokenSspi {
 
 impl TokenSspi {
     #[cfg(any(
-        windows,
+        all(windows, feature = "winauth"),
         all(unix, any(feature = "integrated-auth-gssapi", feature = "sspi-rs"))
     ))]
     pub fn new(bytes: Vec<u8>) -> Self {
