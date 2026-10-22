@@ -6,6 +6,43 @@ pub(crate) trait Encode<B: BufMut> {
     fn encode(self, dst: &mut B) -> crate::Result<()>;
 }
 
+/// A B_VARCHAR: `s` in UTF-16 after a u8 count of its units. `what` names
+/// it in the error for a longer one.
+pub(crate) fn put_b_varchar(dst: &mut BytesMut, s: &str, what: &str) -> crate::Result<()> {
+    dst.put_u8(utf16_units(s, what)?);
+    put_utf16(dst, s);
+    Ok(())
+}
+
+/// A US_VARCHAR: as [`put_b_varchar`], with a u16 count.
+pub(crate) fn put_us_varchar(dst: &mut BytesMut, s: &str, what: &str) -> crate::Result<()> {
+    dst.put_u16_le(utf16_units(s, what)?);
+    put_utf16(dst, s);
+    Ok(())
+}
+
+fn utf16_units<T: TryFrom<usize> + num_traits::Bounded + std::fmt::Display>(
+    s: &str,
+    what: &str,
+) -> crate::Result<T> {
+    let units = s.encode_utf16().count();
+    T::try_from(units).map_err(|_| {
+        crate::Error::Conversion(
+            format!(
+                "{what} is {units} UTF-16 code units long; the limit is {}",
+                T::max_value()
+            )
+            .into(),
+        )
+    })
+}
+
+fn put_utf16(dst: &mut BytesMut, s: &str) {
+    for unit in s.encode_utf16() {
+        dst.put_u16_le(unit);
+    }
+}
+
 impl Encoder for PacketCodec {
     type Item<'a> = Packet;
     type Error = crate::Error;

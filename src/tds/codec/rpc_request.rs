@@ -1,5 +1,5 @@
 use super::TypeInfoTvp;
-use super::{AllHeaderTy, Encode, ALL_HEADERS_LEN_TX};
+use super::{put_b_varchar, put_us_varchar, AllHeaderTy, Encode, ALL_HEADERS_LEN_TX};
 use crate::{tds::codec::ColumnData, Result};
 use bytes::{BufMut, BytesMut};
 use enumflags2::{bitflags, BitFlags};
@@ -114,24 +114,7 @@ impl<'a> Encode<BytesMut> for TokenRpcRequest<'a> {
                 let val = (0xffff_u32) | ((*id as u16) as u32) << 16;
                 dst.put_u32_le(val);
             }
-            RpcProcIdValue::Name(ref name) => {
-                // ProcName is a US_VARCHAR: a u16 count of UTF-16 code units.
-                let units = name.encode_utf16().count();
-                let length = u16::try_from(units).map_err(|_| {
-                    crate::Error::Conversion(
-                        format!(
-                            "procedure name is {units} UTF-16 code units long; the limit is 65535"
-                        )
-                        .into(),
-                    )
-                })?;
-
-                dst.put_u16_le(length);
-
-                for chr in name.encode_utf16() {
-                    dst.put_u16_le(chr);
-                }
-            }
+            RpcProcIdValue::Name(ref name) => put_us_varchar(dst, name, "procedure name")?,
         }
 
         dst.put_u16_le(self.flags.bits());
@@ -146,21 +129,7 @@ impl<'a> Encode<BytesMut> for TokenRpcRequest<'a> {
 
 impl<'a> Encode<BytesMut> for RpcParam<'a> {
     fn encode(self, dst: &mut BytesMut) -> Result<()> {
-        // ParamMetaData's name is a B_VARCHAR: a u8 count of UTF-16 units.
-        let units = self.name.encode_utf16().count();
-        let length = u8::try_from(units).map_err(|_| {
-            crate::Error::Conversion(
-                format!("RPC parameter name is {units} UTF-16 code units long; the limit is 255")
-                    .into(),
-            )
-        })?;
-
-        dst.put_u8(length);
-
-        for codepoint in self.name.encode_utf16() {
-            dst.put_u16_le(codepoint);
-        }
-
+        put_b_varchar(dst, &self.name, "RPC parameter name")?;
         dst.put_u8(self.flags.bits());
 
         match self.value {

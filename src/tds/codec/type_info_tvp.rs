@@ -3,7 +3,10 @@ use bytes::BufMut;
 
 use crate::ColumnData;
 
-use super::{BytesMutWithTypeInfo, Encode, FixedLenType, MetaDataColumn, TypeInfo, VarLenContext};
+use super::{
+    put_b_varchar, BytesMutWithTypeInfo, Encode, FixedLenType, MetaDataColumn, TypeInfo,
+    VarLenContext,
+};
 
 const TVPTYPE: u8 = 0xF3;
 
@@ -29,10 +32,11 @@ impl<'a> Encode<BytesMut> for TypeInfoTvp<'a> {
         //                    [TVP_COLUMN_ORDERING]
         //                    TVP_END_TOKEN
 
+        const NAME: &str = "TVP schema or type name";
         dst.put_u8(TVPTYPE);
-        put_b_varchar("", dst)?; // DB name (unused)
-        put_b_varchar(self.schema_name, dst)?;
-        put_b_varchar(self.db_type_name, dst)?;
+        put_b_varchar(dst, "", NAME)?; // DB name (unused)
+        put_b_varchar(dst, self.schema_name, NAME)?;
+        put_b_varchar(dst, self.db_type_name, NAME)?;
 
         if let Some(ref columns_metadata) = self.columns {
             dst.put_u16_le(columns_metadata.len() as u16);
@@ -44,7 +48,7 @@ impl<'a> Encode<BytesMut> for TypeInfoTvp<'a> {
                 dst.put_u32_le(0_u32); // UserType
                 col.base.clone().encode(dst)?; // Flags + TYPE_INFO
                                                // 2.2.5.5.5.1: ColName MUST be a zero-length string in the TVP.
-                put_b_varchar("", dst)?;
+                put_b_varchar(dst, "", NAME)?;
             }
         } else {
             // TVP_NULL_TOKEN: the server is expected to know the type.
@@ -90,26 +94,6 @@ impl<'a> Encode<BytesMut> for TypeInfoTvp<'a> {
 
         Ok(())
     }
-}
-
-/// Writes a `B_VARCHAR`: a single-byte code-unit count followed by that many
-/// UTF-16 code units.
-fn put_b_varchar(s: &str, dst: &mut BytesMut) -> crate::Result<()> {
-    let units = s.encode_utf16().count();
-    let length = u8::try_from(units).map_err(|_| {
-        crate::Error::Conversion(
-            format!("TVP schema or type name is {units} UTF-16 code units long; the limit is 255")
-                .into(),
-        )
-    })?;
-
-    dst.put_u8(length);
-
-    for chr in s.encode_utf16() {
-        dst.put_u16_le(chr);
-    }
-
-    Ok(())
 }
 
 impl<'a> TypeInfoTvp<'a> {
