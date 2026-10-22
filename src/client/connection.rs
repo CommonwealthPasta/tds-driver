@@ -605,8 +605,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         self.send(PacketHeader::pre_login(id), msg).await?;
 
         let response: PreloginMessage = codec::collect_from(self).await?;
-        // threadid (should be empty when sent from server to client)
-        debug_assert_eq!(response.thread_id, 0);
         // ensure the server accepted the instance we asked it to validate
         response.validate_instance(instance_name.as_deref())?;
         Ok(response)

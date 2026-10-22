@@ -156,3 +156,17 @@ async fn mismatched_encryption_fails_before_tls() {
         );
     }
 }
+
+/// Unknown options and a THREADID are tolerated.
+#[tokio::test]
+async fn prelogin_with_unknown_options_and_thread_id() {
+    let answer = prelogin(&[
+        VERSION,
+        (0x01, &[NOT_SUP]),
+        (0x03, &[0, 0, 0, 7]),
+        (0x08, &[1, 2, 3]),
+        (0x02, &[0]),
+    ]);
+    let (res, _) = connect(answer, EncryptionLevel::NotSupported, None).await;
+    assert!(res.is_ok(), "{res:?}");
+}

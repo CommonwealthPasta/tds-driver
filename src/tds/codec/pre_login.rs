@@ -275,6 +275,7 @@ impl Decode<BytesMut> for PreloginMessage {
                         ret.instance_name = Some(String::from_utf8_lossy(&bytes).into_owned());
                     }
                 }
+                // The server SHOULD send it empty; it is for debugging only.
                 PRELOGIN_THREADID => {
                     ret.thread_id = if length == 0 {
                         0
@@ -554,6 +555,16 @@ mod tests {
         let decoded = PreloginMessage::decode(&mut buf).expect("unknown tokens are skipped");
         assert_eq!(decoded.encryption, EncryptionLevel::On);
         assert!(decoded.mars);
+    }
+
+    #[test]
+    fn decode_accepts_nonempty_threadid() {
+        let mut buf = response(&[
+            (PRELOGIN_VERSION, VERSION),
+            (PRELOGIN_THREADID, &[0, 0, 0, 7]),
+        ]);
+        let decoded = PreloginMessage::decode(&mut buf).unwrap();
+        assert_eq!(decoded.thread_id, 7);
     }
 
     #[cfg(any(
