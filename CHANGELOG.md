@@ -147,6 +147,12 @@ that land will be documented here.
   counts share a cached plan. A value of more than 38 digits is now a
   client-side `Error::Conversion`.
 
+### Security
+
+- **`Encrypt=Strict` ignores `TrustServerCertificate`,** as SqlClient does, so
+  the server certificate is always validated (`TrustServerCertificateCA` still
+  applies).
+
 ### Breaking
 
 - **RETURN status is `i32`**: `CommandItem::ReturnStatus(i32)`,

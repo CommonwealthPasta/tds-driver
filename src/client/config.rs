@@ -491,6 +491,27 @@ impl Config {
             .unwrap_or_else(|| self.get_host())
     }
 
+    /// The certificate validation to apply. Strict encryption always
+    /// validates: like SqlClient, it ignores `trust_cert`.
+    #[cfg(any(
+        feature = "rustls",
+        feature = "native-tls",
+        feature = "vendored-openssl"
+    ))]
+    pub(crate) fn tls_trust(&self) -> &TrustConfig {
+        static VALIDATE: TrustConfig = TrustConfig::Default;
+
+        match (&self.trust, self.encryption) {
+            (TrustConfig::TrustAll, EncryptionLevel::Strict) => {
+                tracing::warn!(
+                    "TrustServerCertificate is ignored with strict encryption; validating the server certificate."
+                );
+                &VALIDATE
+            }
+            (trust, _) => trust,
+        }
+    }
+
     pub(crate) fn get_port(&self) -> u16 {
         match (self.port, self.instance_name.as_ref()) {
             // A user-defined port, we must use that.
@@ -573,7 +594,19 @@ impl Config {
             builder.application_name(name);
         }
 
+        let encryption = s.encrypt()?;
+        builder.encryption(encryption);
+
         match (s.trust_cert()?, s.trust_cert_ca()) {
+            // SqlClient ignores TrustServerCertificate under Encrypt=Strict.
+            (true, ca) if encryption == EncryptionLevel::Strict => {
+                tracing::warn!(
+                    "TrustServerCertificate is ignored with Encrypt=Strict; validating the server certificate."
+                );
+                if let Some(ca) = ca {
+                    builder.trust_cert_ca(ca);
+                }
+            }
             (true, Some(_)) => {
                 return Err(crate::Error::Conversion(
                     "Connection string: TrustServerCertificate=true and TrustServerCertificateCA are mutually exclusive"
@@ -588,8 +621,6 @@ impl Config {
         if let Some(hostname_in_cert) = s.hostname_in_certificate() {
             builder.hostname_in_certificate(hostname_in_cert);
         }
-
-        builder.encryption(s.encrypt()?);
 
         builder.readonly(s.readonly());
 
@@ -1297,6 +1328,32 @@ mod tests {
             "jdbc:sqlserver://h:1433;trustServerCertificate=true;TrustServerCertificateCA=ca.pem",
         );
         assert!(matches!(res, Err(crate::Error::Conversion(_))));
+    }
+
+    #[cfg(feature = "tds80")]
+    #[test]
+    fn strict_ignores_trust_server_certificate() {
+        let config =
+            Config::from_ado_string("server=tcp:h,1433;Encrypt=Strict;TrustServerCertificate=true")
+                .unwrap();
+        assert!(matches!(config.trust, TrustConfig::Default));
+
+        // The CA is still honoured.
+        let config = Config::from_ado_string(
+            "server=tcp:h,1433;encrypt=strict;TrustServerCertificate=yes;TrustServerCertificateCA=ca.pem",
+        )
+        .unwrap();
+        assert!(matches!(
+            config.trust,
+            TrustConfig::CaCertificateLocation(_)
+        ));
+
+        // Set through the API, it is ignored when TLS is set up.
+        let mut config = Config::new();
+        config.trust_cert();
+        assert!(matches!(config.tls_trust(), TrustConfig::TrustAll));
+        config.encryption(EncryptionLevel::Strict);
+        assert!(matches!(config.tls_trust(), TrustConfig::Default));
     }
 
     #[test]

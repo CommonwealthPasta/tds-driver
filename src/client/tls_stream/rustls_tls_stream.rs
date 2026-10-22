@@ -92,7 +92,7 @@ impl ServerCertVerifier for NoCertVerifier {
 fn get_server_name(config: &Config) -> crate::Result<ServerName<'static>> {
     match (
         ServerName::try_from(config.get_hostname_in_certificate()),
-        &config.trust,
+        config.tls_trust(),
     ) {
         (Ok(sn), _) => Ok(sn.to_owned()),
         (Err(_), TrustConfig::TrustAll) => {
@@ -112,7 +112,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> TlsStream<S> {
 
         // First select the server-certificate verification strategy, yielding a
         // builder that still awaits the client-authentication decision.
-        let cc_builder: ConfigBuilder<ClientConfig, WantsClientCert> = match &config.trust {
+        let cc_builder: ConfigBuilder<ClientConfig, WantsClientCert> = match config.tls_trust() {
             TrustConfig::CaCertificateLocation(path) => {
                 if let Ok(buf) = fs::read(path) {
                     let cert = match path.extension() {

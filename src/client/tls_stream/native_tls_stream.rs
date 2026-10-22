@@ -82,7 +82,7 @@ pub(crate) async fn create_tls_stream<S: AsyncRead + AsyncWrite + Unpin + Send>(
         builder = builder.identity(load_identity(cert)?);
     }
 
-    match &config.trust {
+    match config.tls_trust() {
         TrustConfig::CaCertificateLocation(path) => {
             if let Ok(buf) = fs::read(path) {
                 let cert = match path.extension() {

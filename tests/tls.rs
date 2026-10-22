@@ -140,8 +140,8 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for ServerPrelogin<S> {
     }
 }
 
-/// Serves one TLS connection with TDS 7.x full encryption.
-async fn fake_server() -> u16 {
+/// Serves one TLS connection: TDS 8.0 strict, or TDS 7.x full encryption.
+async fn fake_server(strict: bool) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
 
@@ -153,22 +153,50 @@ async fn fake_server() -> u16 {
             .await
             .unwrap();
 
-        read_message(&mut raw).await.unwrap();
-        raw.write_all(&packet(4, &prelogin_response(1)))
-            .await
-            .unwrap();
-        let wrapped = ServerPrelogin {
-            s: raw,
-            wrapping: true,
-            hdr: [0; 8],
-            hpos: 0,
-            remaining: 0,
-            out: Vec::new(),
+        let mut tls = if strict {
+            let Ok(tls) = acceptor
+                .accept(ServerPrelogin {
+                    s: raw,
+                    wrapping: false,
+                    hdr: [0; 8],
+                    hpos: 0,
+                    remaining: 0,
+                    out: Vec::new(),
+                })
+                .await
+            else {
+                return;
+            };
+            tls
+        } else {
+            read_message(&mut raw).await.unwrap();
+            raw.write_all(&packet(4, &prelogin_response(1)))
+                .await
+                .unwrap();
+            let wrapped = ServerPrelogin {
+                s: raw,
+                wrapping: true,
+                hdr: [0; 8],
+                hpos: 0,
+                remaining: 0,
+                out: Vec::new(),
+            };
+            let Ok(mut tls) = acceptor.accept(wrapped).await else {
+                return;
+            };
+            tls.get_mut().wrapping = false;
+            tls
         };
-        let Ok(mut tls) = acceptor.accept(wrapped).await else {
-            return;
-        };
-        tls.get_mut().wrapping = false;
+
+        if strict {
+            let Ok(_) = read_message(&mut tls).await else {
+                return;
+            };
+            tls.write_all(&packet(4, &prelogin_response(0)))
+                .await
+                .unwrap();
+            tls.flush().await.unwrap();
+        }
 
         let Ok((0x10, _)) = read_message(&mut tls).await else {
             return;
@@ -199,6 +227,47 @@ async fn connect(port: u16, connection_string: &str) -> tiberius::Result<()> {
 /// the client must cap the version at TLS 1.2 for a server that offers 1.3.
 #[tokio::test]
 async fn tds7_tls_handshake_against_a_tls13_capable_server() -> tiberius::Result<()> {
-    let port = fake_server().await;
+    let port = fake_server(false).await;
     connect(port, &format!("encrypt=true;TrustServerCertificateCA={CA}")).await
+}
+
+#[cfg(feature = "tds80")]
+#[tokio::test]
+async fn strict_ignores_trust_server_certificate() {
+    // Issued by a CA the system does not trust: validation must fail.
+    let port = fake_server(true).await;
+    let res = connect(port, "encrypt=strict;TrustServerCertificate=true").await;
+    assert!(
+        matches!(res, Err(tiberius::error::Error::Tls(_))),
+        "{res:?}"
+    );
+}
+
+#[cfg(feature = "tds80")]
+#[tokio::test]
+async fn strict_with_trust_server_certificate_honours_the_ca() -> tiberius::Result<()> {
+    let port = fake_server(true).await;
+    connect(
+        port,
+        &format!("encrypt=strict;TrustServerCertificate=true;TrustServerCertificateCA={CA}"),
+    )
+    .await
+}
+
+#[cfg(feature = "tds80")]
+#[tokio::test]
+async fn strict_ignores_trust_cert_set_through_the_api() {
+    let port = fake_server(true).await;
+    let mut config = Config::new();
+    config.host("localhost");
+    config.port(port);
+    config.authentication(tiberius::AuthMethod::sql_server("sa", "x"));
+    config.trust_cert();
+    config.encryption(tiberius::EncryptionLevel::Strict);
+    let tcp = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let res = Client::connect(config, tcp.compat_write()).await.map(drop);
+    assert!(
+        matches!(res, Err(tiberius::error::Error::Tls(_))),
+        "{res:?}"
+    );
 }
