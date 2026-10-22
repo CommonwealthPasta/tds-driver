@@ -636,6 +636,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         fed_auth_required: bool,
         instance_name: Option<String>,
     ) -> crate::Result<PreloginMessage> {
+        // Set only without a port: the SQL Browser's answer went into the
+        // caller's stream, and the SPN was given the browser's own 1434.
+        if let Some(instance) = &instance_name {
+            self.context.set_spn_instance(instance);
+        }
+
         let mut msg = PreloginMessage::new();
         msg.encryption = encryption;
         msg.fed_auth_required = fed_auth_required;

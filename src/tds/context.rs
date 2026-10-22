@@ -84,6 +84,18 @@ impl Context {
         self.spn = Some(format!("MSSQLSvc/{}:{}", host.as_ref(), port));
     }
 
+    /// Names `instance` instead of the port: SqlClient's SPN for a named
+    /// instance whose port it doesn't know (`SniProxy.GetSqlServerSPNs`),
+    /// which SQL Server registers alongside `MSSQLSvc/<host>:<port>`.
+    pub fn set_spn_instance(&mut self, instance: &str) {
+        if let Some(spn) = &mut self.spn {
+            if let Some(colon) = spn.rfind(':') {
+                spn.truncate(colon + 1);
+                spn.push_str(instance);
+            }
+        }
+    }
+
     #[cfg(any(
         all(windows, feature = "winauth"),
         all(unix, any(feature = "integrated-auth-gssapi", feature = "sspi-rs"))
@@ -182,5 +194,22 @@ mod tests {
             all(unix, any(feature = "integrated-auth-gssapi", feature = "sspi-rs"))
         )))]
         let _ = ctx;
+    }
+
+    #[test]
+    #[cfg(any(
+        all(windows, feature = "winauth"),
+        all(unix, any(feature = "integrated-auth-gssapi", feature = "sspi-rs"))
+    ))]
+    fn set_spn_instance_replaces_the_port() {
+        let mut ctx = Context::new();
+        ctx.set_spn_instance("INST");
+        assert_eq!(ctx.spn(), "");
+        ctx.set_spn("db.example.com", 1434);
+        ctx.set_spn_instance("INST");
+        assert_eq!(ctx.spn(), "MSSQLSvc/db.example.com:INST");
+        ctx.set_spn("::1", 1434);
+        ctx.set_spn_instance("SQL2");
+        assert_eq!(ctx.spn(), "MSSQLSvc/::1:SQL2");
     }
 }

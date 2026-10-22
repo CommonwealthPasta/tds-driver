@@ -228,6 +228,8 @@ that land will be documented here.
 - **`Integrated Security` without an authentication backend is an error** naming
   the feature (`winauth`; `integrated-auth-gssapi` or `sspi-rs`), instead of a
   SQL login as user "".
+- **The SPN of a named instance without a port names the instance,**
+  `MSSQLSvc/<host>:<instance>` as in SqlClient, not the SQL Browser's 1434.
 - **PRELOGIN's TRACEID is MS-TDS 2.2.6.5's 36 bytes** (connection id, activity
   id, sequence), not 20.
 - **A server's ENCRYPT_CLIENT_CERT bit (0x80) is decoded** instead of failing
