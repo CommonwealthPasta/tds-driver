@@ -147,6 +147,8 @@ that land will be documented here.
   stays usable for further rows and `finalize`.
 - **Dropping a `BulkLoadRequest` without `finalize` cancels the bulk insert**;
   the next request on the connection used to hang.
+- **Bulk insert into `time(n)` and `datetimeoffset(n)` with n < 7** (error
+  4875); values are truncated to the column's scale, as SqlClient does.
 - **Bulk insert into `nvarchar(n)` with 2001 ≤ n ≤ 4000** (error 4816) and
   `nchar(n)` declared twice its length.
 - **`INSERT BULK` column names are quoted with `]` doubled** (a column named

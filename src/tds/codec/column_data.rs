@@ -278,6 +278,28 @@ fn datetime2_to_datetime(dt2: &DateTime2) -> crate::Result<DateTime> {
     Ok(DateTime::new(days, seconds_fragments))
 }
 
+/// Puts `time` at the column's scale. Dropped digits are truncated, as
+/// SqlClient's TdsParser does.
+#[cfg(feature = "tds73")]
+fn rescale_time(time: Time, scale: u8) -> crate::Result<Time> {
+    let invalid =
+        || crate::Error::Conversion(format!("time scale {} is invalid", time.scale()).into());
+
+    if time.scale() > 7 || scale > 7 {
+        return Err(invalid());
+    }
+
+    let increments = if scale >= time.scale() {
+        time.increments()
+            .checked_mul(10u64.pow(u32::from(scale - time.scale())))
+            .ok_or_else(invalid)?
+    } else {
+        time.increments() / 10u64.pow(u32::from(time.scale() - scale))
+    };
+
+    Ok(Time::new(increments, scale))
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 /// A container of a value that can be represented as a TDS value.
@@ -818,6 +840,7 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                 if vlc.r#type() == VarLenType::Timen =>
             {
                 if let Some(time) = opt {
+                    let time = rescale_time(time, vlc.len() as u8)?;
                     dst.put_u8(time.len()?);
                     time.encode(dst)?;
                 } else {
@@ -845,14 +868,9 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
             (ColumnData::DateTime2(opt), Some(TypeInfo::VarLenSized(vlc)))
                 if vlc.r#type() == VarLenType::Datetime2 =>
             {
-                if let Some(mut dt2) = opt {
-                    if dt2.time().scale() != vlc.len() as u8 {
-                        let time = dt2.time();
-                        let increments = (time.increments() as f64
-                            * 10_f64.powi(vlc.len() as i32 - time.scale() as i32))
-                            as u64;
-                        dt2 = DateTime2::new(dt2.date(), Time::new(increments, vlc.len() as u8));
-                    }
+                if let Some(dt2) = opt {
+                    let dt2 =
+                        DateTime2::new(dt2.date(), rescale_time(dt2.time(), vlc.len() as u8)?);
                     dst.put_u8(dt2.time().len()? + 3);
                     dt2.encode(dst)?;
                 } else {
@@ -870,6 +888,10 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                 if vlc.r#type() == VarLenType::DatetimeOffsetn =>
             {
                 if let Some(dto) = opt {
+                    let dt2 = dto.datetime2();
+                    let dt2 =
+                        DateTime2::new(dt2.date(), rescale_time(dt2.time(), vlc.len() as u8)?);
+                    let dto = DateTimeOffset::new(dt2, dto.offset());
                     dst.put_u8(dto.datetime2().time().len()? + 5);
                     dto.encode(dst)?;
                 } else {
@@ -2420,5 +2442,29 @@ mod tests {
         let ti = TypeInfo::FixedLen(FixedLenType::Int4);
         let err = encode_with_ti(&ti, ColumnData::I32(None)).unwrap_err();
         assert!(matches!(err, Error::BulkInput(_)), "got {err:?}");
+    }
+
+    #[cfg(feature = "tds73")]
+    #[tokio::test]
+    async fn bulk_time_is_written_at_the_column_scale() {
+        let ti = TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Timen, 3, None));
+        let buf = encode_with_ti(&ti, ColumnData::Time(Some(Time::new(1_234_567, 7)))).unwrap();
+        assert_eq!(&buf[..], &[4, 123, 0, 0, 0]);
+
+        let ti = TypeInfo::VarLenSized(VarLenContext::new(VarLenType::DatetimeOffsetn, 0, None));
+        let dto = DateTimeOffset::new(
+            DateTime2::new(Date::new(739_011), Time::new(15_000_000, 7)),
+            60,
+        );
+        let buf = encode_with_ti(&ti, ColumnData::DateTimeOffset(Some(dto))).unwrap();
+        // length, 3 time bytes (1 s), 3 date bytes, 2 offset bytes.
+        assert_eq!(buf[0], 8);
+        assert_eq!(&buf[1..4], &[1, 0, 0]);
+
+        assert_eq!(
+            rescale_time(Time::new(5, 0), 7).unwrap().increments(),
+            50_000_000
+        );
+        assert!(rescale_time(Time::new(5, 9), 7).is_err());
     }
 }

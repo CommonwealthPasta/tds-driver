@@ -636,3 +636,54 @@ where
 
     Ok(())
 }
+
+#[cfg(all(feature = "tds73", feature = "chrono"))]
+fn ndt(h: u32, m: u32, s: u32, nanos: u32) -> NaiveDateTime {
+    chrono::NaiveDate::from_ymd_opt(2024, 5, 6)
+        .unwrap()
+        .and_hms_nano_opt(h, m, s, nanos)
+        .unwrap()
+}
+
+#[cfg(all(feature = "tds73", feature = "chrono"))]
+#[test_on_runtimes]
+async fn bulk_load_time_and_datetimeoffset_scale<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use chrono::{FixedOffset, NaiveTime, TimeZone};
+
+    let t = NaiveTime::from_hms_nano_opt(13, 14, 15, 123_456_700).unwrap();
+    let dto = FixedOffset::east_opt(2 * 3600)
+        .unwrap()
+        .from_local_datetime(&ndt(13, 14, 15, 123_456_700))
+        .unwrap();
+    let rb = "CONVERT(varchar(40), v, 121)";
+
+    assert_bulk(
+        &mut conn,
+        vec![
+            ("TIME(3)", t.into_sql(), rb, "13:14:15.123"),
+            ("TIME(0) NOT NULL", t.into_sql(), rb, "13:14:15"),
+            (
+                "DATETIMEOFFSET(3)",
+                dto.into_sql(),
+                rb,
+                "2024-05-06 13:14:15.123 +02:00",
+            ),
+            (
+                "DATETIMEOFFSET(0)",
+                dto.into_sql(),
+                rb,
+                "2024-05-06 13:14:15 +02:00",
+            ),
+            (
+                "DATETIMEOFFSET(3)",
+                None::<DateTime<FixedOffset>>.into_sql(),
+                "ISNULL(CONVERT(varchar(40), v, 121), 'NULL')",
+                "NULL",
+            ),
+        ],
+    )
+    .await
+}

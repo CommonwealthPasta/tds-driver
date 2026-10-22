@@ -69,7 +69,7 @@ impl<'a> Display for MetaDataColumn<'a> {
                 #[cfg(feature = "tds73")]
                 VarLenType::Daten => write!(f, "date")?,
                 #[cfg(feature = "tds73")]
-                VarLenType::Timen => write!(f, "time")?,
+                VarLenType::Timen => write!(f, "time({})", ctx.len())?,
                 #[cfg(feature = "tds73")]
                 VarLenType::Datetime2 => write!(f, "datetime2({})", ctx.len())?,
                 VarLenType::Datetimen => write!(f, "datetime")?,
@@ -78,7 +78,7 @@ impl<'a> Display for MetaDataColumn<'a> {
                     _ => write!(f, "money")?,
                 },
                 #[cfg(feature = "tds73")]
-                VarLenType::DatetimeOffsetn => write!(f, "datetimeoffset")?,
+                VarLenType::DatetimeOffsetn => write!(f, "datetimeoffset({})", ctx.len())?,
                 VarLenType::BigVarBin => {
                     if ctx.len() <= 8000 {
                         write!(f, "varbinary({})", ctx.len())?
@@ -903,15 +903,19 @@ mod tests {
             ),
             (
                 TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Timen, 7, None)),
-                "c time",
+                "c time(7)",
+            ),
+            (
+                TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Timen, 3, None)),
+                "c time(3)",
             ),
             (
                 TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Datetime2, 7, None)),
                 "c datetime2(7)",
             ),
             (
-                TypeInfo::VarLenSized(VarLenContext::new(VarLenType::DatetimeOffsetn, 7, None)),
-                "c datetimeoffset",
+                TypeInfo::VarLenSized(VarLenContext::new(VarLenType::DatetimeOffsetn, 0, None)),
+                "c datetimeoffset(0)",
             ),
         ];
 
