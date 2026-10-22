@@ -59,7 +59,25 @@ impl<'a> Encode<BytesMut> for TypeInfoTvp<'a> {
         // TvpColumnData = TYPE_VARBYTE ; Actual value must match column metadata
         // AllColumnData = *TvpColumnData
         // TVP_ROW       = TVP_ROW_TOKEN AllColumnData
-        for row in self.data.into_iter() {
+        for (row_no, row) in self.data.into_iter().enumerate() {
+            // Each row must carry exactly one value per column: a short row
+            // would shift the next row's values into its columns.
+            if let Some(ref columns) = self.columns {
+                if row.len() != columns.len() {
+                    return Err(crate::Error::Conversion(
+                        format!(
+                            "TVP {}.{}: row {} has {} fields, the type has {} columns",
+                            self.schema_name,
+                            self.db_type_name,
+                            row_no,
+                            row.len(),
+                            columns.len()
+                        )
+                        .into(),
+                    ));
+                }
+            }
+
             dst.put_u8(0x01u8); // TVP_ROW_TOKEN
             for (i, col) in row.into_iter().enumerate() {
                 let mut dst_ti = BytesMutWithTypeInfo::new(dst);
@@ -274,5 +292,29 @@ mod tests {
         assert_eq!(*buf.last().unwrap(), 0);
         // A single TVP_ROW_TOKEN (0x01) must appear before the row data.
         assert!(buf.contains(&0x01u8));
+    }
+
+    #[test]
+    fn row_field_count_must_match_the_columns() {
+        use crate::{BaseMetaDataColumn, ColumnData, ColumnFlag, VarLenContext, VarLenType};
+        use enumflags2::BitFlags;
+
+        let int_col = || MetaDataColumn {
+            base: BaseMetaDataColumn {
+                flags: BitFlags::from(ColumnFlag::Nullable),
+                ty: TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Intn, 4, None)),
+            },
+            col_name: Default::default(),
+        };
+
+        for row in [
+            vec![ColumnData::I32(Some(1)), ColumnData::I32(Some(2))],
+            vec![],
+        ] {
+            let tvp = TypeInfoTvp::new("dbo.OneInt", vec![vec![ColumnData::I32(Some(0))], row])
+                .with_metadata(vec![int_col()]);
+            let err = tvp.encode(&mut BytesMut::new()).unwrap_err();
+            assert!(matches!(err, crate::Error::Conversion(_)), "{err:?}");
+        }
     }
 }

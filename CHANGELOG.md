@@ -92,6 +92,8 @@ that land will be documented here.
 - An empty `XmlData` parameter no longer corrupts the request (error 8009).
 - An RPC parameter name over 255 UTF-16 code units is an error instead of a
   wrapped length byte (a debug-build panic).
+- A TVP row with more fields than the type has columns is an error instead of a
+  panic; a row with fewer fields is an error instead of a corrupted request.
 
 ### Changed
 
