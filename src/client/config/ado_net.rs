@@ -208,51 +208,41 @@ impl ConfigString for AdoNetConfig {
         }
     }
 
+    /// `Data Source` as SqlClient's managed SNI splits it (`DataSource` in
+    /// SniProxy.netcore.cs): an optional protocol prefix, case-insensitive,
+    /// then `host[\instance][,port]`, every part trimmed.
     fn server(&self) -> crate::Result<ServerDefinition> {
-        fn parse_port(parts: &[&str]) -> crate::Result<Option<u16>> {
-            Ok(match parts.first() {
-                Some(s) => Some(s.parse()?),
-                None => None,
-            })
-        }
-
-        fn parse_server(parts: Vec<&str>) -> crate::Result<ServerDefinition> {
-            if parts.is_empty() || parts.len() >= 3 {
-                return Err(crate::Error::Conversion("Server value faulty.".into()));
-            }
-
-            let definition = if parts[0].contains('\\') {
-                let port = parse_port(&parts[1..])?;
-                let parts: Vec<&str> = parts[0].split('\\').collect();
-
-                ServerDefinition {
-                    host: Some(parts[0].replace("(local)", "localhost")),
-                    port,
-                    instance: Some(parts[1].into()),
-                }
-            } else {
-                // Connect using a TCP target
-                ServerDefinition {
-                    host: Some(parts[0].replace("(local)", "localhost")),
-                    port: parse_port(&parts[1..])?,
-                    instance: None,
-                }
-            };
-
-            Ok(definition)
-        }
-
-        match self.first(&["server", "data source"]) {
-            Some(value) if value.starts_with("tcp:") => {
-                parse_server(value[4..].split(',').collect())
-            }
-            Some(value) => parse_server(value.split(',').collect()),
-            None => Ok(ServerDefinition {
+        let Some(value) = self.first(&["server", "data source"]) else {
+            return Ok(ServerDefinition {
                 host: None,
                 port: None,
                 instance: None,
-            }),
+            });
+        };
+
+        let value = match value.split_once(':') {
+            Some((protocol, rest)) => match protocol.trim().to_ascii_lowercase().as_str() {
+                "tcp" => rest,
+                // Not a protocol, such as an IPv6 address: all of it is the host.
+                _ => value,
+            },
+            None => value,
+        };
+
+        let mut parts = value.split(',');
+        let mut host = parts.next().unwrap_or_default().split('\\');
+        let port = parts.next().map(|p| p.trim().parse()).transpose()?;
+        if parts.next().is_some() {
+            return Err(crate::Error::Conversion("Server value faulty.".into()));
         }
+
+        Ok(ServerDefinition {
+            host: host
+                .next()
+                .map(|h| h.trim().replace("(local)", "localhost")),
+            port,
+            instance: host.next().map(|i| i.trim().to_owned()),
+        })
     }
 }
 
@@ -920,5 +910,26 @@ mod tests {
         assert!(t("Connect Timeout=soon").is_err());
         assert!(t("Connect Timeout=2147483648").is_err());
         Ok(())
+    }
+
+    #[test]
+    fn protocol_prefix_is_case_insensitive_and_parts_are_trimmed() {
+        for s in [
+            "server=TCP:h,1433",
+            "server=Tcp:h,1433",
+            "server= tcp : h , 1433 ",
+            "server=h , 1433",
+        ] {
+            let server = s.parse::<AdoNetConfig>().unwrap().server().unwrap();
+            assert_eq!(server.host.as_deref(), Some("h"), "{s}");
+            assert_eq!(server.port, Some(1433), "{s}");
+        }
+        let server = r"server=tcp: h \ INST "
+            .parse::<AdoNetConfig>()
+            .unwrap()
+            .server()
+            .unwrap();
+        assert_eq!(server.host.as_deref(), Some("h"));
+        assert_eq!(server.instance.as_deref(), Some("INST"));
     }
 }
