@@ -6,7 +6,6 @@ use std::sync::Arc;
 /// Context, that might be required to make sure we understand and are understood by the server
 #[derive(Debug)]
 pub(crate) struct Context {
-    version: FeatureLevel,
     packet_size: u32,
     packet_id: u8,
     transaction_desc: [u8; 8],
@@ -22,7 +21,6 @@ pub(crate) struct Context {
 impl Context {
     pub fn new() -> Context {
         Context {
-            version: FeatureLevel::SqlServerN,
             packet_size: 4096,
             packet_id: 0,
             transaction_desc: [0; 8],
@@ -72,16 +70,6 @@ impl Context {
 
     pub fn set_transaction_descriptor(&mut self, desc: [u8; 8]) {
         self.transaction_desc = desc;
-    }
-
-    /// Set from LOGINACK. Until then the version requested in LOGIN7 is
-    /// assumed, so login-time INFO tokens decode by 7.4 rules.
-    pub(crate) fn set_version(&mut self, version: FeatureLevel) {
-        self.version = version;
-    }
-
-    pub fn version(&self) -> FeatureLevel {
-        self.version
     }
 
     pub fn collation(&self) -> Option<Collation> {
@@ -174,12 +162,6 @@ mod tests {
 
         // A different id should still be absent.
         assert!(ctx.alt_meta(8).is_none());
-    }
-
-    #[test]
-    fn version_defaults_to_sql_server_n() {
-        let ctx = Context::new();
-        assert_eq!(ctx.version(), FeatureLevel::SqlServerN);
     }
 
     #[test]

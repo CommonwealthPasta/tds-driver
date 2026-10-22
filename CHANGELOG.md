@@ -73,6 +73,9 @@ that land will be documented here.
   SqlClient's class 11 "A severe error occurred" error, and DONE_SRVERROR adds a
   class 20 one; both were ignored. A cancelled request still ends without an
   error. *Behavior change*.
+- **A LOGINACK below TDS 7.2 fails the connect** with `Error::Protocol`, as in
+  SqlClient: requests carry ALL_HEADERS and tokens are read in their 7.2
+  layouts. `docs/TDS_COMPATIBILITY.md` no longer claims TDS 7.1 support.
 - **`DateTime<Utc>` from a `datetimeoffset` is no longer shifted by the
   offset.**
 - **`try_get::<rust_decimal::Decimal>` returns a conversion error instead of

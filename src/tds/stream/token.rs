@@ -2,9 +2,10 @@ use crate::tds::codec::TokenSspi;
 use crate::{
     client::Connection,
     tds::codec::{
-        RelatedMessages, TokenAltMetaData, TokenAltRow, TokenColInfo, TokenColMetaData, TokenDone,
-        TokenEnvChange, TokenError, TokenFeatureExtAck, TokenFedAuthInfo, TokenInfo, TokenLoginAck,
-        TokenOrder, TokenReturnValue, TokenRow, TokenSessionState, TokenTabName,
+        FeatureLevel, RelatedMessages, TokenAltMetaData, TokenAltRow, TokenColInfo,
+        TokenColMetaData, TokenDone, TokenEnvChange, TokenError, TokenFeatureExtAck,
+        TokenFedAuthInfo, TokenInfo, TokenLoginAck, TokenOrder, TokenReturnValue, TokenRow,
+        TokenSessionState, TokenTabName,
     },
     Error, SqlReadBytes, TokenType,
 };
@@ -114,14 +115,23 @@ fn severe_error(class: u8) -> TokenError {
     }
 }
 
-/// Decodes LOGINACK and records the negotiated TDS version, which later
-/// DONE, ERROR and INFO tokens are laid out by.
+/// Decodes LOGINACK, rejecting TDS versions before 7.2: every request
+/// carries ALL_HEADERS and every token is read in its 7.2 layout. SqlClient
+/// (`ADP.ValidateTdsVersion`) also accepts only 7.2 and later.
 async fn decode_login_ack<R>(src: &mut R) -> crate::Result<TokenLoginAck>
 where
     R: SqlReadBytes + Unpin,
 {
     let ack = TokenLoginAck::decode(src).await?;
-    src.context_mut().set_version(ack.tds_version);
+    if ack.tds_version < FeatureLevel::SqlServer2005 {
+        return Err(Error::Protocol(
+            format!(
+                "the server negotiated TDS {:#010x} ({:?}); TDS 7.2 (SQL Server 2005) or later is required",
+                ack.tds_version as u32, ack.tds_version
+            )
+            .into(),
+        ));
+    }
     Ok(ack)
 }
 
@@ -503,7 +513,7 @@ where
 mod tests {
     use super::*;
     use crate::sql_read_bytes::test_utils::IntoSqlReadBytes;
-    use crate::tds::codec::{DoneStatus, FeatureLevel};
+    use crate::tds::codec::DoneStatus;
     use bytes::{BufMut, BytesMut};
     use enumflags2::BitFlags;
 
@@ -636,27 +646,34 @@ mod tests {
         assert!(messages.into_error().is_none());
     }
 
-    #[tokio::test]
-    async fn login_ack_version_sets_done_row_count_width() {
+    fn login_ack(version: FeatureLevel) -> BytesMut {
         let mut buf = BytesMut::new();
         buf.put_u16_le(0); // LOGINACK length, ignored
         buf.put_u8(1);
-        buf.put_u32(FeatureLevel::SqlServer2000Sp1 as u32);
+        buf.put_u32(version as u32);
         buf.put_u8(0); // empty ProgName
         buf.put_u32_le(0x0800_07D0);
-        // TDS 7.1 DONE: 4-byte DoneRowCount.
-        buf.put_u16_le(DoneStatus::Count as u16);
-        buf.put_u16_le(0xC3);
-        buf.put_u32_le(7);
-        // What a 7.2+ decode would take as the high half of the count.
-        buf.put_u32_le(0xFFFF_FFFF);
+        buf
+    }
 
-        let mut src = buf.into_sql_read_bytes();
-        let ack = decode_login_ack(&mut src).await.unwrap();
-        assert_eq!(ack.tds_version, FeatureLevel::SqlServer2000Sp1);
-        assert_eq!(src.context().version(), FeatureLevel::SqlServer2000Sp1);
+    #[tokio::test]
+    async fn login_ack_before_tds_7_2_is_rejected() {
+        for version in [
+            FeatureLevel::SqlServerV7,
+            FeatureLevel::SqlServer2000,
+            FeatureLevel::SqlServer2000Sp1,
+        ] {
+            match decode_login_ack(&mut login_ack(version).into_sql_read_bytes()).await {
+                Err(Error::Protocol(msg)) => assert!(msg.contains("TDS 7.2"), "{msg}"),
+                other => panic!("{version:?}: {other:?}"),
+            }
+        }
 
-        let done = TokenDone::decode(&mut src).await.unwrap();
-        assert_eq!(done.records_affected(), Some(7));
+        for version in [FeatureLevel::SqlServer2005, FeatureLevel::SqlServerN] {
+            let ack = decode_login_ack(&mut login_ack(version).into_sql_read_bytes())
+                .await
+                .unwrap();
+            assert_eq!(ack.tds_version, version);
+        }
     }
 }

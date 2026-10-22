@@ -42,13 +42,8 @@ impl TokenDone {
         let status = BitFlags::from_bits_truncate(src.read_u16_le().await?);
 
         let cur_cmd = src.read_u16_le().await?;
-        let done_row_count_bytes = src.context().version().done_row_count_bytes();
-
-        let done_rows = match done_row_count_bytes {
-            8 => src.read_u64_le().await?,
-            4 => src.read_u32_le().await? as u64,
-            _ => unreachable!(),
-        };
+        // 8 bytes since TDS 7.2; LOGINACK rejects earlier versions.
+        let done_rows = src.read_u64_le().await?;
 
         Ok(TokenDone {
             status,
@@ -158,27 +153,6 @@ mod tests {
         assert!(!done.status.is_empty());
         assert_eq!(done.records_affected(), Some(5));
         assert!(format!("{}", done).contains("5 rows left"));
-    }
-
-    #[tokio::test]
-    async fn decode_reads_four_byte_rowcount_on_pre_2005_versions() {
-        // Pre-2005 servers encode the DONE rowcount in 4 bytes; the decoder must
-        // pick the 4-byte arm from the negotiated version (kills "delete arm 4").
-        use crate::sql_read_bytes::SqlReadBytes;
-        use crate::tds::codec::login::FeatureLevel;
-
-        let mut buf = BytesMut::new();
-        buf.put_u16_le(DoneStatus::Count as u16);
-        buf.put_u16_le(0);
-        buf.put_u32_le(7); // 4-byte rowcount
-
-        let mut reader = buf.into_sql_read_bytes();
-        reader
-            .context_mut()
-            .set_version(FeatureLevel::SqlServer2000);
-
-        let done = TokenDone::decode(&mut reader).await.unwrap();
-        assert_eq!(done.records_affected(), Some(7));
     }
 
     #[tokio::test]

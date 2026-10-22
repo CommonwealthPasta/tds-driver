@@ -15,8 +15,8 @@ Legend: ✅ full · 🟡 partial · ❌ missing · N/A not applicable.
 | **7.4** | 2012–2019 | ✅ Full | Login (`FeatureLevel::SqlServerN`), routing ENVCHANGE, `fReadOnlyIntent`, FedAuth prelogin option + FeatureExt, FEATUREEXTACK, FEDAUTHINFO (0xEE), SESSIONSTATE (0xE4). The only deferral is *transparent reconnect* — SESSIONSTATE is decoded and stored, but not yet replayed to silently re-establish a dropped session. |
 | **7.3 A/B** | 2008 / R2 | ✅ Full (`tds73`) | date / time / datetime2 / datetimeoffset types, NBCROW. |
 | **7.2** | 2005 | ✅ Full | PLP / varchar(max), XML, MARS / transaction-descriptor headers, SQL_VARIANT (read + write), UDT (0xF0) raw-value decode. |
-| **7.1** | 2000 | ❌ None | Not supported, and never tested against SQL Server 2000. Every SQL batch, RPC and Transaction Manager request carries an ALL_HEADERS block, which 7.2 introduced (MS-TDS 2.2.5.3). The 7.1 layouts of DONE (4-byte row count) and ERROR/INFO (2-byte line number) are decoded once LOGINACK reports 7.1, but INFO tokens the server sends before LOGINACK are still read with the 7.2 layout. |
-| **7.0** | 7.0 | ❌ None | Legacy fixed non-nullable types unsupported; the client only negotiates 7.4. Not a target. |
+| **7.1** | 2000 | ❌ None | Rejected: `Client::connect` fails with `Error::Protocol` on a LOGINACK below 7.2, as SqlClient's does. Every SQL batch, RPC and Transaction Manager request carries an ALL_HEADERS block, which 7.2 introduced (MS-TDS 2.2.5.3), and every token is read in its 7.2 layout, including INFO tokens sent before LOGINACK, so a 7.1 server's login can also fail to parse first. Never tested against SQL Server 2000. |
+| **7.0** | 7.0 | ❌ None | Rejected at connect, as 7.1 is. Not a target. |
 
 There is **no Microsoft "TDS 6.0"** — the Microsoft protocol line is
 7.0 → 7.1 → 7.2 → 7.3A → 7.3B → 7.4 → 8.0. Sybase-era TDS 4.2/5.0 predate

@@ -1,4 +1,4 @@
-use crate::{tds::codec::FeatureLevel, SqlReadBytes};
+use crate::SqlReadBytes;
 
 #[allow(dead_code)] // we might want to debug the values
 #[derive(Debug)]
@@ -28,15 +28,8 @@ impl TokenInfo {
         let message = src.read_us_varchar().await?;
         let server = src.read_b_varchar().await?;
         let procedure = src.read_b_varchar().await?;
-        // MS-TDS 2.2.7.13: like ERROR, INFO's LineNumber is a 4-byte LONG for
-        // TDS 7.2 (SQL Server 2005) and later, and a 2-byte USHORT before that.
-        // Reading a fixed u32 over-reads 2 bytes against a TDS 7.1 server and
-        // desyncs the token stream.
-        let line = if src.context().version() >= FeatureLevel::SqlServer2005 {
-            src.read_u32_le().await?
-        } else {
-            src.read_u16_le().await? as u32
-        };
+        // MS-TDS 2.2.7.13: as in ERROR, 4 bytes since TDS 7.2.
+        let line = src.read_u32_le().await?;
 
         Ok(TokenInfo {
             number,
@@ -99,10 +92,7 @@ mod tests {
 
     #[tokio::test]
     async fn decode_reads_full_four_byte_line_number_on_tds72_plus() {
-        // The default test context reports SqlServerN (>= TDS 7.2), so the
-        // LineNumber must be read as a 4-byte LONG. A `>` mutation of the `>=`
-        // boundary check would read only 2 bytes. 0x0001_0001 (65537) reads as 1
-        // when truncated to 2 bytes but as 65537 when read correctly as 4 bytes.
+        // 0x0001_0001 reads as 1 from 2 bytes, as 65537 from all 4.
         let mut buf = BytesMut::new();
         buf.put_u16_le(0); // length, ignored
         buf.put_u32_le(4711);

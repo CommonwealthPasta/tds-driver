@@ -1,7 +1,4 @@
-use crate::{
-    tds::codec::{FeatureLevel, TokenInfo},
-    SqlReadBytes,
-};
+use crate::{tds::codec::TokenInfo, SqlReadBytes};
 use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -69,15 +66,9 @@ impl TokenError {
         let server = src.read_b_varchar().await?;
         let procedure = src.read_b_varchar().await?;
 
-        // MS-TDS 2.2.7.10: LineNumber is a 4-byte LONG for TDS 7.2 (SQL Server
-        // 2005) and later, and a 2-byte USHORT before that. The boundary is
-        // inclusive of 7.2, so use `>=` — a strict `>` mis-reads a 2-byte value
-        // against a real SQL Server 2005 and desyncs the token stream.
-        let line = if src.context().version() >= FeatureLevel::SqlServer2005 {
-            src.read_u32_le().await?
-        } else {
-            src.read_u16_le().await? as u32
-        };
+        // MS-TDS 2.2.7.10: a 4-byte LONG since TDS 7.2, which LOGINACK
+        // requires. SqlClient always reads 4 bytes, also before LOGINACK.
+        let line = src.read_u32_le().await?;
 
         let token = TokenError {
             code,
@@ -226,7 +217,7 @@ mod tests {
         write_us_varchar(&mut body, "deadlocked");
         write_b_varchar(&mut body, "myserver");
         write_b_varchar(&mut body, "myproc");
-        body.write_u32::<LittleEndian>(42).unwrap(); // line, TDS >= 7.2 (default context)
+        body.write_u32::<LittleEndian>(42).unwrap(); // line
 
         let mut buf = BytesMut::new();
         buf.put_u16_le(body.len() as u16); // length prefix, ignored by decode
@@ -241,11 +232,7 @@ mod tests {
 
     #[tokio::test]
     async fn decode_reads_full_four_byte_line_number_on_tds72_plus() {
-        // The default test context reports SqlServerN (>= TDS 7.2), so the
-        // LineNumber must be read as a 4-byte LONG. A `>` mutation of the
-        // `>=` boundary check would read only 2 bytes and mis-decode the value.
-        // 0x0001_0001 (65537) has distinct low-16-bit and full-32-bit values, so
-        // a 2-byte read yields 1 while the correct 4-byte read yields 65537.
+        // 0x0001_0001 reads as 1 from 2 bytes, as 65537 from all 4.
         use crate::sql_read_bytes::test_utils::IntoSqlReadBytes;
         use bytes::{BufMut, BytesMut};
 

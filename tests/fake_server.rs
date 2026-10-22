@@ -10,6 +10,7 @@ use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 const DONE_ERROR: u16 = 0x0002;
 const DONE_SRVERROR: u16 = 0x0100;
+const TDS_7_1: u32 = 0x7100_0001;
 const TDS_7_4: u32 = 0x7400_0004;
 
 fn packet(ty: u8, payload: &[u8]) -> Vec<u8> {
@@ -117,6 +118,19 @@ async fn connect(login: Vec<u8>, responses: Vec<Vec<u8>>) -> Result<Client<Compa
 
 fn login(tds_version: u32, done_status: u16) -> Vec<u8> {
     [login_ack(tds_version), done(done_status)].concat()
+}
+
+/// Every request carries ALL_HEADERS and every token is read in its 7.2
+/// layout, so a 7.1 server is turned away at connect.
+#[tokio::test]
+async fn login_ack_before_tds_7_2_is_rejected() {
+    // A 7.1 DONE has a 4-byte row count.
+    let ack = [login_ack(TDS_7_1), vec![0xFD, 0, 0, 0, 0, 0, 0, 0, 0]].concat();
+    match connect(ack, vec![]).await {
+        Err(Error::Protocol(msg)) => assert!(msg.contains("TDS 7.2"), "{msg}"),
+        Err(e) => panic!("expected a protocol error, got {e:?}"),
+        Ok(_) => panic!("a TDS 7.1 login must fail"),
+    }
 }
 
 /// SqlClient's `TdsParser.TryProcessDone` raises a class 11 error for
