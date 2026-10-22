@@ -86,6 +86,9 @@ that land will be documented here.
 - **A NULL `smalldatetime` decodes as `SmallDateTime(None)` in NBCROW rows too**
   (was `DateTime(None)`).
 - **`Numeric` displays a scale-0 value without `.0`** (`123`, not `123.0`).
+- **Malformed values return errors instead of panicking**: a smalldatetime of
+  1440+ minutes or a datetime past midnight, a sql_variant or decimal magnitude
+  ≥ 2^127, a decimal scale > 38, and `Numeric` equality across a wide scale gap.
 
 ### Changed
 

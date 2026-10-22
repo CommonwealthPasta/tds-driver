@@ -248,15 +248,16 @@ impl From<Numeric> for u128 {
 
 impl PartialEq for Numeric {
     fn eq(&self, other: &Self) -> bool {
-        match self.scale.cmp(&other.scale) {
-            Ordering::Greater => {
-                10i128.pow((self.scale - other.scale) as u32) * other.value == self.value
-            }
-            Ordering::Less => {
-                10i128.pow((other.scale - self.scale) as u32) * self.value == other.value
-            }
-            Ordering::Equal => self.value == other.value,
-        }
+        let (wide, narrow) = match self.scale.cmp(&other.scale) {
+            Ordering::Less => (other, self),
+            _ => (self, other),
+        };
+
+        // A rescale that overflows can't equal a value that fits in i128.
+        10i128
+            .checked_pow((wide.scale - narrow.scale) as u32)
+            .and_then(|pow| pow.checked_mul(narrow.value))
+            .is_some_and(|v| v == wide.value)
     }
 }
 
@@ -615,6 +616,26 @@ mod tests {
         assert_eq!(
             Numeric::new_with_scale(10i128.pow(38) - 1, 0).precision(),
             38
+        );
+    }
+
+    #[test]
+    fn eq_does_not_overflow_on_a_wide_scale_gap() {
+        let big = Numeric::new_with_scale(10i128.pow(37), 0);
+        let tiny = Numeric::new_with_scale(1, 38);
+        assert_ne!(big, tiny);
+        assert_ne!(tiny, big);
+        assert_ne!(
+            Numeric::new_with_scale(i128::MAX, 38),
+            Numeric::new_with_scale(i128::MAX, 0)
+        );
+        assert_eq!(
+            Numeric::new_with_scale(0, 0),
+            Numeric::new_with_scale(0, 38)
+        );
+        assert_eq!(
+            Numeric::new_with_scale(1, 0),
+            Numeric::new_with_scale(10i128.pow(38), 38)
         );
     }
 
