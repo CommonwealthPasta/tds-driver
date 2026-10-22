@@ -175,6 +175,10 @@ that land will be documented here.
 
 ### Changed
 
+- **Large requests are sent faster.** Their packets reach the socket in a few
+  large writes instead of one write each, while every TLS record still holds
+  whole packets, as SQL Server requires. Over TLS, sending a 2 MB parameter took
+  about 11 ms and now takes about 3.3 ms.
 - **Reading results is faster.** Packets are buffered without a copy per value,
   values are read in bulk rather than a byte at a time, and strings are decoded
   straight into a buffer of the right size. On recorded responses, 1M narrow

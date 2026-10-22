@@ -170,7 +170,8 @@ pub(crate) struct TlsPreloginWrapper<S> {
 
     /// TLS bytes written but not yet framed.
     wr_buf: Vec<u8>,
-    /// Framed packets, of which `out_pos` bytes are on the wire.
+    /// Bytes for the wire, of which `out_pos` are on it: framed handshake
+    /// packets, then TLS records gathered into fewer, larger socket writes.
     out: Vec<u8>,
     out_pos: usize,
     packet_id: u8,
@@ -184,6 +185,14 @@ pub(crate) struct TlsPreloginWrapper<S> {
     feature = "vendored-openssl"
 ))]
 const PRELOGIN_PACKET_SIZE: usize = 4096;
+
+/// How many TLS bytes a write gathers before it goes to the socket.
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
+const MAX_GATHERED: usize = 64 * 1024;
 
 #[cfg(any(
     feature = "rustls",
@@ -367,8 +376,16 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for TlsPreloginWrapper
         // packets in the codec.
         if !self.framing() {
             let inner = self.get_mut();
-            ready!(inner.poll_drain(cx))?;
-            return Pin::new(inner.stream.as_mut().unwrap()).poll_write(cx, buf);
+            if inner.out.len() - inner.out_pos >= MAX_GATHERED {
+                ready!(inner.poll_drain(cx))?;
+            }
+            if inner.out_pos == inner.out.len() {
+                inner.out.clear();
+                inner.out_pos = 0;
+            }
+            // Sent on flush, or before the next read.
+            inner.out.extend_from_slice(buf);
+            return Poll::Ready(Ok(buf.len()));
         }
 
         // Framed on flush, which is where a TLS flight ends.
@@ -413,8 +430,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> AsyncWrite for TlsPreloginWrapper
         }
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.stream.as_mut().unwrap()).poll_close(cx)
+    fn poll_close(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<io::Result<()>> {
+        let inner = self.get_mut();
+        ready!(inner.poll_drain(cx))?;
+        Pin::new(inner.stream.as_mut().unwrap()).poll_close(cx)
     }
 }
 
@@ -587,6 +606,43 @@ mod tests {
         let mut buf = [0u8; 16];
         while Pin::new(&mut w).poll_read(&mut cx(), &mut buf).is_pending() {}
         assert_eq!(messages(&w.stream.as_ref().unwrap().written), vec![flight]);
+    }
+
+    #[test]
+    fn writes_after_the_handshake_go_out_together_on_flush() {
+        let (a, b) = (pattern(5000, 6), pattern(300, 7));
+        let mut w = TlsPreloginWrapper::new(Choppy::new(1 << 20, Vec::new()));
+        w.handshake_complete();
+        write(&mut w, &a);
+        write(&mut w, &b);
+        assert!(w.stream.as_ref().unwrap().written.is_empty());
+
+        flush(&mut w);
+        assert_eq!(w.stream.as_ref().unwrap().written, [a, b].concat());
+    }
+
+    #[test]
+    fn a_read_sends_gathered_writes_first() {
+        let a = pattern(100, 8);
+        let mut w = TlsPreloginWrapper::new(Choppy::new(7, vec![1, 2, 3]));
+        w.handshake_complete();
+        write(&mut w, &a);
+
+        let mut buf = [0u8; 3];
+        while Pin::new(&mut w).poll_read(&mut cx(), &mut buf).is_pending() {}
+        assert_eq!(w.stream.as_ref().unwrap().written, a);
+    }
+
+    #[test]
+    fn a_strict_handshake_is_unframed_and_never_blocks_a_flush() {
+        let flight = pattern(100, 9);
+        let mut w = TlsPreloginWrapper::unframed(Choppy::new(7, Vec::new()));
+        write(&mut w, &flight);
+        assert!(Pin::new(&mut w).poll_flush(&mut cx()).is_ready());
+
+        let mut buf = [0u8; 1];
+        while Pin::new(&mut w).poll_read(&mut cx(), &mut buf).is_pending() {}
+        assert_eq!(w.stream.as_ref().unwrap().written, flight);
     }
 
     #[test]
