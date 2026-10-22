@@ -239,6 +239,10 @@ that land will be documented here.
 - **JDBC URLs are split as mssql-jdbc splits them:** a bare `\` and non-ASCII
   values parse, `}}` in braces is `}`, names and unbraced values are trimmed,
   and the last of a property's synonyms wins.
+- **Names too long for their length prefix are errors** instead of wrapped
+  lengths: bulk column names (a debug-build panic), UDT names in bulk and TVP
+  metadata, XML schema names in TVP metadata, and `save_transaction` names over
+  255 UTF-16 units.
 
 ### Changed
 

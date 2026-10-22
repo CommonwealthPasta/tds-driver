@@ -1,4 +1,4 @@
-use super::{AllHeaderTy, Encode, ALL_HEADERS_LEN_TX};
+use super::{put_b_varchar, AllHeaderTy, Encode, ALL_HEADERS_LEN_TX};
 use bytes::{BufMut, BytesMut};
 use std::borrow::Cow;
 
@@ -138,16 +138,8 @@ impl<'a> TransactionManagerRequest<'a> {
     }
 }
 
-/// Encodes a `B_VARCHAR`: a single-byte count of UTF-16 code units followed by
-/// the string encoded as little-endian UCS-2 (MS-TDS 2.2.5.1.2).
-fn encode_b_varchar(dst: &mut BytesMut, s: &str) {
-    let units: Vec<u16> = s.encode_utf16().collect();
-    dst.put_u8(units.len() as u8);
-
-    for unit in units {
-        dst.put_u16_le(unit);
-    }
-}
+/// What a request's B_VARCHAR names, in the error for one too long.
+const NAME: &str = "transaction or savepoint name";
 
 impl<'a> Encode<BytesMut> for TransactionManagerRequest<'a> {
     fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
@@ -167,17 +159,15 @@ impl<'a> Encode<BytesMut> for TransactionManagerRequest<'a> {
                 name,
             } => {
                 dst.put_u8(isolation_level as u8);
-                encode_b_varchar(dst, &name);
+                put_b_varchar(dst, &name, NAME)?;
             }
             TransactionRequestBody::Commit { name } | TransactionRequestBody::Rollback { name } => {
-                encode_b_varchar(dst, &name);
+                put_b_varchar(dst, &name, NAME)?;
                 // Flags byte: bit 0 (`fBeginXact`) unset — do not begin a new
                 // transaction after commit/rollback.
                 dst.put_u8(0);
             }
-            TransactionRequestBody::Save { name } => {
-                encode_b_varchar(dst, &name);
-            }
+            TransactionRequestBody::Save { name } => put_b_varchar(dst, &name, NAME)?,
         }
 
         Ok(())
@@ -287,5 +277,22 @@ mod tests {
         }
 
         assert_eq!(&buf[..], &expected[..]);
+    }
+
+    #[test]
+    fn savepoint_name_over_255_units_is_an_error() {
+        // 256 wrapped the B_VARCHAR length to 0 ahead of all 256 units.
+        for name in ["a".repeat(256), "\u{1F600}".repeat(128)] {
+            let err = TransactionManagerRequest::save([0; 8], name)
+                .encode(&mut BytesMut::new())
+                .unwrap_err();
+            assert!(matches!(err, crate::Error::Conversion(_)), "{err:?}");
+        }
+
+        let mut buf = BytesMut::new();
+        TransactionManagerRequest::save([0; 8], "a".repeat(255))
+            .encode(&mut buf)
+            .unwrap();
+        assert_eq!(buf[ALL_HEADERS_LEN_TX + 2], 255);
     }
 }
