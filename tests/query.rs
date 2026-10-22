@@ -3141,3 +3141,46 @@ where
 
     Ok(())
 }
+
+#[test_on_runtimes]
+async fn max_parameters_is_the_sp_executesql_limit<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let query = |n: usize| {
+        let mut q = Query::new(format!("SELECT {}", Query::placeholders(1, n)));
+        q.bind_iter(0..n as i32);
+        q
+    };
+
+    let row = query(Query::MAX_PARAMETERS)
+        .query(&mut conn)
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+    assert_eq!(
+        Some(Query::MAX_PARAMETERS as i32 - 1),
+        row.get(Query::MAX_PARAMETERS - 1)
+    );
+
+    // A client-side error, not the server's 8003, and the connection stays usable.
+    let err = query(Query::MAX_PARAMETERS + 1)
+        .query(&mut conn)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, tiberius::error::Error::Conversion(_)),
+        "{err:?}"
+    );
+
+    let row = conn
+        .query("SELECT 1", &[])
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+    assert_eq!(Some(1i32), row.get(0));
+
+    Ok(())
+}

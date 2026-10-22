@@ -109,6 +109,9 @@ that land will be documented here.
   that a level outlives its transaction.
 - **`ColumnType` reports `Money4` and `Datetime4` for nullable `smallmoney` and
   `smalldatetime`** (was `Money` and `Datetimen`).
+- `Query::MAX_PARAMETERS` is 2098, not 2100: `sp_executesql` takes two of the
+  server's 2100. Binding more is now a client-side `Error::Conversion` before
+  anything is sent.
 
 ### Breaking
 

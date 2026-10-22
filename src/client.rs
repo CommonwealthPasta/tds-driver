@@ -667,9 +667,24 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     where
         'a: 'b,
     {
+        let params: Vec<_> = params.collect();
+
+        // The server's error 8003 for this names its 2100-parameter limit,
+        // not the 2098 left to the caller, and comes after the whole send.
+        if params.len() > crate::Query::MAX_PARAMETERS {
+            return Err(crate::Error::Conversion(
+                format!(
+                    "{} parameters bound; a query can bind at most {} (Query::MAX_PARAMETERS)",
+                    params.len(),
+                    crate::Query::MAX_PARAMETERS
+                )
+                .into(),
+            ));
+        }
+
         let mut param_str = String::new();
 
-        for (i, param) in params.enumerate() {
+        for (i, param) in params.into_iter().enumerate() {
             if i > 0 {
                 param_str.push(',')
             }

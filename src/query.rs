@@ -76,12 +76,12 @@ impl<'a> Query<'a> {
         self.params.len()
     }
 
-    /// The largest number of parameters SQL Server accepts in one statement.
+    /// The largest number of parameters one query can bind.
     ///
-    /// A statement carrying more is rejected by the server with
-    /// "The incoming request has too many parameters. The server supports a
-    /// maximum of 2100 parameters." — which arrives only after the whole
-    /// batch has been sent.
+    /// SQL Server accepts 2100 parameters per request, and the query is sent
+    /// as a call to `sp_executesql`, whose own statement and declaration
+    /// parameters take two of them. Binding more fails with an error before
+    /// anything is sent.
     ///
     /// This matters most for an `IN` list or a multi-row `INSERT`, where the
     /// count comes from the length of a collection rather than from the SQL
@@ -95,9 +95,9 @@ impl<'a> Query<'a> {
     /// # use tiberius::Query;
     /// // A three-column INSERT: three parameters per row.
     /// let rows_per_statement = Query::MAX_PARAMETERS / 3;
-    /// assert_eq!(rows_per_statement, 700);
+    /// assert_eq!(rows_per_statement, 699);
     /// ```
-    pub const MAX_PARAMETERS: usize = 2100;
+    pub const MAX_PARAMETERS: usize = 2098;
 
     /// Build a `@P1, @P2, …` placeholder list for `count` parameters,
     /// numbered from `first`.
@@ -315,9 +315,10 @@ mod tests {
     }
 
     #[test]
-    fn the_parameter_limit_is_the_documented_tds_maximum() {
-        assert_eq!(Query::MAX_PARAMETERS, 2100);
+    fn the_parameter_limit_leaves_room_for_sp_executesql() {
+        // 2100 per request, less sp_executesql's @stmt and @params.
+        assert_eq!(Query::MAX_PARAMETERS, 2098);
         // The chunking arithmetic the docs describe.
-        assert_eq!(Query::MAX_PARAMETERS / 3, 700);
+        assert_eq!(Query::MAX_PARAMETERS / 3, 699);
     }
 }
