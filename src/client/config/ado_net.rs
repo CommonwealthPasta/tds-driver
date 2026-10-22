@@ -367,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(windows)]
+    #[cfg(all(windows, feature = "winauth"))]
     fn parsing_sspi_authentication() -> crate::Result<()> {
         let test_str = "IntegratedSecurity=SSPI;";
         let ado: AdoNetConfig = test_str.parse()?;
@@ -399,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(windows)]
+    #[cfg(all(windows, feature = "winauth"))]
     fn parsing_windows_authentication() -> crate::Result<()> {
         let test_str = "uid=Musti;pwd=Naukio; IntegratedSecurity=SSPI;";
         let ado: AdoNetConfig = test_str.parse()?;
