@@ -3,7 +3,6 @@ use super::{AllHeaderTy, Encode, ALL_HEADERS_LEN_TX};
 use crate::{tds::codec::ColumnData, Result};
 use bytes::{BufMut, BytesMut};
 use enumflags2::{bitflags, BitFlags};
-use std::borrow::BorrowMut;
 use std::borrow::Cow;
 
 #[bitflags]
@@ -116,20 +115,22 @@ impl<'a> Encode<BytesMut> for TokenRpcRequest<'a> {
                 dst.put_u32_le(val);
             }
             RpcProcIdValue::Name(ref name) => {
-                // ProcName is a US_VARCHAR: a u16 little-endian character count
-                // followed by that many UTF-16 code units.
-                let len_pos = dst.len();
-                dst.put_u16_le(0u16);
-                let mut length = 0_u16;
+                // ProcName is a US_VARCHAR: a u16 count of UTF-16 code units.
+                let units = name.encode_utf16().count();
+                let length = u16::try_from(units).map_err(|_| {
+                    crate::Error::Conversion(
+                        format!(
+                            "procedure name is {units} UTF-16 code units long; the limit is 65535"
+                        )
+                        .into(),
+                    )
+                })?;
+
+                dst.put_u16_le(length);
 
                 for chr in name.encode_utf16() {
                     dst.put_u16_le(chr);
-                    length += 1;
                 }
-
-                let dst: &mut [u8] = dst.borrow_mut();
-                let mut dst = &mut dst[len_pos..];
-                dst.put_u16_le(length);
             }
         }
 
@@ -214,6 +215,23 @@ mod tests {
         // Option flags (u16) follow the name.
         let flags = u16::from_le_bytes([buf[off], buf[off + 1]]);
         assert_eq!(flags, 0);
+    }
+
+    #[test]
+    fn proc_name_over_65535_utf16_units_is_an_error() {
+        // 65536 wrapped the US_VARCHAR length to 0; a surrogate pair is two units.
+        for name in ["a".repeat(65_536), "\u{1F600}".repeat(32_768)] {
+            let req = TokenRpcRequest::new(name, vec![], [0u8; 8]);
+            let err = req.encode(&mut BytesMut::new()).unwrap_err();
+            assert!(matches!(err, crate::Error::Conversion(_)), "{err:?}");
+        }
+
+        let mut buf = BytesMut::new();
+        TokenRpcRequest::new("a".repeat(65_535), vec![], [0u8; 8])
+            .encode(&mut buf)
+            .unwrap();
+        let len = u16::from_le_bytes([buf[ALL_HEADERS_LEN_TX], buf[ALL_HEADERS_LEN_TX + 1]]);
+        assert_eq!(len, 65_535);
     }
 
     #[test]

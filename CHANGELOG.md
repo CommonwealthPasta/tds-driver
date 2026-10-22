@@ -182,6 +182,8 @@ that land will be documented here.
   row**, checked after rounding to the column's scale, as SqlBulkCopy does.
   999.995 into `decimal(5,2)` failed the whole insert (9803), and a value of 39
   digits panicked debug builds.
+- **TVP schema and type names over 255 UTF-16 units and procedure names over
+  65,535 are errors** instead of wrapped length prefixes (a debug-build panic).
 - **A TLS handshake over OpenSSL survives a socket that can't take a flight at
   once.** OpenSSL fails the handshake on a flush that would block, which
   affected `native-tls` on Linux and `vendored-openssl`.
