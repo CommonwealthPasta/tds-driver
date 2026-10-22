@@ -132,6 +132,9 @@ that land will be documented here.
   instead of an I/O error once the server drops the connection.
 - **Prelogin answers:** unknown options are skipped, a non-empty THREADID no
   longer panics debug builds, and a 1-byte INSTOPT is read correctly.
+- **Encryption follows the MS-TDS 2.2.6.5 table**, except that `Off` against a
+  server without encryption fails instead of sending the login unencrypted, as a
+  man in the middle could otherwise get it by claiming no encryption.
 - **The TLS handshake survives partial writes:** a flight interrupted by
   `Pending` lost its tail, and flights over 64 KB panicked; flights are now
   split into 4 KB PRELOGIN packets.
@@ -179,6 +182,12 @@ that land will be documented here.
   instead of a lossy `F64`** (`922337203685477.5807` and `.5806` both read as
   `…477.6`); `f64`/`f32` `FromSql` now accept `Numeric`, so `row.get::<f64,
   _>()` keeps working.
+- **Behaviour changes from the fixes above:** `Encrypt=Strict` with
+  `TrustServerCertificate=true` now fails against an untrusted certificate;
+  connection strings .NET rejects (an unquoted value ending in a quote, an
+  unclosed quote) are errors; `key=;` unsets `key`; an instance name with an
+  explicit port is ignored; `Encrypt=false` against a server that answers
+  ENCRYPT_NOT_SUP fails before TLS rather than during it.
 
 ## [0.13.1] - 2026-08-30
 

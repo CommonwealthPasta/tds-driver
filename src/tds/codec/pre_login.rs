@@ -117,7 +117,16 @@ impl PreloginMessage {
             }
             (Off, Off) => Off,
             (Off | On | Required, On | Required) => On,
-            (Off, NotSupported) | (NotSupported, NotSupported | Off) => NotSupported,
+            (NotSupported, NotSupported | Off) => NotSupported,
+            // MS-TDS 2.2.6.5 sends the login unencrypted here. Its TLS would
+            // have validated the certificate, so a man in the middle could
+            // answer NOT_SUP to read it; plaintext is opt-in (`NotSupported`).
+            (Off, NotSupported) => {
+                return Err(Error::Protocol(
+                    "the server does not support encryption, so the login would be sent unencrypted; set Encrypt=DANGER_PLAINTEXT to allow that"
+                        .into(),
+                ))
+            }
             (On | Required, Off | NotSupported) => {
                 return Err(Error::Protocol(
                     "Server does not allow the requested encryption level.".into(),
@@ -599,7 +608,7 @@ mod tests {
             (Off, Off, Some(Off)),
             (Off, On, Some(On)),
             (Off, Required, Some(On)),
-            (Off, NotSupported, Some(NotSupported)),
+            (Off, NotSupported, None),
             (On, Off, None),
             (On, On, Some(On)),
             (On, Required, Some(On)),

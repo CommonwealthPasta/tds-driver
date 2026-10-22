@@ -128,7 +128,6 @@ fn encryption(value: u8) -> Vec<u8> {
 #[tokio::test]
 async fn login_without_tls_when_one_side_does_not_support_it() {
     for (client, server) in [
-        (EncryptionLevel::Off, NOT_SUP),
         (EncryptionLevel::NotSupported, OFF),
         (EncryptionLevel::NotSupported, NOT_SUP),
     ] {
@@ -144,6 +143,8 @@ async fn mismatched_encryption_fails_before_tls() {
         (EncryptionLevel::Required, NOT_SUP),
         (EncryptionLevel::Required, OFF),
         (EncryptionLevel::NotSupported, REQ),
+        // A login that would have had TLS isn't sent without it.
+        (EncryptionLevel::Off, NOT_SUP),
     ] {
         let (res, seen) = connect(encryption(server), client, None).await;
         assert!(
