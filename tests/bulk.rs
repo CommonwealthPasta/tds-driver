@@ -588,6 +588,37 @@ where
 }
 
 #[test_on_runtimes]
+async fn bulk_load_max_values_over_64k<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    assert_bulk(
+        &mut conn,
+        vec![
+            (
+                "VARCHAR(MAX)",
+                "a".repeat(70_000).into_sql(),
+                "DATALENGTH(v)",
+                "70000",
+            ),
+            (
+                "NVARCHAR(MAX)",
+                "a".repeat(40_000).into_sql(),
+                "DATALENGTH(v)",
+                "80000",
+            ),
+            (
+                "VARBINARY(MAX) NOT NULL",
+                vec![7u8; 70_000].into_sql(),
+                "DATALENGTH(v)",
+                "70000",
+            ),
+        ],
+    )
+    .await
+}
+
+#[test_on_runtimes]
 async fn bulk_load_nvarchar_up_to_4000<S>(mut conn: tiberius::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,

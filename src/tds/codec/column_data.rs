@@ -44,7 +44,7 @@ pub(crate) const MAX_PREALLOC: usize = 8192; // 8 KiB
 /// without limit and OOM the client on a single column value.
 pub(crate) const MAX_PLP_SIZE: usize = i32::MAX as usize;
 
-use super::{Encode, FixedLenType, TypeInfo, VarLenType};
+use super::{Encode, FixedLenType, TypeInfo, VarLenContext, VarLenType};
 #[cfg(feature = "tds73")]
 use crate::tds::time::{Date, DateTime2, DateTimeOffset, Time};
 use crate::{
@@ -298,6 +298,26 @@ fn rescale_time(time: Time, scale: u8) -> crate::Result<Time> {
     };
 
     Ok(Time::new(increments, scale))
+}
+
+/// Largest value a column takes, in bytes. (max) columns declare 0xffff.
+fn column_limit(vlc: &VarLenContext) -> usize {
+    if vlc.len() < 0xffff {
+        vlc.len()
+    } else {
+        MAX_PLP_SIZE
+    }
+}
+
+/// One PLP chunk holds the whole value: `column_limit` keeps it below 2^31.
+fn put_plp(dst: &mut BytesMutWithTypeInfo<'_>, bytes: &[u8]) {
+    dst.put_u64_le(0xfffffffffffffffe); // unknown length
+    dst.put_u32_le(bytes.len() as u32);
+
+    if !bytes.is_empty() {
+        dst.extend_from_slice(bytes);
+        dst.put_u32_le(0); // terminator
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -567,12 +587,12 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     let bytes =
                         string::encode_varchar(str.as_ref(), vlc.collation().as_ref().unwrap())?;
 
-                    if bytes.len() > vlc.len() {
+                    if bytes.len() > column_limit(vlc) {
                         return Err(crate::Error::BulkInput(
                             format!(
                                 "Encoded string length {} exceed column limit {}",
                                 bytes.len(),
-                                vlc.len()
+                                column_limit(vlc)
                             )
                             .into(),
                         ));
@@ -582,21 +602,7 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                         dst.put_u16_le(bytes.len() as u16);
                         dst.extend_from_slice(bytes.as_slice());
                     } else {
-                        // unknown size
-                        dst.put_u64_le(0xfffffffffffffffe);
-
-                        assert!(
-                            str.len() < 0xffffffff,
-                            "if str longer than this, need to implement multiple blobs"
-                        );
-
-                        dst.put_u32_le(bytes.len() as u32);
-                        dst.extend_from_slice(bytes.as_slice());
-
-                        if !bytes.is_empty() {
-                            // no next blob
-                            dst.put_u32_le(0u32);
-                        }
+                        put_plp(dst, &bytes);
                     }
                 } else if vlc.len() < 0xffff {
                     dst.put_u16_le(0xffff);
@@ -636,11 +642,6 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                         // unknown size
                         dst.put_u64_le(0xfffffffffffffffe);
 
-                        assert!(
-                            str.len() < 0xffffffff,
-                            "if str longer than this, need to implement multiple blobs"
-                        );
-
                         let len_pos = dst.len();
                         dst.put_u32_le(0u32);
 
@@ -650,12 +651,11 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
 
                         let length = dst.len() - len_pos - 4;
 
-                        if length > vlc.len() {
+                        if length > MAX_PLP_SIZE {
                             return Err(crate::Error::BulkInput(
                                 format!(
                                     "Encoded string length {} exceed column limit {}",
-                                    length,
-                                    vlc.len()
+                                    length, MAX_PLP_SIZE
                                 )
                                 .into(),
                             ));
@@ -745,12 +745,12 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     || vlc.r#type() == VarLenType::BigVarBin =>
             {
                 if let Some(bytes) = opt {
-                    if bytes.len() > vlc.len() {
+                    if bytes.len() > column_limit(vlc) {
                         return Err(crate::Error::BulkInput(
                             format!(
                                 "Binary length {} exceed column limit {}",
                                 bytes.len(),
-                                vlc.len()
+                                column_limit(vlc)
                             )
                             .into(),
                         ));
@@ -758,16 +758,9 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
 
                     if vlc.len() < 0xffff {
                         dst.put_u16_le(bytes.len() as u16);
-                        dst.extend(bytes.into_owned());
+                        dst.extend_from_slice(&bytes);
                     } else {
-                        // unknown size
-                        dst.put_u64_le(0xfffffffffffffffe);
-                        dst.put_u32_le(bytes.len() as u32);
-
-                        if !bytes.is_empty() {
-                            dst.extend(bytes.into_owned());
-                            dst.put_u32_le(0);
-                        }
+                        put_plp(dst, &bytes);
                     }
                 } else if vlc.len() < 0xffff {
                     dst.put_u16_le(0xffff);
@@ -2162,20 +2155,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn nvarchar_too_long_unknown_size_errors() {
-        // vlc.len() == 0xffff drives the unknown-size path; a string whose UTF-16
-        // byte length exceeds the column limit trips the check at 513-520.
-        expect_bulk_input(
-            TypeInfo::VarLenSized(VarLenContext::new(
-                VarLenType::NVarchar,
-                0xffff,
-                Some(Collation::new(13632521, 52)),
-            )),
-            ColumnData::String(Some("a".repeat(40_000).into())),
-        );
-    }
-
     // ----- Text / NText encode arms (lines 538-587) -----
 
     #[tokio::test]
@@ -2466,5 +2445,29 @@ mod tests {
             50_000_000
         );
         assert!(rescale_time(Time::new(5, 9), 7).is_err());
+    }
+
+    #[tokio::test]
+    async fn bulk_max_values_over_64k() {
+        let collation = Some(Collation::new(13632521, 52));
+        test_round_trip(
+            TypeInfo::VarLenSized(VarLenContext::new(
+                VarLenType::BigVarChar,
+                0xffff,
+                collation,
+            )),
+            ColumnData::String(Some("a".repeat(70_000).into())),
+        )
+        .await;
+        test_round_trip(
+            TypeInfo::VarLenSized(VarLenContext::new(VarLenType::NVarchar, 0xffff, collation)),
+            ColumnData::String(Some("a".repeat(40_000).into())),
+        )
+        .await;
+        test_round_trip(
+            TypeInfo::VarLenSized(VarLenContext::new(VarLenType::BigVarBin, 0xffff, None)),
+            ColumnData::Binary(Some(vec![7u8; 70_000].into())),
+        )
+        .await;
     }
 }
