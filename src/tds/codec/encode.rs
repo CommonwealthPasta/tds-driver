@@ -14,6 +14,24 @@ pub(crate) fn put_b_varchar(dst: &mut BytesMut, s: &str, what: &str) -> crate::R
     Ok(())
 }
 
+/// A B_VARBYTE holding `s` in UTF-16: a u8 count of its bytes, two per unit.
+/// `what` names it in the error for a longer one.
+pub(crate) fn put_b_varbyte_utf16(dst: &mut BytesMut, s: &str, what: &str) -> crate::Result<()> {
+    let units = s.encode_utf16().count();
+    let len = u8::try_from(units * 2).map_err(|_| {
+        crate::Error::Conversion(
+            format!(
+                "{what} is {units} UTF-16 code units long; the limit is {}",
+                u8::MAX / 2
+            )
+            .into(),
+        )
+    })?;
+    dst.put_u8(len);
+    put_utf16(dst, s);
+    Ok(())
+}
+
 /// A US_VARCHAR: as [`put_b_varchar`], with a u16 count.
 pub(crate) fn put_us_varchar(dst: &mut BytesMut, s: &str, what: &str) -> crate::Result<()> {
     dst.put_u16_le(utf16_units(s, what)?);

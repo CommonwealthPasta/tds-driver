@@ -172,6 +172,45 @@ where
     Ok(())
 }
 
+#[test_on_runtimes]
+async fn rolling_back_to_a_savepoint_keeps_the_work_before_it<S>(
+    mut conn: tds_driver::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let table = random_table().await;
+    conn.execute(format!("CREATE TABLE ##{} (id int)", table), &[])
+        .await?;
+
+    conn.begin_transaction().await?;
+    conn.execute(format!("INSERT INTO ##{} (id) VALUES (1)", table), &[])
+        .await?;
+    // An odd-length name, which the server used to reject (3976) and abort
+    // the transaction over, and a non-ASCII one.
+    conn.save_transaction("sp1").await?;
+    conn.execute(format!("INSERT INTO ##{} (id) VALUES (2)", table), &[])
+        .await?;
+    conn.save_transaction("später").await?;
+    conn.execute(format!("INSERT INTO ##{} (id) VALUES (3)", table), &[])
+        .await?;
+
+    conn.simple_query("ROLLBACK TRANSACTION später")
+        .await?
+        .into_results()
+        .await?;
+    assert_eq!(2, row_count(&mut conn, &table).await?);
+    conn.simple_query("ROLLBACK TRANSACTION sp1")
+        .await?
+        .into_results()
+        .await?;
+    conn.commit_transaction().await?;
+
+    assert_eq!(1, row_count(&mut conn, &table).await?);
+
+    Ok(())
+}
+
 async fn session_isolation_level<S>(conn: &mut tds_driver::Client<S>) -> Result<i16>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,

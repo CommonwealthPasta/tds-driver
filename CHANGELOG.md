@@ -238,7 +238,7 @@ The first release as `tds-driver` (0.1.0). It breaks compatibility with
 - **Names too long for their length prefix are errors** instead of wrapped
   lengths: bulk column names (a debug-build panic), UDT names in bulk and TVP
   metadata, XML schema names in TVP metadata, and `save_transaction` names over
-  255 UTF-16 units.
+  127 UTF-16 units.
 - **An instance name too long for PRELOGIN's u16 offsets and an access token of
   2^31 UTF-16 units are errors**; the first panicked debug builds, the second
   wrapped LOGIN7's u32 lengths.
@@ -249,6 +249,9 @@ The first release as `tds-driver` (0.1.0). It breaks compatibility with
   as 12:35:00.5; past midnight, a parameter failed (8023) and a bulk value moved
   to the next day.
 - **Bulk insert of a string into an `xml` column works**, as in SqlBulkCopy.
+- **`save_transaction` works.** Transaction Manager requests sent names with a
+  length in UTF-16 units where MS-TDS 2.2.6.9 has a byte count, so the server
+  rejected any savepoint name (3976, "odd length") and aborted the transaction.
 
 ### Changed
 

@@ -1,4 +1,4 @@
-use super::{put_b_varchar, AllHeaderTy, Encode, ALL_HEADERS_LEN_TX};
+use super::{put_b_varbyte_utf16, AllHeaderTy, Encode, ALL_HEADERS_LEN_TX};
 use bytes::{BufMut, BytesMut};
 use std::borrow::Cow;
 
@@ -87,7 +87,7 @@ enum TransactionRequestBody<'a> {
 impl<'a> TransactionManagerRequest<'a> {
     /// Build a `TM_BEGIN_XACT` request that begins a new transaction with the
     /// given isolation level (see [`IsolationLevel`] for how long it lasts).
-    /// The (usually empty) transaction name is sent as a `B_VARCHAR`.
+    /// The (usually empty) transaction name is sent as a `B_VARBYTE`.
     pub fn begin(
         transaction_desc: [u8; 8],
         isolation_level: IsolationLevel,
@@ -138,7 +138,10 @@ impl<'a> TransactionManagerRequest<'a> {
     }
 }
 
-/// What a request's B_VARCHAR names, in the error for one too long.
+/// What a request's names are, in the error for one too long. MS-TDS 2.2.6.9
+/// makes each a B_VARBYTE, counted in bytes; a B_VARCHAR's count of UTF-16
+/// units made the server reject any name of odd length (3976) and abort the
+/// transaction.
 const NAME: &str = "transaction or savepoint name";
 
 impl<'a> Encode<BytesMut> for TransactionManagerRequest<'a> {
@@ -159,15 +162,15 @@ impl<'a> Encode<BytesMut> for TransactionManagerRequest<'a> {
                 name,
             } => {
                 dst.put_u8(isolation_level as u8);
-                put_b_varchar(dst, &name, NAME)?;
+                put_b_varbyte_utf16(dst, &name, NAME)?;
             }
             TransactionRequestBody::Commit { name } | TransactionRequestBody::Rollback { name } => {
-                put_b_varchar(dst, &name, NAME)?;
+                put_b_varbyte_utf16(dst, &name, NAME)?;
                 // Flags byte: bit 0 (`fBeginXact`) unset — do not begin a new
                 // transaction after commit/rollback.
                 dst.put_u8(0);
             }
-            TransactionRequestBody::Save { name } => put_b_varchar(dst, &name, NAME)?,
+            TransactionRequestBody::Save { name } => put_b_varbyte_utf16(dst, &name, NAME)?,
         }
 
         Ok(())
@@ -199,7 +202,7 @@ mod tests {
         let mut expected = all_headers();
         expected.extend_from_slice(&(TransactionManagerRequestType::Begin as u16).to_le_bytes());
         expected.push(IsolationLevel::ReadCommitted as u8); // isolation level
-        expected.push(0); // B_VARCHAR length (empty name)
+        expected.push(0); // B_VARBYTE length (empty name)
 
         assert_eq!(&buf[..], &expected[..]);
     }
@@ -215,7 +218,7 @@ mod tests {
         let mut expected = all_headers();
         expected.extend_from_slice(&(TransactionManagerRequestType::Begin as u16).to_le_bytes());
         expected.push(IsolationLevel::Serializable as u8);
-        expected.push(2); // two UTF-16 code units
+        expected.push(4); // bytes: two UTF-16 code units
         expected.extend_from_slice(&b't'.to_le_bytes());
         expected.push(0);
         expected.extend_from_slice(&b'x'.to_le_bytes());
@@ -234,7 +237,7 @@ mod tests {
 
         let mut expected = all_headers();
         expected.extend_from_slice(&(TransactionManagerRequestType::Commit as u16).to_le_bytes());
-        expected.push(0); // B_VARCHAR length (empty name)
+        expected.push(0); // B_VARBYTE length (empty name)
         expected.push(0); // flags: no new transaction
 
         assert_eq!(&buf[..], &expected[..]);
@@ -255,7 +258,7 @@ mod tests {
         expected.extend_from_slice(&desc);
         expected.extend_from_slice(&1u32.to_le_bytes());
         expected.extend_from_slice(&(TransactionManagerRequestType::Rollback as u16).to_le_bytes());
-        expected.push(0); // B_VARCHAR length
+        expected.push(0); // B_VARBYTE length
         expected.push(0); // flags
 
         assert_eq!(&buf[..], &expected[..]);
@@ -271,7 +274,7 @@ mod tests {
 
         let mut expected = all_headers();
         expected.extend_from_slice(&(TransactionManagerRequestType::Save as u16).to_le_bytes());
-        expected.push(3); // three UTF-16 code units
+        expected.push(6); // bytes: three UTF-16 code units
         for unit in "sp1".encode_utf16() {
             expected.extend_from_slice(&unit.to_le_bytes());
         }
@@ -280,9 +283,9 @@ mod tests {
     }
 
     #[test]
-    fn savepoint_name_over_255_units_is_an_error() {
-        // 256 wrapped the B_VARCHAR length to 0 ahead of all 256 units.
-        for name in ["a".repeat(256), "\u{1F600}".repeat(128)] {
+    fn savepoint_name_over_127_units_is_an_error() {
+        // 128 units are 256 bytes, past the B_VARBYTE's u8 length.
+        for name in ["a".repeat(128), "\u{1F600}".repeat(64)] {
             let err = TransactionManagerRequest::save([0; 8], name)
                 .encode(&mut BytesMut::new())
                 .unwrap_err();
@@ -290,9 +293,9 @@ mod tests {
         }
 
         let mut buf = BytesMut::new();
-        TransactionManagerRequest::save([0; 8], "a".repeat(255))
+        TransactionManagerRequest::save([0; 8], "a".repeat(127))
             .encode(&mut buf)
             .unwrap();
-        assert_eq!(buf[ALL_HEADERS_LEN_TX + 2], 255);
+        assert_eq!(buf[ALL_HEADERS_LEN_TX + 2], 254);
     }
 }
