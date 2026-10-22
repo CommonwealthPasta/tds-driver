@@ -27,7 +27,7 @@ version = "0.13.1"
 name = "tiberius"
 
 [workspace]
-members = ["runtimes-macro", "tiberius-ng-macros"]
+members = ["runtimes-macro", "tds-driver-macros"]
 
 [[test]]
 path = "tests/query.rs"
@@ -177,8 +177,8 @@ version = "2"
 [dev-dependencies.runtimes-macro]
 path = "./runtimes-macro"
 
-[dependencies.tiberius-ng-macros]
-path = "./tiberius-ng-macros"
+[dependencies.tds-driver-macros]
+path = "./tds-driver-macros"
 version = "0.1.0"
 
 [dev-dependencies]

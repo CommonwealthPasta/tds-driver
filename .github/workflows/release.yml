@@ -46,7 +46,7 @@ jobs:
       - name: Package (dry-run)
         # `--workspace` publishes members in dependency order and, during the
         # dry run, verifies `tiberius-ng` against a temp registry copy of the
-        # not-yet-published `tiberius-ng-macros`. Running the two crates as
+        # not-yet-published `tds-driver-macros`. Running the two crates as
         # separate `-p ... --dry-run` invocations would fail here on the first
         # release (macros not on crates.io yet). `runtimes-macro` is skipped
         # automatically (publish = false).
@@ -68,10 +68,10 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get install -y openssl libkrb5-dev
       - name: Publish (macro crate first, then the library)
-        # Publish each publishable member in dependency order (tiberius-ng-macros
+        # Publish each publishable member in dependency order (tds-driver-macros
         # before tiberius-ng). We do NOT use `cargo publish --workspace` here:
         # it aborts the whole run if ANY member version already exists on the
-        # index — which happens on a patch release where `tiberius-ng-macros` is
+        # index — which happens on a patch release where `tds-driver-macros` is
         # unchanged and already published, leaving the library unpublished.
         # Publishing per-crate and treating "already exists" as a skip lets the
         # library go out while an unchanged macro crate is left alone. cargo
@@ -81,7 +81,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           set -uo pipefail
-          for crate in tiberius-ng-macros tiberius-ng; do
+          for crate in tds-driver-macros tiberius-ng; do
             echo "::group::publish $crate"
             if out=$(cargo publish -p "$crate" 2>&1); then
               echo "$out"
