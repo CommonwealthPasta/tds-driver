@@ -215,6 +215,13 @@ impl Date {
         self.0
     }
 
+    /// For `ToSql`, which cannot fail: a day count before year 1 becomes
+    /// `u32::MAX`, which the encoder rejects like any day past 9999-12-31.
+    #[cfg_attr(not(any(feature = "chrono", feature = "time")), allow(dead_code))]
+    pub(crate) fn from_signed_days(days: i64) -> Date {
+        Date(u32::try_from(days).unwrap_or(u32::MAX))
+    }
+
     pub(crate) async fn decode<R>(src: &mut R) -> crate::Result<Self>
     where
         R: SqlReadBytes + Unpin,
@@ -229,9 +236,18 @@ impl Date {
 #[cfg_attr(docsrs, doc(cfg(feature = "tds73")))]
 impl Encode<BytesMut> for Date {
     fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
+        // 9999-12-31. The server rejects later dates, including a
+        // datetimeoffset whose UTC date is later.
+        const MAX_DAYS: u32 = 3_652_058;
+
+        if self.days() > MAX_DAYS {
+            return Err(crate::Error::Conversion(
+                "date out of range: SQL Server dates run from 0001-01-01 to 9999-12-31".into(),
+            ));
+        }
+
         let mut tmp = [0u8; 4];
         LittleEndian::write_u32(&mut tmp, self.days());
-        assert_eq!(tmp[3], 0);
         dst.extend_from_slice(&tmp[0..3]);
 
         Ok(())
@@ -411,13 +427,7 @@ impl DateTime2 {
 impl Encode<BytesMut> for DateTime2 {
     fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
         self.time.encode(dst)?;
-
-        let mut tmp = [0u8; 4];
-        LittleEndian::write_u32(&mut tmp, self.date.days());
-        assert_eq!(tmp[3], 0);
-        dst.extend_from_slice(&tmp[0..3]);
-
-        Ok(())
+        self.date.encode(dst)
     }
 }
 
@@ -570,13 +580,32 @@ mod tests {
     #[cfg(feature = "tds73")]
     #[tokio::test]
     async fn date_round_trip() {
-        for days in [0u32, 1, 730119, 0x00ff_ffff] {
+        // 3_652_058 is 9999-12-31.
+        for days in [0u32, 1, 730119, 3_652_058] {
             let date = Date::new(days);
             let mut buf = BytesMut::new();
             date.encode(&mut buf).unwrap();
             assert_eq!(buf.len(), 3);
             let decoded = Date::decode(&mut buf.into_sql_read_bytes()).await.unwrap();
             assert_eq!(decoded, date);
+        }
+    }
+
+    #[cfg(feature = "tds73")]
+    #[test]
+    fn dates_outside_year_1_to_9999_are_encode_errors() {
+        // Past 9999-12-31, the top of three bytes, and a day before year 1.
+        for date in [
+            Date::new(3_652_059),
+            Date::new(0x00ff_ffff),
+            Date::from_signed_days(-1),
+        ] {
+            let err = date.encode(&mut BytesMut::new()).unwrap_err();
+            assert!(matches!(err, crate::Error::Conversion(_)), "{date:?}");
+
+            let dt2 = DateTime2::new(date, Time::new(0, 7));
+            let err = dt2.encode(&mut BytesMut::new()).unwrap_err();
+            assert!(matches!(err, crate::Error::Conversion(_)), "{date:?}");
         }
     }
 

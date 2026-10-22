@@ -3298,3 +3298,41 @@ where
 
     Ok(())
 }
+
+#[cfg(all(feature = "tds73", feature = "chrono"))]
+#[test_on_runtimes]
+async fn chrono_dates_at_the_ends_of_the_range<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use chrono::NaiveDate;
+
+    for (y, m, d) in [(1, 1, 1), (9999, 12, 31)] {
+        let date = NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let row = conn
+            .query("SELECT @P1", &[&date])
+            .await?
+            .into_row()
+            .await?
+            .unwrap();
+        assert_eq!(Some(date), row.get(0));
+    }
+
+    Ok(())
+}
+
+#[cfg(all(feature = "tds73", feature = "chrono"))]
+#[test_on_runtimes]
+async fn chrono_date_before_year_1_is_an_error<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let date = chrono::NaiveDate::from_ymd_opt(0, 12, 31).unwrap();
+    let err = conn.query("SELECT @P1", &[&date]).await.unwrap_err();
+    assert!(
+        matches!(err, tiberius::error::Error::Conversion(_)),
+        "{err:?}"
+    );
+
+    Ok(())
+}

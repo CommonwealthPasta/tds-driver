@@ -125,7 +125,7 @@ from_sql!(
 
 #[cfg(feature = "tds73")]
 to_sql!(self_,
-        Date: (ColumnData::Date, super::Date::new(to_days(*self_, 1) as u32));
+        Date: (ColumnData::Date, super::Date::from_signed_days(to_days(*self_, 1)));
         Time: (ColumnData::Time, {
             let nanos: u64 = (*self_ - Time::from_hms(0, 0, 0).unwrap()).whole_nanoseconds().try_into().unwrap();
             let increments = nanos / 100;
@@ -137,7 +137,7 @@ to_sql!(self_,
             let nanos: u64 = (time - Time::from_hms(0, 0, 0).unwrap()).whole_nanoseconds().try_into().unwrap();
             let increments = nanos / 100;
 
-            let date = super::Date::new(to_days(self_.date(), 1) as u32);
+            let date = super::Date::from_signed_days(to_days(self_.date(), 1));
             let time = super::Time {increments, scale: 7};
 
             super::DateTime2::new(date, time)
@@ -150,7 +150,7 @@ to_sql!(self_,
 
             let nanos: u64 = (utc_date.time() - Time::from_hms(0, 0, 0).unwrap()).whole_nanoseconds().try_into().unwrap();
 
-            let date = super::Date::new(to_days(utc_date.date(), 1) as u32);
+            let date = super::Date::from_signed_days(to_days(utc_date.date(), 1));
             let time = super::Time { increments: nanos / 100, scale: 7 };
 
             super::DateTimeOffset::new(super::DateTime2::new(date, time), offset)
@@ -392,6 +392,46 @@ mod tests {
                 assert_eq!(round_tripped.offset, 60);
             }
             other => panic!("unexpected: {:?}", other),
+        }
+    }
+
+    #[cfg(feature = "tds73")]
+    fn encode(data: ColumnData<'_>) -> crate::Result<()> {
+        use crate::tds::codec::Encode;
+
+        let mut buf = bytes::BytesMut::new();
+        data.encode(&mut crate::BytesMutWithTypeInfo::new(&mut buf))
+    }
+
+    #[cfg(feature = "tds73")]
+    #[test]
+    fn dates_outside_year_1_to_9999_are_encode_errors() {
+        use crate::ToSql;
+
+        let noon = Time::from_hms(12, 0, 0).unwrap();
+        for year in [0, -5, -9999] {
+            let date = Date::from_calendar_date(year, Month::January, 1).unwrap();
+            let dt = PrimitiveDateTime::new(date, noon);
+            for data in [date.to_sql(), dt.to_sql(), dt.assume_utc().to_sql()] {
+                let err = encode(data).unwrap_err();
+                assert!(
+                    matches!(err, crate::Error::Conversion(_)),
+                    "{year}: {err:?}"
+                );
+            }
+        }
+
+        // In range locally, out of range in UTC, which is what datetimeoffset
+        // stores.
+        let edges = [(1, Month::January, 1, 0, 30, 1)];
+        for (y, m, d, h, min, offset_h) in edges {
+            let local = PrimitiveDateTime::new(
+                Date::from_calendar_date(y, m, d).unwrap(),
+                Time::from_hms(h, min, 0).unwrap(),
+            );
+            let dto = local.assume_offset(UtcOffset::from_hms(offset_h, 0, 0).unwrap());
+            let err = encode(dto.to_sql()).unwrap_err();
+            assert!(matches!(err, crate::Error::Conversion(_)), "{dto}: {err:?}");
         }
     }
 

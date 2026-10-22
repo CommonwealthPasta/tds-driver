@@ -139,7 +139,7 @@ from_sql!(
 
 #[cfg(feature = "tds73")]
 to_sql!(self_,
-        NaiveDate: (ColumnData::Date, Date::new(to_days(*self_, 1) as u32));
+        NaiveDate: (ColumnData::Date, Date::from_signed_days(to_days(*self_, 1)));
         NaiveTime: (ColumnData::Time, {
             use chrono::Timelike;
 
@@ -155,7 +155,7 @@ to_sql!(self_,
             let nanos = time.num_seconds_from_midnight() as u64 * 1e9 as u64 + time.nanosecond() as u64;
             let increments = nanos / 100;
 
-            let date = Date::new(to_days(self_.date(), 1) as u32);
+            let date = Date::from_signed_days(to_days(self_.date(), 1));
             let time = Time {increments, scale: 7};
 
             DateTime2::new(date, time)
@@ -167,7 +167,7 @@ to_sql!(self_,
             let time = naive.time();
             let nanos = time.num_seconds_from_midnight() as u64 * 1e9 as u64 + time.nanosecond() as u64;
 
-            let date = Date::new(to_days(naive.date(), 1) as u32);
+            let date = Date::from_signed_days(to_days(naive.date(), 1));
             let time = Time {increments: nanos / 100, scale: 7};
 
             DateTime2::new(date, time)
@@ -179,7 +179,7 @@ to_sql!(self_,
             let time = naive.time();
             let nanos = time.num_seconds_from_midnight() as u64 * 1e9 as u64 + time.nanosecond() as u64;
 
-            let date = Date::new(to_days(naive.date(), 1) as u32);
+            let date = Date::from_signed_days(to_days(naive.date(), 1));
             let time = Time { increments: nanos / 100, scale: 7 };
 
             let tz = self_.timezone();
@@ -191,7 +191,7 @@ to_sql!(self_,
 
 #[cfg(feature = "tds73")]
 into_sql!(self_,
-        NaiveDate: (ColumnData::Date, Date::new(to_days(self_, 1) as u32));
+        NaiveDate: (ColumnData::Date, Date::from_signed_days(to_days(self_, 1)));
         NaiveTime: (ColumnData::Time, {
             use chrono::Timelike;
 
@@ -207,7 +207,7 @@ into_sql!(self_,
             let nanos = time.num_seconds_from_midnight() as u64 * 1e9 as u64 + time.nanosecond() as u64;
             let increments = nanos / 100;
 
-            let date = Date::new(to_days(self_.date(), 1) as u32);
+            let date = Date::from_signed_days(to_days(self_.date(), 1));
             let time = Time {increments, scale: 7};
 
             DateTime2::new(date, time)
@@ -219,7 +219,7 @@ into_sql!(self_,
             let time = naive.time();
             let nanos = time.num_seconds_from_midnight() as u64 * 1e9 as u64 + time.nanosecond() as u64;
 
-            let date = Date::new(to_days(naive.date(), 1) as u32);
+            let date = Date::from_signed_days(to_days(naive.date(), 1));
             let time = Time {increments: nanos / 100, scale: 7};
 
             DateTime2::new(date, time)
@@ -231,7 +231,7 @@ into_sql!(self_,
             let time = naive.time();
             let nanos = time.num_seconds_from_midnight() as u64 * 1e9 as u64 + time.nanosecond() as u64;
 
-            let date = Date::new(to_days(naive.date(), 1) as u32);
+            let date = Date::from_signed_days(to_days(naive.date(), 1));
             let time = Time { increments: nanos / 100, scale: 7 };
 
             let tz = self_.timezone();
@@ -441,6 +441,75 @@ mod tests {
         let utc = chrono::DateTime::<Utc>::from_sql(&cd).unwrap().unwrap();
         assert_eq!(utc.naive_utc(), naive);
         assert_eq!(utc, dt);
+    }
+
+    #[cfg(feature = "tds73")]
+    fn encode(data: ColumnData<'_>) -> crate::Result<()> {
+        use crate::tds::codec::Encode;
+
+        let mut buf = bytes::BytesMut::new();
+        data.encode(&mut crate::BytesMutWithTypeInfo::new(&mut buf))
+    }
+
+    #[cfg(feature = "tds73")]
+    #[test]
+    fn dates_outside_year_1_to_9999_are_encode_errors() {
+        use crate::ToSql;
+        use chrono::TimeZone;
+
+        let plus_one = FixedOffset::east_opt(3600).unwrap();
+
+        for (y, m, d) in [(0, 12, 31), (-5, 1, 1), (10000, 1, 1), (50000, 1, 1)] {
+            let date = NaiveDate::from_ymd_opt(y, m, d).unwrap();
+            let naive = date.and_hms_opt(12, 0, 0).unwrap();
+            let utc = chrono::DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
+            let fixed = chrono::DateTime::<FixedOffset>::from_naive_utc_and_offset(naive, plus_one);
+
+            for data in [
+                date.to_sql(),
+                naive.to_sql(),
+                utc.to_sql(),
+                fixed.to_sql(),
+                date.into_sql(),
+                naive.into_sql(),
+                utc.into_sql(),
+                fixed.into_sql(),
+            ] {
+                let err = encode(data).unwrap_err();
+                assert!(
+                    matches!(err, crate::Error::Conversion(_)),
+                    "{date}: {err:?}"
+                );
+            }
+        }
+
+        // Year 1 locally, year 0 in UTC, which is what datetimeoffset stores.
+        let local = NaiveDate::from_ymd_opt(1, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 30, 0)
+            .unwrap();
+        let dto = plus_one.from_local_datetime(&local).unwrap();
+        assert!(matches!(
+            encode(dto.to_sql()),
+            Err(crate::Error::Conversion(_))
+        ));
+    }
+
+    #[cfg(feature = "tds73")]
+    #[test]
+    fn year_1_and_9999_encode() {
+        use crate::ToSql;
+
+        let first = NaiveDate::from_ymd_opt(1, 1, 1).unwrap();
+        let last = NaiveDate::from_ymd_opt(9999, 12, 31).unwrap();
+
+        for date in [first, last] {
+            let naive = date.and_hms_nano_opt(23, 59, 59, 999_999_900).unwrap();
+            let utc = chrono::DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
+            for data in [date.to_sql(), naive.to_sql(), utc.to_sql()] {
+                encode(data).unwrap();
+            }
+        }
     }
 
     #[cfg(feature = "tds73")]
