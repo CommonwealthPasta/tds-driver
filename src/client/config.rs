@@ -544,7 +544,7 @@ impl Config {
     /// # Supported parameters
     ///
     /// All parameter keys are handled case-insensitive. The last of a key and
-    /// its synonyms wins.
+    /// its synonyms wins, and a key SqlClient doesn't know is an error.
     ///
     /// |Parameter|Allowed values|Description|
     /// |--------|--------|--------|
@@ -563,6 +563,9 @@ impl Config {
     /// |`Multi Subnet Failover`, `MultiSubnetFailover`|`true`,`false`,`yes`,`no`|When enabled, connections are attempted in parallel to all IP addresses the server resolves to, and the first to succeed is used.|
     /// |`Connect Timeout`, `Connection Timeout`, `Timeout`|`<seconds>`|See [`Config::connect_timeout`].|
     /// |`Packet Size`|`512` to `32768`|See [`Config::packet_size`].|
+    ///
+    /// SqlClient's pooling, retry, `Command Timeout`, `Enlist` and similar
+    /// keywords are accepted and ignored.
     ///
     /// [ADO.NET connection string]: https://docs.microsoft.com/en-us/dotnet/framework/data/adonet/connection-strings
     pub fn from_ado_string(s: &str) -> crate::Result<Self> {

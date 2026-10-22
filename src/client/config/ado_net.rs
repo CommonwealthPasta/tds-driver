@@ -13,24 +13,42 @@ impl FromStr for AdoNetConfig {
     fn from_str(s: &str) -> crate::Result<Self> {
         let dict = parse(s, |key| match keyword(&key.to_lowercase()) {
             Some(keyword) => Ok(keyword.to_owned()),
-            None => Ok(key.to_lowercase()),
+            None => Err(crate::Error::Conversion(
+                format!("Connection string: Keyword not supported: '{key}'").into(),
+            )),
         })?;
         Ok(Self { dict })
     }
 }
 
-/// The keyword `key` (lowercase) is stored under, for keys with synonyms:
-/// SqlClient's (SqlConnectionOptions' keyword map, DbConnectionStringKeywords,
-/// DbConnectionStringSynonyms) and the crate's older spellings. Keys are
-/// stored by keyword, so the last of a set of synonyms wins.
+/// The keyword `key` (lowercase) stands for: SqlClient's keywords, its
+/// synonyms (SqlConnectionOptions' keyword map, DbConnectionStringKeywords,
+/// DbConnectionStringSynonyms) and the crate's older spellings. SqlClient
+/// rejects any other key; keys are stored by keyword, so the last of a set of
+/// synonyms wins.
 fn keyword(key: &str) -> Option<&'static str> {
     Some(match key {
         "application intent" | "applicationintent" => "application intent",
         "application name" | "app" | "applicationname" => "application name",
+        "attachdbfilename" | "extended properties" | "initial file name" => "attachdbfilename",
+        "attestation protocol" => "attestation protocol",
+        "authentication" => "authentication",
+        "column encryption setting" | "columnencryption" => "column encryption setting",
+        "command timeout" => "command timeout",
+        "connect retry count" | "connectretrycount" => "connect retry count",
+        "connect retry interval" | "connectretryinterval" => "connect retry interval",
         "connect timeout" | "connection timeout" | "connecttimeout" | "timeout" => {
             "connect timeout"
         }
+        "connection idle timeout" => "connection idle timeout",
+        "context connection" => "context connection",
+        "current language" | "language" => "current language",
         "data source" | "addr" | "address" | "network address" | "server" => "data source",
+        "enclave attestation url" => "enclave attestation url",
+        "encrypt" => "encrypt",
+        "enlist" => "enlist",
+        "failover partner" | "failoverpartner" => "failover partner",
+        "failover partner spn" | "failoverpartnerspn" => "failover partner spn",
         "host name in certificate" | "hostnameincertificate" | "hostname in certificate" => {
             "host name in certificate"
         }
@@ -38,12 +56,33 @@ fn keyword(key: &str) -> Option<&'static str> {
         "integrated security" | "trusted_connection" | "integratedsecurity" => {
             "integrated security"
         }
+        "ip address preference" | "ipaddresspreference" => "ip address preference",
+        "load balance timeout" | "connection lifetime" => "load balance timeout",
+        "max pool size" => "max pool size",
+        "min pool size" => "min pool size",
+        "multiple active result sets" | "multipleactiveresultsets" => "multiple active result sets",
         "multi subnet failover" | "multisubnetfailover" => "multi subnet failover",
         "packet size" | "packetsize" => "packet size",
         "password" | "pwd" => "password",
+        "persist security info" | "persistsecurityinfo" => "persist security info",
+        "pool blocking period" | "poolblockingperiod" => "pool blocking period",
+        "pooling" => "pooling",
+        "replication" => "replication",
+        "server certificate" | "servercertificate" => "server certificate",
+        "server spn" | "serverspn" => "server spn",
+        "transaction binding" => "transaction binding",
         "trust server certificate" | "trustservercertificate" => "trust server certificate",
+        "trustservercertificateca" => "trustservercertificateca",
+        "type system version" => "type system version",
         "user id" | "uid" | "user" | "username" => "user id",
+        "user instance" => "user instance",
         "workstation id" | "workstationid" | "wsid" => "workstation id",
+        // .NET Framework SqlClient only.
+        "connection reset" => "connection reset",
+        "network library" | "net" | "network" => "network library",
+        "transparent network ip resolution" | "transparentnetworkipresolution" => {
+            "transparent network ip resolution"
+        }
         _ => return None,
     })
 }
@@ -561,7 +600,7 @@ mod tests {
 
     #[test]
     fn trust_cert_parsing_missing() -> crate::Result<()> {
-        let test_str = "Something=foo;";
+        let test_str = "Pooling=true;";
         let ado: AdoNetConfig = test_str.parse()?;
 
         assert!(!ado.trust_cert()?);
@@ -1057,6 +1096,42 @@ mod tests {
             config("Timeout=1;Connect Timeout=2").connect_timeout(),
             Some(Duration::from_secs(2))
         );
+    }
+
+    #[test]
+    fn unknown_keywords_are_errors() {
+        for s in [
+            "Something=foo",
+            "server=h;Bogus=",
+            "User  ID=sa",
+            "Driver=x",
+        ] {
+            match crate::Config::from_ado_string(s) {
+                Err(crate::Error::Conversion(msg)) => {
+                    assert!(msg.contains("Keyword not supported"), "{s}: {msg}")
+                }
+                other => panic!("{s}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn known_keywords_without_an_effect_are_accepted() {
+        config(
+            "Pooling=true;Max Pool Size=100;Min Pool Size=0;\
+             MultipleActiveResultSets=false;Persist Security Info=false;\
+             Connection Lifetime=0;Load Balance Timeout=0;Enlist=true;\
+             Replication=false;Transaction Binding=Implicit Unbind;\
+             Type System Version=Latest;Context Connection=false;\
+             Column Encryption Setting=Disabled;Attestation Protocol=HGS;\
+             Enclave Attestation Url=x;Pool Blocking Period=Auto;\
+             Connect Retry Count=1;ConnectRetryInterval=10;Command Timeout=30;\
+             IP Address Preference=IPv4First;Failover Partner SPN=x;\
+             User Instance=false;Authentication=Sql Password;\
+             Network Library=dbmssocn;Connection Reset=true;\
+             Transparent Network IP Resolution=true;Connection Idle Timeout=0",
+        );
+        config("Authentication=SqlPassword;Server SPN=MSSQLSvc/h:1433");
     }
 
     #[test]
