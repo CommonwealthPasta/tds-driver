@@ -78,6 +78,9 @@ that land will be documented here.
   the locale's code page.
 - **The 20 CP437/CP850 SQL collations (e.g. `SQL_Latin1_General_CP850_CI_AS`)
   can be read**, and bulk-load rows for them are encoded in their code page.
+- **`Numeric::precision()` no longer counts a leading zero** (0.5 is 1, not 2),
+  so a `decimal(38,38)` value is 38, not 39, and can be sent back as a
+  parameter.
 
 ### Changed
 

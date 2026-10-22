@@ -67,21 +67,17 @@ impl Numeric {
         self.value
     }
 
-    /// The precision of the `Number` as a number of digits.
+    /// The precision of the `Number` as a number of digits: the smallest `p`
+    /// for which the value fits `decimal(p, scale)`.
     pub fn precision(self) -> u8 {
-        let mut result = 0;
-        let mut n = self.int_part();
+        let digits = self
+            .value
+            .unsigned_abs()
+            .checked_ilog10()
+            .map_or(0, |l| l + 1);
 
-        while n != 0 {
-            n /= 10;
-            result += 1;
-        }
-
-        if result == 0 {
-            1 + self.scale()
-        } else {
-            result + self.scale()
-        }
+        // No leading zero digit: 0.5 is decimal(1, 1), as SQL Server types it.
+        (digits as u8).max(self.scale).max(1)
     }
 
     pub(crate) fn len(self) -> u8 {
@@ -610,10 +606,27 @@ mod tests {
 
     #[test]
     fn precision_with_zero_int_part() {
-        // int_part == 0 -> precision is 1 + scale.
+        // 0.05 fits decimal(2, 2); no digit is spent on the leading zero.
         let n = Numeric::new_with_scale(5, 2);
         assert_eq!(n.int_part(), 0);
-        assert_eq!(n.precision(), 3);
+        assert_eq!(n.precision(), 2);
+
+        assert_eq!(Numeric::new_with_scale(0, 0).precision(), 1);
+        assert_eq!(Numeric::new_with_scale(0, 3).precision(), 3);
+        assert_eq!(Numeric::new_with_scale(-5, 1).precision(), 1);
+    }
+
+    #[test]
+    fn precision_of_decimal_38_38_is_38() {
+        let half = Numeric::new_with_scale(5 * 10i128.pow(37), 38);
+        assert_eq!(half.precision(), 38);
+        let max = Numeric::new_with_scale(-(10i128.pow(38) - 1), 38);
+        assert_eq!(max.precision(), 38);
+        assert_eq!(max.len(), 17);
+        assert_eq!(
+            Numeric::new_with_scale(10i128.pow(38) - 1, 0).precision(),
+            38
+        );
     }
 
     #[test]
