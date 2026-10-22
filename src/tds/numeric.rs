@@ -248,15 +248,48 @@ impl PartialEq for Numeric {
 #[cfg(feature = "rust_decimal")]
 mod decimal {
     use super::{Decimal, Numeric};
-    use crate::ColumnData;
+    #[cfg(feature = "tds73")]
+    use crate::{ColumnData, FromSql, FromSqlOwned};
+
+    /// Past `Decimal`'s scale 28 or 96-bit mantissa, trailing zeros are dropped
+    /// until it fits, as SqlClient's `SqlBuffer.Decimal` drops them rather than
+    /// fail; any other loss is an error.
+    #[cfg(feature = "tds73")]
+    fn to_decimal(num: Numeric) -> crate::Result<Decimal> {
+        let (mut value, mut scale) = (num.value(), num.scale() as u32);
+
+        loop {
+            if let Ok(dec) = Decimal::try_from_i128_with_scale(value, scale) {
+                return Ok(dec);
+            }
+            if scale == 0 || value % 10 != 0 {
+                return Err(crate::Error::Conversion(
+                    format!("{num} does not fit in a rust_decimal::Decimal").into(),
+                ));
+            }
+            value /= 10;
+            scale -= 1;
+        }
+    }
 
     #[cfg(feature = "tds73")]
-    from_sql!(Decimal: ColumnData::Numeric(ref num) => num.map(|num| {
-        Decimal::from_i128_with_scale(
-            num.value(),
-            num.scale() as u32,
-        )})
-    );
+    impl<'a> FromSql<'a> for Decimal {
+        fn from_sql(data: &'a ColumnData<'static>) -> crate::Result<Option<Self>> {
+            match data {
+                ColumnData::Numeric(num) => num.map(to_decimal).transpose(),
+                _ => Err(crate::Error::Conversion(
+                    format!("cannot interpret {:?} as an Decimal value", data).into(),
+                )),
+            }
+        }
+    }
+
+    #[cfg(feature = "tds73")]
+    impl FromSqlOwned for Decimal {
+        fn from_sql_owned(data: ColumnData<'static>) -> crate::Result<Option<Self>> {
+            Self::from_sql(&data)
+        }
+    }
 
     #[cfg(feature = "tds73")]
     to_sql!(self_,
@@ -547,6 +580,41 @@ mod tests {
         let n = Numeric::new_with_scale(5, 2);
         assert_eq!(n.int_part(), 0);
         assert_eq!(n.precision(), 3);
+    }
+
+    #[cfg(all(feature = "rust_decimal", feature = "tds73"))]
+    #[test]
+    fn rust_decimal_from_sql_errors_instead_of_panicking() {
+        use crate::{ColumnData, FromSql, FromSqlOwned};
+
+        let get = |value: i128, scale: u8| {
+            let data = ColumnData::Numeric(Some(Numeric::new_with_scale(value, scale)));
+            let borrowed = Decimal::from_sql(&data).map(|d| d.unwrap().to_string());
+            let owned = Decimal::from_sql_owned(data).map(|d| d.unwrap().to_string());
+            assert_eq!(borrowed.is_ok(), owned.is_ok());
+            borrowed
+        };
+
+        // 38 digits, and scale 38 with significant digits past 28.
+        assert!(get(12345678901234567890123456789012345678, 0).is_err());
+        assert!(get(12345678901234567890123456789012345678, 38).is_err());
+        assert!(matches!(
+            get(10i128.pow(29), 0),
+            Err(crate::Error::Conversion(_))
+        ));
+
+        // Only as many trailing zeros are dropped as needed to fit.
+        assert_eq!(
+            get(5 * 10i128.pow(29), 30).unwrap(),
+            "0.5000000000000000000000000000"
+        );
+        assert_eq!(get(0, 38).unwrap(), "0.0000000000000000000000000000");
+        assert_eq!(
+            get(-(10i128.pow(31)), 3).unwrap(),
+            "-10000000000000000000000000000"
+        );
+        assert_eq!(get(-12345, 2).unwrap(), "-123.45");
+        assert_eq!(Decimal::from_sql(&ColumnData::Numeric(None)).unwrap(), None);
     }
 
     #[test]

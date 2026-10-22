@@ -75,6 +75,32 @@ where
     Ok(())
 }
 
+#[cfg(feature = "rust_decimal")]
+#[test_on_runtimes]
+async fn rust_decimal_out_of_range<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use rust_decimal::Decimal;
+
+    let r = rows(
+        &mut conn,
+        "SELECT CAST('12345678901234567890123456789012345678' AS decimal(38,0)), \
+         CAST('0.12345678901234567890123456789012345678' AS decimal(38,38)), \
+         CAST(0.5 AS decimal(38,30)), CAST('79228162514264337593543950335' AS decimal(38,0))",
+    )
+    .await?;
+    let r = &r[0];
+
+    assert!(r.try_get::<Decimal, _>(0).is_err());
+    assert!(r.try_get::<Decimal, _>(1).is_err());
+    // Trailing zeros beyond scale 28 are dropped, as SqlClient does.
+    assert_eq!(r.try_get::<Decimal, _>(2)?, Some(Decimal::new(5, 1)));
+    assert_eq!(r.try_get::<Decimal, _>(3)?, Some(Decimal::MAX));
+
+    Ok(())
+}
+
 #[cfg(feature = "chrono")]
 #[test_on_runtimes]
 async fn chrono_utc_from_datetimeoffset<S>(mut conn: tiberius::Client<S>) -> Result<()>

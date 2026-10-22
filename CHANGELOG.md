@@ -68,6 +68,9 @@ that land will be documented here.
   INFO tokens.
 - **`DateTime<Utc>` from a `datetimeoffset` is no longer shifted by the
   offset.**
+- **`try_get::<rust_decimal::Decimal>` returns a conversion error instead of
+  panicking** on scale > 28 or more than 96 bits; trailing zeros are dropped
+  first, as SqlClient does.
 - **An unpaired UTF-16 surrogate decodes as U+FFFD instead of failing the result
   set**, in values (nvarchar, nchar, ntext, xml, sql_variant) and in
   column/table names, messages and ENVCHANGEs.
