@@ -56,7 +56,7 @@ pub(crate) use bytes_mut_with_type_info::BytesMutWithTypeInfo;
 use std::borrow::{BorrowMut, Cow};
 use uuid::Uuid;
 
-/// UTF-16 code units in the 2^31 - 1 bytes of nvarchar(max) and xml.
+/// UTF-16 code units in the 2^31 - 1 bytes of nvarchar(max), xml and ntext.
 const NVARCHAR_MAX_UNITS: usize = i32::MAX as usize / 2;
 
 /// Precision of every numeric parameter: the server's maximum.
@@ -899,20 +899,21 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                         dst.put_u32_le(len);
                         dst.extend_from_slice(bytes.as_slice());
                     } else {
-                        // NTEXT: UCS-2/UTF-16LE data
+                        // Before writing what can be gigabytes.
+                        if let Some(units) = utf16_units_over(&str, NVARCHAR_MAX_UNITS) {
+                            return Err(too_long(2 * units));
+                        }
+
                         put_text_pointer(dst);
                         let len_pos = dst.len();
                         dst.put_u32_le(0u32);
-
-                        let mut length = 0u32;
                         for chr in str.encode_utf16() {
-                            length += 2;
                             dst.put_u16_le(chr);
                         }
 
-                        let dst: &mut [u8] = dst.borrow_mut();
-                        let bytes = length.to_le_bytes();
-                        dst[len_pos..len_pos + 4].copy_from_slice(&bytes);
+                        let bytes = dst.len() - len_pos - 4;
+                        let len = lob_len(bytes).ok_or_else(|| too_long(bytes))?;
+                        dst[len_pos..len_pos + 4].copy_from_slice(&len.to_le_bytes());
                     }
                 } else {
                     // NULL: zero-length text pointer
@@ -2919,11 +2920,22 @@ mod tests {
         assert_eq!(&buf[..], &[2, 0, 0xe1, 0xe2]);
     }
 
-    /// 2^30 units, one more than the 2^31 - 1 bytes of xml. Its byte count
-    /// was a u32, which overflowed from 2^31 units.
+    /// 2^30 units, one more than the 2^31 - 1 bytes of xml and ntext hold.
+    /// Their byte counts were u32s, which overflowed from 2^31 units.
     #[test]
     fn utf16_values_over_2_gib_are_errors() {
         let s = "a".repeat(1 << 30);
+        let collation = Some(Collation::new(0x00d0_0409, 52));
+
+        let ntext = TypeInfo::VarLenSized(VarLenContext::new(
+            VarLenType::NText,
+            0x7fff_fffe,
+            collation,
+        ));
+        let err = encode_with_ti(&ntext, ColumnData::String(Some(s.as_str().into())))
+            .map(drop)
+            .unwrap_err();
+        assert!(matches!(err, Error::BulkInput(_)), "{err:?}");
 
         let err = ColumnData::Xml(Some(Cow::Owned(XmlData::new(s))))
             .encode_rpc_param(&mut BytesMut::new(), false)
