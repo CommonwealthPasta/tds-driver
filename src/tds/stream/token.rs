@@ -105,6 +105,21 @@ where
         }
     }
 
+    /// Reads the rest of the response for its effect on the connection, such
+    /// as ENVCHANGEs, dropping its results and any server error in it.
+    pub(crate) async fn drain(self) -> crate::Result<()> {
+        let mut stream = self.try_unfold();
+
+        loop {
+            match stream.try_next().await {
+                Ok(Some(_)) => (),
+                // A server error surfaces at the end of the response.
+                Ok(None) | Err(Error::Server(_)) => return Ok(()),
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
     #[cfg(any(windows, feature = "integrated-auth-gssapi", feature = "sspi-rs"))]
     pub(crate) async fn flush_sspi(self) -> crate::Result<TokenSspi> {
         let mut stream = self.try_unfold();

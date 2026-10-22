@@ -448,11 +448,26 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
             return Ok(());
         }
 
-        // Discard any partially-consumed packet payload, then drain whole
-        // packets up to the end-of-message marker. Truncating `buf` and
-        // re-reading on packet boundaries resynchronises the token stream even
-        // if a previous result stream was dropped part-way through a value
-        // (the lost bytes belonged to a packet we are discarding anyway).
+        if self.is_eof() {
+            self.token = TokenState::Between;
+            return Ok(());
+        }
+
+        // Parsed, not discarded: it can hold ENVCHANGEs, such as a transaction
+        // beginning or ending, that later requests depend on.
+        if self.token != TokenState::Unrecoverable {
+            match TokenStream::new(self).drain().await {
+                Ok(()) => return Ok(()),
+                Err(e) => event!(
+                    Level::WARN,
+                    "Discarding the rest of an unread response that failed to parse: {}",
+                    e
+                ),
+            }
+        }
+
+        // Out of step with the tokens: skip whole packets to the end of the
+        // message, losing any transaction change in them.
         self.buf.truncate(0);
         self.token_read = 0;
         self.token = TokenState::Between;

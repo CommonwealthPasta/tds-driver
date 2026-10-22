@@ -45,6 +45,12 @@ that land will be documented here.
   the next request to read as its result. The next request now reads up to it
   first, or, if the future was dropped partway through reading a token over 1
   MiB, fails along with every later one.
+- **A response left partly unread keeps its transaction changes.** The rest of a
+  dropped stream was discarded, including the ENVCHANGE of a `BEGIN TRAN` or
+  `COMMIT` in it, so the server rejected the next request (3989) or every later
+  one (3971). It is now read to the end. A token abandoned partway, its stream
+  dropped while waiting for the next packet, is read again from its start unless
+  it is over 1 MiB; then the rest of that message is still discarded.
 
 ### Changed
 
