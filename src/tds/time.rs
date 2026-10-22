@@ -286,6 +286,23 @@ impl Time {
         Self { increments, scale }
     }
 
+    /// Fails unless the server holds the value: under 24 hours, scale 0 to 7.
+    pub(crate) fn validate(self) -> crate::Result<()> {
+        self.len()?;
+
+        if self.increments < 86_400 * 10u64.pow(u32::from(self.scale)) {
+            return Ok(());
+        }
+
+        Err(crate::Error::Conversion(
+            format!(
+                "time out of range: {} increments of 10^-{} s is 24 hours or more",
+                self.increments, self.scale
+            )
+            .into(),
+        ))
+    }
+
     #[inline]
     /// Number of 10^-n second increments since midnight, where `n` is defined
     /// in [`scale`].
@@ -352,23 +369,11 @@ impl Time {
 #[cfg_attr(docsrs, doc(cfg(feature = "tds73")))]
 impl Encode<BytesMut> for Time {
     fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
-        match self.len()? {
-            3 => {
-                assert_eq!(self.increments >> 24, 0);
-                dst.put_u16_le(self.increments as u16);
-                dst.put_u8((self.increments >> 16) as u8);
-            }
-            4 => {
-                assert_eq!(self.increments >> 32, 0);
-                dst.put_u32_le(self.increments as u32);
-            }
-            5 => {
-                assert_eq!(self.increments >> 40, 0);
-                dst.put_u32_le(self.increments as u32);
-                dst.put_u8((self.increments >> 32) as u8);
-            }
-            _ => unreachable!(),
-        }
+        self.validate()?;
+
+        // Under 24 hours, the increments fit the scale's 3, 4 or 5 bytes.
+        let len = usize::from(self.len()?);
+        dst.extend_from_slice(&self.increments.to_le_bytes()[..len]);
 
         Ok(())
     }
@@ -659,7 +664,8 @@ mod tests {
         //   * encode `>> N` from `<< N` (the latter zeroes the byte written).
         // The 16-bit / 32-bit low halves and the shifted high byte occupy
         // disjoint bit ranges, so `|` vs `^` cannot be distinguished here.
-        for (increments, scale) in [(0x00FF_1234u64, 2u8), (0x00AB_1234_5678u64, 7)] {
+        // Both are under 24 hours.
+        for (increments, scale) in [(0x0083_1234u64, 2u8), (0x00AB_1234_5678u64, 7)] {
             let time = Time::new(increments, scale);
             let rlen = time.len().unwrap();
 
@@ -676,6 +682,35 @@ mod tests {
 
             assert_eq!(decoded, time);
             assert_eq!(decoded.increments(), increments);
+        }
+    }
+
+    #[cfg(feature = "tds73")]
+    #[test]
+    fn times_from_24_hours_up_are_encode_errors() {
+        // Over the field's 3/4/5 bytes (these asserted), and within them but at
+        // or past 24 h.
+        for time in [
+            Time::new(1 << 24, 0),
+            Time::new(1 << 32, 4),
+            Time::new(u64::MAX, 7),
+            Time::new(86_400, 0),
+            Time::new(8_640_000, 2),
+            Time::new(864_000_000_000, 7),
+        ] {
+            let err = time.encode(&mut BytesMut::new()).unwrap_err();
+            assert!(matches!(err, crate::Error::Conversion(_)), "{time:?}");
+
+            let dt2 = DateTime2::new(Date::new(1), time);
+            let err = dt2.encode(&mut BytesMut::new()).unwrap_err();
+            assert!(matches!(err, crate::Error::Conversion(_)), "{time:?}");
+        }
+
+        for scale in 0..=7 {
+            let last = 86_400 * 10u64.pow(scale) - 1;
+            Time::new(last, scale as u8)
+                .encode(&mut BytesMut::new())
+                .unwrap();
         }
     }
 

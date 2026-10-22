@@ -356,17 +356,17 @@ fn datetime2_parts(dt2: DateTime2) -> crate::Result<(i64, u64)> {
 /// SqlClient's TdsParser does.
 #[cfg(feature = "tds73")]
 fn rescale_time(time: Time, scale: u8) -> crate::Result<Time> {
-    let invalid =
-        || crate::Error::Conversion(format!("time scale {} is invalid", time.scale()).into());
+    time.validate()?;
 
-    if time.scale() > 7 || scale > 7 {
-        return Err(invalid());
+    if scale > 7 {
+        return Err(crate::Error::Conversion(
+            format!("time scale {scale} is invalid").into(),
+        ));
     }
 
+    // Validated: under 864 * 10^9, so times 10^7 fits.
     let increments = if scale >= time.scale() {
-        time.increments()
-            .checked_mul(10u64.pow(u32::from(scale - time.scale())))
-            .ok_or_else(invalid)?
+        time.increments() * 10u64.pow(u32::from(scale - time.scale()))
     } else {
         time.increments() / 10u64.pow(u32::from(time.scale() - scale))
     };
@@ -2588,6 +2588,38 @@ mod tests {
             50_000_000
         );
         assert!(rescale_time(Time::new(5, 9), 7).is_err());
+    }
+
+    #[cfg(feature = "tds73")]
+    #[test]
+    fn bulk_times_from_24_hours_up_are_errors() {
+        let column = |ty, len| TypeInfo::VarLenSized(VarLenContext::new(ty, len, None));
+        let at = |increments| DateTime2::new(Date::new(739_011), Time::new(increments, 7));
+
+        // u64::MAX overflowed converting to datetime's 1/300 s.
+        for increments in [u64::MAX, 864_000_000_000] {
+            for (ti, data) in [
+                (
+                    column(VarLenType::Timen, 3),
+                    ColumnData::Time(Some(Time::new(increments, 7))),
+                ),
+                (
+                    column(VarLenType::Datetime2, 7),
+                    ColumnData::DateTime2(Some(at(increments))),
+                ),
+                (
+                    column(VarLenType::Datetimen, 8),
+                    ColumnData::DateTime2(Some(at(increments))),
+                ),
+                (
+                    column(VarLenType::Datetimen, 4),
+                    ColumnData::DateTime2(Some(at(increments))),
+                ),
+            ] {
+                let err = encode_with_ti(&ti, data).unwrap_err();
+                assert!(matches!(err, Error::Conversion(_)), "{ti:?}: {err:?}");
+            }
+        }
     }
 
     #[tokio::test]
