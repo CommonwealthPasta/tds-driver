@@ -11,6 +11,11 @@ use tokio_util::compat::TokioAsyncWriteCompatExt;
 
 const OFF: u8 = 0;
 const NOT_SUP: u8 = 2;
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
 const REQ: u8 = 3;
 
 fn packet(ty: u8, payload: &[u8]) -> Vec<u8> {
@@ -137,6 +142,11 @@ async fn login_without_tls_when_one_side_does_not_support_it() {
     }
 }
 
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
 #[tokio::test]
 async fn mismatched_encryption_fails_before_tls() {
     for (client, server) in [
