@@ -122,7 +122,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
     ///
     /// Note: `tcp_stream` is a connected stream, so some parts of the
     /// [`Config`] need to be handled outside of this method.
-    pub(crate) async fn connect(config: Config, tcp_stream: S) -> crate::Result<Connection<S>> {
+    pub(crate) async fn connect(mut config: Config, tcp_stream: S) -> crate::Result<Connection<S>> {
         let context = {
             let mut context = Context::new();
             context.set_spn(config.get_host(), config.get_port());
@@ -190,14 +190,15 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
 
         let connection = connection.tls_handshake(&config, encryption).await?;
 
+        // Taken, not moved: `Config` zeroizes its credentials on drop.
         let mut connection = connection
             .login(
-                config.auth,
+                std::mem::replace(&mut config.auth, AuthMethod::None),
                 encryption,
-                config.database,
-                config.host,
-                config.application_name,
-                config.client_name,
+                config.database.take(),
+                config.host.take(),
+                config.application_name.take(),
+                config.client_name.take(),
                 config.readonly,
                 config.packet_size,
                 prelogin,

@@ -163,6 +163,16 @@ impl Default for Config {
     }
 }
 
+// `AuthMethod::AADToken` holds a plain `String` (public API); zeroize it
+// whenever a `Config` goes, including a connect future dropped by a timeout.
+impl Drop for Config {
+    fn drop(&mut self) {
+        if let AuthMethod::AADToken(token) = &mut self.auth {
+            zeroize::Zeroize::zeroize(token);
+        }
+    }
+}
+
 impl Config {
     /// Create a new `Config` with the default settings.
     pub fn new() -> Self {
@@ -1152,7 +1162,7 @@ mod tests {
         )
         .unwrap();
 
-        match config.auth {
+        match &config.auth {
             AuthMethod::Windows(auth) => {
                 assert_eq!("user", auth.user);
                 assert_eq!(Some("DOMAIN"), auth.domain.as_deref());
@@ -1309,7 +1319,7 @@ mod tests {
         )
         .unwrap();
 
-        match config.auth {
+        match &config.auth {
             AuthMethod::Windows(auth) => {
                 assert_eq!("onlyuser", auth.user);
             }

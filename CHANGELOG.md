@@ -165,6 +165,9 @@ that land will be documented here.
 - **`Encrypt=Strict` ignores `TrustServerCertificate`,** as SqlClient does, so
   the server certificate is always validated (`TrustServerCertificateCA` still
   applies).
+- **Secrets are zeroized before their memory is freed:** connection-string
+  values, the AAD token (also when a connect is abandoned) and the LOGIN7
+  buffer, which used to grow and free copies of the obfuscated password.
 
 ### Breaking
 

@@ -68,9 +68,10 @@ fn leaks<T>(secret: &str, f: impl FnOnce() -> T) -> (usize, T) {
     (HITS.load(Ordering::SeqCst), out)
 }
 
-/// Accepts one connection, answers PRELOGIN with ENCRYPT_NOT_SUP, reads the
-/// LOGIN7 and closes. Its own buffers are wiped before they are freed.
-async fn fake_server() -> u16 {
+/// Accepts one connection, answers PRELOGIN with ENCRYPT_NOT_SUP unless
+/// `stall`, reads the LOGIN7 and closes. Its own buffers are wiped before they
+/// are freed.
+async fn fake_server(stall: bool) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
@@ -87,6 +88,9 @@ async fn fake_server() -> u16 {
                 if h[1] & 1 == 1 {
                     break;
                 }
+            }
+            if stall {
+                std::future::pending::<()>().await;
             }
             if round == 0 {
                 let mut p = vec![4u8, 1, 0, 26, 0, 0, 1, 0];
@@ -105,10 +109,11 @@ fn login(
     rt: &tokio::runtime::Runtime,
     auth: AuthMethod,
     app: Option<String>,
+    stall: bool,
     limit: Duration,
 ) -> bool {
     rt.block_on(async {
-        let port = fake_server().await;
+        let port = fake_server(stall).await;
         let mut config = Config::new();
         config.host("127.0.0.1");
         config.port(port);
@@ -142,7 +147,7 @@ fn credentials_are_zeroized_before_being_freed() {
 
     let long = Duration::from_secs(10);
     let (hits, done) = leaks(PW, || {
-        login(&rt, AuthMethod::sql_server("sa", PW), None, long)
+        login(&rt, AuthMethod::sql_server("sa", PW), None, false, long)
     });
     assert!(done);
     assert_eq!(hits, 0, "SQL login");
@@ -150,7 +155,7 @@ fn credentials_are_zeroized_before_being_freed() {
     // LOGIN7 over 512 bytes.
     let (hits, done) = leaks(PW, || {
         let auth = AuthMethod::sql_server("sa", PW);
-        login(&rt, auth, Some("a".repeat(128)), long)
+        login(&rt, auth, Some("a".repeat(128)), false, long)
     });
     assert!(done);
     assert_eq!(hits, 0, "SQL login with long fields");
@@ -159,7 +164,15 @@ fn credentials_are_zeroized_before_being_freed() {
     let token = format!("{TOKEN}{}", "x".repeat(2000));
 
     let auth = AuthMethod::aad_token(&token);
-    let (hits, done) = leaks(TOKEN, || login(&rt, auth, None, long));
+    let (hits, done) = leaks(TOKEN, || login(&rt, auth, None, false, long));
     assert!(done);
     assert_eq!(hits, 0, "AAD token login");
+
+    // A connect abandoned by a timeout, as `Config::connect_timeout` suggests.
+    let auth = AuthMethod::aad_token(&token);
+    let (hits, done) = leaks(TOKEN, || {
+        login(&rt, auth, None, true, Duration::from_millis(200))
+    });
+    assert!(!done);
+    assert_eq!(hits, 0, "AAD token, connect timed out");
 }
