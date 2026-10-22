@@ -1012,6 +1012,61 @@ where
 
 #[cfg(all(feature = "tds73", feature = "chrono"))]
 #[test_on_runtimes]
+async fn bulk_load_datetime2_into_datetimeoffset_and_date<S>(
+    mut conn: tiberius::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use chrono::Utc;
+
+    let rb = "CONVERT(varchar(40), v, 121)";
+    let null = "ISNULL(CONVERT(varchar(40), v, 121), 'NULL')";
+    let utc = DateTime::<Utc>::from_naive_utc_and_offset(ndt(23, 14, 15, 123_456_700), Utc);
+
+    assert_bulk(
+        &mut conn,
+        vec![
+            (
+                "DATETIMEOFFSET",
+                utc.into_sql(),
+                rb,
+                "2024-05-06 23:14:15.1234567 +00:00",
+            ),
+            (
+                "DATETIMEOFFSET(3) NOT NULL",
+                utc.into_sql(),
+                rb,
+                "2024-05-06 23:14:15.123 +00:00",
+            ),
+            // At +00:00, as CAST(datetime2 AS datetimeoffset) does.
+            (
+                "DATETIMEOFFSET(0)",
+                ndt(1, 2, 3, 0).into_sql(),
+                rb,
+                "2024-05-06 01:02:03 +00:00",
+            ),
+            (
+                "DATETIMEOFFSET",
+                None::<DateTime<Utc>>.into_sql(),
+                null,
+                "NULL",
+            ),
+            (
+                "DATE",
+                ndt(23, 59, 59, 999_999_900).into_sql(),
+                rb,
+                "2024-05-06",
+            ),
+            ("DATE NOT NULL", utc.into_sql(), rb, "2024-05-06"),
+            ("DATE", None::<NaiveDateTime>.into_sql(), null, "NULL"),
+        ],
+    )
+    .await
+}
+
+#[cfg(all(feature = "tds73", feature = "chrono"))]
+#[test_on_runtimes]
 async fn bulk_load_datetime_from_datetime2<S>(mut conn: tiberius::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,

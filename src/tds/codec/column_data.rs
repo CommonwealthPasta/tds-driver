@@ -373,6 +373,29 @@ fn datetime2_parts(dt2: DateTime2) -> crate::Result<(i64, u64)> {
     Ok((days, time.increments() * (UNITS_PER_SECOND / 10_000_000)))
 }
 
+/// A bulk/TVP datetime2 for a datetimeoffset or date column, as SqlBulkCopy
+/// takes a DateTime for both: `new DateTimeOffset(DateTime)` in
+/// SqlParameter.CoerceValue (SqlParameter.cs:2372), and WriteDate keeps the
+/// days (TdsParser.cs:8141), dotnet/SqlClient@5394363. The offset is +00:00,
+/// as `CAST(datetime2 AS datetimeoffset)` gives and `DateTime<Utc>` means,
+/// not the local offset SqlClient gives an unspecified DateTime.
+#[cfg(feature = "tds73")]
+fn datetime2_for_column<'a>(data: ColumnData<'a>, ti: Option<&TypeInfo>) -> ColumnData<'a> {
+    match (data, ti) {
+        (ColumnData::DateTime2(v), Some(TypeInfo::VarLenSized(vlc)))
+            if vlc.r#type() == VarLenType::DatetimeOffsetn =>
+        {
+            ColumnData::DateTimeOffset(v.map(|v| DateTimeOffset::new(v, 0)))
+        }
+        (ColumnData::DateTime2(v), Some(TypeInfo::VarLenSized(vlc)))
+            if vlc.r#type() == VarLenType::Daten =>
+        {
+            ColumnData::Date(v.map(DateTime2::date))
+        }
+        (data, _) => data,
+    }
+}
+
 /// Puts `time` at the column's scale. Dropped digits are truncated, as
 /// SqlClient's TdsParser does.
 #[cfg(feature = "tds73")]
@@ -609,7 +632,12 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
             }
         }
 
-        match (self, dst.type_info()) {
+        #[cfg(feature = "tds73")]
+        let data = datetime2_for_column(self, dst.type_info());
+        #[cfg(not(feature = "tds73"))]
+        let data = self;
+
+        match (data, dst.type_info()) {
             (ColumnData::Bit(opt), Some(TypeInfo::VarLenSized(vlc)))
                 if vlc.r#type() == VarLenType::Bitn =>
             {
