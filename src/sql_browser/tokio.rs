@@ -48,7 +48,7 @@ impl SqlBrowser for TcpStream {
 }
 
 async fn connect_addr(builder: &Config, mut addr: SocketAddr) -> crate::Result<TcpStream> {
-    if let Some(ref instance_name) = builder.instance_name {
+    if let Some(instance_name) = super::browsed_instance(builder) {
         // First resolve the instance to a port via the
         // SSRP protocol/MS-SQLR protocol [1]
         // [1] https://msdn.microsoft.com/en-us/library/cc219703.aspx

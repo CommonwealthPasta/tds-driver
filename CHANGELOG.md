@@ -122,6 +122,9 @@ that land will be documented here.
   error from `from_ado_string`/`from_jdbc_string` instead of panicking.
 - **JDBC `serverName`/`server`, `portNumber`/`port` and `instanceName`
   properties** are honoured instead of falling back to `localhost:1433`.
+- **`host\INSTANCE,port` connects to `port`,** as documented for mssql-jdbc: the
+  instance name no longer goes to the server for validation, and `connect_named`
+  skips the SQL Browser (which it used to query on the TCP port).
 - **The TLS handshake survives partial writes:** a flight interrupted by
   `Pending` lost its tail, and flights over 64 KB panicked; flights are now
   split into 4 KB PRELOGIN packets.

@@ -53,6 +53,19 @@ async fn instance_name_with_explicit_port() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "sql-browser-tokio")]
+#[tokio::test]
+async fn connect_named_with_explicit_port_skips_the_browser() -> Result<()> {
+    use tiberius::SqlBrowser;
+
+    let mut config = config();
+    config.instance_name("NOSUCHINSTANCE");
+    let tcp = TcpStream::connect_named(&config).await?;
+    let mut client = Client::connect(config, tcp.compat_write()).await?;
+    client.simple_query("SELECT 1").await?.into_row().await?;
+    Ok(())
+}
+
 /// Accepts at most `max` bytes per read or write, and returns `Pending` on
 /// every other call.
 struct Choppy<S> {

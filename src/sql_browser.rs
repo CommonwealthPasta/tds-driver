@@ -24,6 +24,17 @@ pub trait SqlBrowser {
         Self: Sized + Send + Sync;
 }
 
+/// The instance to resolve through SQL Browser. An explicit port skips the
+/// lookup (mssql-jdbc documents the same); without one, `Config::get_port` is
+/// the browser's UDP port, 1434.
+#[cfg(any(feature = "sql-browser-tokio", feature = "sql-browser-smol"))]
+fn browsed_instance(config: &Config) -> Option<&str> {
+    config
+        .instance_name
+        .as_deref()
+        .filter(|_| config.port.is_none())
+}
+
 #[cfg(any(feature = "sql-browser-tokio", feature = "sql-browser-smol"))]
 fn get_port_from_sql_browser_reply(
     mut buf: Vec<u8>,
@@ -65,4 +76,21 @@ fn get_port_from_sql_browser_reply(
         .ok_or_else(err)?;
 
     Ok(port)
+}
+
+#[cfg(all(test, any(feature = "sql-browser-tokio", feature = "sql-browser-smol")))]
+mod browse_tests {
+    use super::browsed_instance;
+    use crate::Config;
+
+    #[test]
+    fn explicit_port_skips_the_browser() {
+        let config = Config::from_ado_string(r"server=tcp:h\INST,1433").unwrap();
+        assert_eq!(browsed_instance(&config), None);
+        assert_eq!(config.get_addr(), "h:1433");
+
+        let config = Config::from_ado_string(r"server=tcp:h\INST").unwrap();
+        assert_eq!(browsed_instance(&config), Some("INST"));
+        assert_eq!(config.get_port(), 1434);
+    }
 }
