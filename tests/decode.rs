@@ -287,7 +287,7 @@ where
     Ok(())
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(all(feature = "chrono", feature = "tds73"))]
 #[test_on_runtimes]
 async fn chrono_utc_from_datetimeoffset<S>(mut conn: tiberius::Client<S>) -> Result<()>
 where
