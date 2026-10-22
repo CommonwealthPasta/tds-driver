@@ -1,7 +1,6 @@
 //! The XML containers
-use super::codec::Encode;
-use bytes::{BufMut, BytesMut};
-use std::borrow::BorrowMut;
+use super::codec::{put_plp_utf16, Encode};
+use bytes::BytesMut;
 use std::sync::Arc;
 
 /// Provides information of the location for the schema.
@@ -92,36 +91,7 @@ impl AsRef<str> for XmlData {
 
 impl Encode<BytesMut> for XmlData {
     fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
-        // unknown size
-        dst.put_u64_le(0xfffffffffffffffe_u64);
-
-        // A zero-length chunk is the PLP terminator, so an empty value is the
-        // terminator alone; a chunk header first would end the value early.
-        if self.data.is_empty() {
-            dst.put_u32_le(0);
-            return Ok(());
-        }
-
-        // first blob
-        let mut length = 0u32;
-        let len_pos = dst.len();
-
-        // writing the length later
-        dst.put_u32_le(length);
-
-        for chr in self.data.encode_utf16() {
-            length += 1;
-            dst.put_u16_le(chr);
-        }
-
-        // PLP_TERMINATOR, no next blobs
-        dst.put_u32_le(0);
-
-        let dst: &mut [u8] = dst.borrow_mut();
-        let mut dst = &mut dst[len_pos..];
-        dst.put_u32_le(length * 2);
-
-        Ok(())
+        put_plp_utf16(dst, &self.data)
     }
 }
 

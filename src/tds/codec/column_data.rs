@@ -56,7 +56,7 @@ pub(crate) use bytes_mut_with_type_info::BytesMutWithTypeInfo;
 use std::borrow::{BorrowMut, Cow};
 use uuid::Uuid;
 
-/// UTF-16 code units in nvarchar(max)'s 2^31 - 1 bytes.
+/// UTF-16 code units in the 2^31 - 1 bytes of nvarchar(max) and xml.
 const NVARCHAR_MAX_UNITS: usize = i32::MAX as usize / 2;
 
 /// Precision of every numeric parameter: the server's maximum.
@@ -71,64 +71,71 @@ fn fits_nvarchar_4000(s: &str) -> bool {
 
 const PLP_NULL: u64 = 0xffffffffffffffff;
 
-/// `nvarchar(max)` TYPE_INFO and value.
-fn put_nvarchar_max(dst: &mut BytesMut, s: Option<&str>) -> crate::Result<()> {
-    // A unit is at least one UTF-8 byte: only longer strings need counting.
-    if let Some(s) = s.filter(|s| s.len() > NVARCHAR_MAX_UNITS) {
-        let units = s.encode_utf16().count();
-        if units > NVARCHAR_MAX_UNITS {
-            return Err(crate::Error::Conversion(
-                format!(
-                    "a string of {units} UTF-16 code units is longer than nvarchar(max) \
-                     holds ({NVARCHAR_MAX_UNITS})"
-                )
-                .into(),
-            ));
-        }
+/// `s`'s UTF-16 length if over `max` units. A unit is at least one UTF-8
+/// byte, so only longer strings are counted.
+fn utf16_units_over(s: &str, max: usize) -> Option<usize> {
+    if s.len() <= max {
+        return None;
+    }
+    Some(s.encode_utf16().count()).filter(|&units| units > max)
+}
+
+/// `len` as the length of a (max), text, ntext or image value, which holds
+/// at most 2^31 - 1 bytes.
+fn lob_len(len: usize) -> Option<u32> {
+    i32::try_from(len).ok().map(i32::unsigned_abs)
+}
+
+/// An nvarchar(max) or xml value: UTF-16 in one PLP chunk, of a total
+/// length not known before encoding.
+pub(crate) fn put_plp_utf16(dst: &mut BytesMut, s: &str) -> crate::Result<()> {
+    let too_long = |units: usize| {
+        crate::Error::Conversion(
+            format!(
+                "a string of {units} UTF-16 code units is longer than nvarchar(max) and xml \
+                 hold ({NVARCHAR_MAX_UNITS})"
+            )
+            .into(),
+        )
+    };
+    // Before writing what can be gigabytes.
+    if let Some(units) = utf16_units_over(s, NVARCHAR_MAX_UNITS) {
+        return Err(too_long(units));
     }
 
+    dst.put_u64_le(0xfffffffffffffffe); // unknown length
+    let len_pos = dst.len();
+    dst.put_u32_le(0);
+    for unit in s.encode_utf16() {
+        dst.put_u16_le(unit);
+    }
+
+    let bytes = dst.len() - len_pos - 4;
+    let len = lob_len(bytes).ok_or_else(|| too_long(bytes / 2))?;
+    dst[len_pos..len_pos + 4].copy_from_slice(&len.to_le_bytes());
+
+    // A zero-length chunk is the terminator: an empty value is that alone.
+    if len > 0 {
+        dst.put_u32_le(0);
+    }
+
+    Ok(())
+}
+
+/// `nvarchar(max)` TYPE_INFO and value.
+fn put_nvarchar_max(dst: &mut BytesMut, s: Option<&str>) -> crate::Result<()> {
     // length: 0xffff and raw collation
     dst.put_u8(VarLenType::NVarchar as u8);
     dst.extend_from_slice(&[0xff_u8; 2]);
     dst.extend_from_slice(&[0u8; 5]);
 
-    let s = match s {
-        Some(s) => s,
+    match s {
+        Some(s) => put_plp_utf16(dst, s),
         None => {
             dst.put_u64_le(PLP_NULL);
-            return Ok(());
+            Ok(())
         }
-    };
-
-    // we cannot cheaply predetermine the length of the UCS2 string beforehand
-    // (2 * bytes(UTF8) is not always right) - so just let the SQL server handle it
-    dst.put_u64_le(0xfffffffffffffffe_u64);
-
-    // Write the varchar length
-    let mut length = 0u32;
-    let len_pos = dst.len();
-
-    dst.put_u32_le(length);
-
-    for chr in s.encode_utf16() {
-        length += 1;
-        dst.put_u16_le(chr);
     }
-
-    if length > 0 {
-        // PLP_TERMINATOR
-        dst.put_u32_le(0);
-    }
-
-    let dst: &mut [u8] = dst.borrow_mut();
-    // At most NVARCHAR_MAX_UNITS, so the byte count fits.
-    let bytes = (length * 2).to_le_bytes(); // u32, four bytes
-
-    for (i, byte) in bytes.iter().enumerate() {
-        dst[len_pos + i] = *byte;
-    }
-
-    Ok(())
 }
 
 /// `varbinary(max)` TYPE_INFO and value.
@@ -2892,5 +2899,17 @@ mod tests {
         ));
         let buf = encode_with_ti(&ti, ColumnData::String(Some("\u{3b1}\u{3b2}".into()))).unwrap();
         assert_eq!(&buf[..], &[2, 0, 0xe1, 0xe2]);
+    }
+
+    /// 2^30 units, one more than the 2^31 - 1 bytes of xml. Its byte count
+    /// was a u32, which overflowed from 2^31 units.
+    #[test]
+    fn utf16_values_over_2_gib_are_errors() {
+        let s = "a".repeat(1 << 30);
+
+        let err = ColumnData::Xml(Some(Cow::Owned(XmlData::new(s))))
+            .encode_rpc_param(&mut BytesMut::new(), false)
+            .unwrap_err();
+        assert!(matches!(err, Error::Conversion(_)), "{err:?}");
     }
 }
