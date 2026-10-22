@@ -100,22 +100,34 @@ impl PreloginMessage {
         feature = "native-tls",
         feature = "vendored-openssl"
     ))]
+    /// What to encrypt, given the client's level and the server's answer, per
+    /// the tables of MS-TDS 2.2.6.5: the client's `Required` behaves as its
+    /// `On`, and `NotSupported` against a server that wants encryption
+    /// terminates the connection.
     pub fn negotiated_encryption(&self, expected: EncryptionLevel) -> Result<EncryptionLevel> {
+        use EncryptionLevel::*;
+
         let level = match (expected, self.encryption) {
-            (EncryptionLevel::NotSupported, EncryptionLevel::NotSupported) => {
-                EncryptionLevel::NotSupported
+            // TLS was set up before the prelogin; the value is ignored.
+            (Strict, _) => Strict,
+            (_, Strict) => {
+                return Err(Error::Protocol(
+                    "prelogin: invalid server encryption value 4".into(),
+                ))
             }
-            (EncryptionLevel::Off, EncryptionLevel::Off) => EncryptionLevel::Off,
-            (EncryptionLevel::On, EncryptionLevel::Off)
-            | (EncryptionLevel::On, EncryptionLevel::NotSupported) => {
+            (Off, Off) => Off,
+            (Off | On | Required, On | Required) => On,
+            (Off, NotSupported) | (NotSupported, NotSupported | Off) => NotSupported,
+            (On | Required, Off | NotSupported) => {
                 return Err(Error::Protocol(
                     "Server does not allow the requested encryption level.".into(),
                 ))
             }
-            // In TDS 8.0 "strict" mode encryption is established before the
-            // prelogin, so there is nothing to negotiate here.
-            (EncryptionLevel::Strict, _) => EncryptionLevel::Strict,
-            (_, _) => EncryptionLevel::On,
+            (NotSupported, On | Required) => {
+                return Err(Error::Protocol(
+                    "Server requires encryption, but it is set to NotSupported.".into(),
+                ))
+            }
         };
 
         Ok(level)
@@ -534,6 +546,48 @@ mod tests {
         match PreloginMessage::decode(&mut buf) {
             Err(Error::Protocol(_)) => {}
             other => panic!("expected protocol error, got {other:?}"),
+        }
+    }
+
+    #[cfg(any(
+        feature = "rustls",
+        feature = "native-tls",
+        feature = "vendored-openssl"
+    ))]
+    #[test]
+    fn negotiated_encryption_follows_the_ms_tds_table() {
+        use EncryptionLevel::*;
+        let neg = |client, server| {
+            let mut prelogin = PreloginMessage::new();
+            prelogin.encryption = server;
+            prelogin.negotiated_encryption(client).ok()
+        };
+
+        for (client, server, expected) in [
+            (Off, Off, Some(Off)),
+            (Off, On, Some(On)),
+            (Off, Required, Some(On)),
+            (Off, NotSupported, Some(NotSupported)),
+            (On, Off, None),
+            (On, On, Some(On)),
+            (On, Required, Some(On)),
+            (On, NotSupported, None),
+            (Required, Off, None),
+            (Required, On, Some(On)),
+            (Required, Required, Some(On)),
+            (Required, NotSupported, None),
+            (NotSupported, NotSupported, Some(NotSupported)),
+            (NotSupported, Off, Some(NotSupported)),
+            (NotSupported, On, None),
+            (NotSupported, Required, None),
+            (Off, Strict, None),
+            (Strict, NotSupported, Some(Strict)),
+        ] {
+            assert_eq!(
+                neg(client, server),
+                expected,
+                "client {client:?}, server {server:?}"
+            );
         }
     }
 
