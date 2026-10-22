@@ -209,7 +209,17 @@ impl Encode<BytesMut> for PreloginMessage {
         // encoded as a lone `0x00` terminator.
         let instance = self.instance_name.as_deref().unwrap_or_default();
         let instance_bytes = instance.as_bytes();
-        fields.push((PRELOGIN_INSTOPT, (instance_bytes.len() + 1) as u16));
+        let too_long = || {
+            Error::Conversion(
+                format!(
+                    "PRELOGIN: an instance name of {} bytes is too long for its u16 offsets",
+                    instance_bytes.len()
+                )
+                .into(),
+            )
+        };
+        let instopt_len = u16::try_from(instance_bytes.len() + 1).map_err(|_| too_long())?;
+        fields.push((PRELOGIN_INSTOPT, instopt_len));
         data_cursor.write_all(instance_bytes)?;
         data_cursor.write_u8(0x00)?; // null terminator
 
@@ -247,7 +257,7 @@ impl Encode<BytesMut> for PreloginMessage {
             dst.put_u16(data_offset);
             dst.put_u16(length);
 
-            data_offset += length;
+            data_offset = data_offset.checked_add(length).ok_or_else(too_long)?;
         }
 
         dst.put_u8(PRELOGIN_TERMINATOR);
@@ -820,5 +830,17 @@ mod tests {
             prelogin.negotiated_encryption(EncryptionLevel::On).unwrap(),
             EncryptionLevel::On
         );
+    }
+
+    #[test]
+    fn instance_name_past_the_u16_offsets_is_an_error() {
+        // 65,534 bytes overflowed the offsets (a debug-build panic), 70,000
+        // wrapped INSTOPT's length.
+        for len in [65_534, 70_000] {
+            let mut msg = PreloginMessage::new();
+            msg.instance_name = Some("a".repeat(len));
+            let err = msg.encode(&mut BytesMut::new()).unwrap_err();
+            assert!(matches!(err, Error::Conversion(_)), "{len}: {err:?}");
+        }
     }
 }
