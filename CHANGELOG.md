@@ -112,6 +112,7 @@ that land will be documented here.
   `time::OffsetDateTime`** instead of panicking; only a malformed date is.
 - **A PRELOGIN answer over 32768 bytes is an error** instead of a buffer that
   grows for as long as the server sends; SqlClient reads it from one packet.
+- **FEDAUTHINFO offset + length can't overflow** on 32-bit targets.
 - An empty `XmlData` parameter no longer corrupts the request (error 8009).
 - An RPC parameter name over 255 UTF-16 code units is an error instead of a
   wrapped length byte (a debug-build panic).

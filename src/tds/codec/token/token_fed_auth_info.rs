@@ -84,8 +84,10 @@ impl TokenFedAuthInfo {
             let data_len = read_u32(body, opt + 1)? as usize;
             let data_offset = read_u32(body, opt + 5)? as usize;
 
-            let data = body
-                .get(data_offset..data_offset + data_len)
+            // Two u32s can overflow a 32-bit usize.
+            let data = data_offset
+                .checked_add(data_len)
+                .and_then(|end| body.get(data_offset..end))
                 .ok_or_else(|| {
                     Error::Protocol("FEDAUTHINFO token data offset out of bounds".into())
                 })?;
@@ -187,6 +189,17 @@ mod tests {
         body.push(FED_AUTH_INFO_ID_STSURL);
         body.extend_from_slice(&8u32.to_le_bytes()); // data len
         body.extend_from_slice(&1000u32.to_le_bytes()); // bogus offset
+
+        assert!(TokenFedAuthInfo::parse(&body).is_err());
+    }
+
+    /// Overflows `offset + len` where usize is 32 bits.
+    #[test]
+    fn rejects_offset_and_length_past_u32() {
+        let mut body = 1u32.to_le_bytes().to_vec();
+        body.push(FED_AUTH_INFO_ID_STSURL);
+        body.extend_from_slice(&2u32.to_le_bytes());
+        body.extend_from_slice(&u32::MAX.to_le_bytes());
 
         assert!(TokenFedAuthInfo::parse(&body).is_err());
     }
