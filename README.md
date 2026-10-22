@@ -66,7 +66,7 @@ tiberius = { package = "tiberius-ng", version = "0.13" }
 Your code imports it as usual — **no source changes**:
 
 ```rust
-use tiberius::{Client, Config, AuthMethod};
+use tds_driver::{Client, Config, AuthMethod};
 ```
 
 <details>
@@ -80,7 +80,7 @@ import path is unchanged; you also gain the fixes and features in the
 ## Quick start
 
 ```rust
-use tiberius::{Client, Config, AuthMethod};
+use tds_driver::{Client, Config, AuthMethod};
 use tokio::net::TcpStream;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 

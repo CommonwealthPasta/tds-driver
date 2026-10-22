@@ -1,6 +1,6 @@
 #![cfg(unix)]
 use std::sync::Once;
-use tiberius::{AuthMethod, Client, Config, EncryptionLevel, Result};
+use tds_driver::{AuthMethod, Client, Config, EncryptionLevel, Result};
 use tokio::{net::TcpStream, runtime::Runtime};
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 

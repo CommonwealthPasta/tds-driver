@@ -13,7 +13,7 @@
 #[cfg(windows)]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    use tiberius::{AuthMethod, Client, Config};
+    use tds_driver::{AuthMethod, Client, Config};
     use tokio::net::windows::named_pipe::ClientOptions;
     use tokio_util::compat::TokioAsyncWriteCompatExt;
 

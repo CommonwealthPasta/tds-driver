@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::env;
 use std::sync::Once;
 
-use tiberius::{numeric::Numeric, Command, Result, TableValueRow};
+use tds_driver::{numeric::Numeric, Command, Result, TableValueRow};
 
 use runtimes_macro::test_on_runtimes;
 
@@ -37,7 +37,7 @@ async fn random_table() -> String {
 }
 
 #[test_on_runtimes]
-async fn basic_proc_exec<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn basic_proc_exec<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -91,7 +91,7 @@ struct GeoTest {
 }
 
 impl<'a> TableValueRow<'a> for GeoTest {
-    fn bind_fields(&self, data_row: &mut tiberius::SqlTableDataRow<'a>) {
+    fn bind_fields(&self, data_row: &mut tds_driver::SqlTableDataRow<'a>) {
         data_row.add_field(self.id);
         data_row.add_field(self.lat);
         data_row.add_field(self.lon);
@@ -103,7 +103,7 @@ impl<'a> TableValueRow<'a> for GeoTest {
 }
 
 #[test_on_runtimes]
-async fn tvp_proc_exec<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn tvp_proc_exec<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -229,7 +229,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn command_result_keeps_empty_result_sets<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn command_result_keeps_empty_result_sets<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -260,7 +260,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn command_negative_return_status<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn command_negative_return_status<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -281,7 +281,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn command_rows_affected_skips_selects<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn command_rows_affected_skips_selects<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -320,8 +320,8 @@ struct MoneyRow<T> {
     m: T,
 }
 
-impl<'a, T: tiberius::IntoSql<'a> + Copy + 'a> TableValueRow<'a> for MoneyRow<T> {
-    fn bind_fields(&self, data_row: &mut tiberius::SqlTableDataRow<'a>) {
+impl<'a, T: tds_driver::IntoSql<'a> + Copy + 'a> TableValueRow<'a> for MoneyRow<T> {
+    fn bind_fields(&self, data_row: &mut tds_driver::SqlTableDataRow<'a>) {
         data_row.add_field(self.m);
     }
 
@@ -332,7 +332,10 @@ impl<'a, T: tiberius::IntoSql<'a> + Copy + 'a> TableValueRow<'a> for MoneyRow<T>
 
 /// Creates a one-column TVP type `column_type` and a procedure reading it
 /// back as text; returns (type, procedure).
-async fn money_tvp<S>(conn: &mut tiberius::Client<S>, column_type: &str) -> Result<(String, String)>
+async fn money_tvp<S>(
+    conn: &mut tds_driver::Client<S>,
+    column_type: &str,
+) -> Result<(String, String)>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -353,7 +356,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn tvp_money_is_exact_from_numeric<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn tvp_money_is_exact_from_numeric<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -397,7 +400,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn tvp_smallmoney_out_of_range_is_an_error<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn tvp_smallmoney_out_of_range_is_an_error<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -410,7 +413,7 @@ where
     cmd.bind_table_with_dbtype("@t", &db_type, vec![MoneyRow { m: 300000.0f64 }]);
     let err = cmd.exec(&mut conn).await.unwrap_err();
     assert!(
-        matches!(err, tiberius::error::Error::Conversion(_)),
+        matches!(err, tds_driver::error::Error::Conversion(_)),
         "{err:?}"
     );
 
@@ -419,10 +422,10 @@ where
 
 /// Runs `proc_` with `value` bound as its OUT parameter `@x`.
 async fn out_param<'a, S>(
-    conn: &mut tiberius::Client<S>,
+    conn: &mut tds_driver::Client<S>,
     proc_: &str,
-    value: impl tiberius::IntoSql<'a> + 'a,
-) -> Result<tiberius::CommandResult>
+    value: impl tds_driver::IntoSql<'a> + 'a,
+) -> Result<tds_driver::CommandResult>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -432,7 +435,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn out_params_round_trip_null_and_max<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn out_params_round_trip_null_and_max<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -504,8 +507,8 @@ where
     let res = out_param(&mut conn, &names[5], None::<i32>).await?;
     assert_eq!(Some(-7i32), res.try_return_value("@x")?);
 
-    let res = out_param(&mut conn, &names[6], None::<tiberius::xml::XmlData>).await?;
-    let xml: Option<&tiberius::xml::XmlData> = res.try_return_value("@x")?;
+    let res = out_param(&mut conn, &names[6], None::<tds_driver::xml::XmlData>).await?;
+    let xml: Option<&tds_driver::xml::XmlData> = res.try_return_value("@x")?;
     assert_eq!(Some("<a>1</a>"), xml.map(|x| x.as_ref()));
 
     for name in names {

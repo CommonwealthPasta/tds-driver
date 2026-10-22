@@ -44,7 +44,7 @@ impl<'a> Query<'a> {
     /// # Example
     ///
     /// ```
-    /// # use tiberius::Query;
+    /// # use tds_driver::Query;
     /// let ids = vec![1i32, 2, 3];
     ///
     /// let sql = format!(
@@ -92,7 +92,7 @@ impl<'a> Query<'a> {
     /// # Example
     ///
     /// ```
-    /// # use tiberius::Query;
+    /// # use tds_driver::Query;
     /// // A three-column INSERT: three parameters per row.
     /// let rows_per_statement = Query::MAX_PARAMETERS / 3;
     /// assert_eq!(rows_per_statement, 699);
@@ -114,7 +114,7 @@ impl<'a> Query<'a> {
     /// # Example
     ///
     /// ```
-    /// # use tiberius::Query;
+    /// # use tds_driver::Query;
     /// assert_eq!(Query::placeholders(1, 3), "@P1, @P2, @P3");
     ///
     /// // Continuing after parameters that are already bound.
@@ -126,7 +126,7 @@ impl<'a> Query<'a> {
     /// build one:
     ///
     /// ```
-    /// # use tiberius::Query;
+    /// # use tds_driver::Query;
     /// let ids: Vec<i32> = Vec::new();
     /// assert!(Query::placeholders(1, ids.len()).is_empty());
     /// ```
@@ -156,7 +156,7 @@ impl<'a> Query<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// # use tiberius::{Config, Query};
+    /// # use tds_driver::{Config, Query};
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # #[tokio::main]
@@ -167,7 +167,7 @@ impl<'a> Query<'a> {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let mut query = Query::new("INSERT INTO ##Test (id) VALUES (@P1), (@P2), (@P3)");
     ///
     /// query.bind("foo");
@@ -204,7 +204,7 @@ impl<'a> Query<'a> {
     /// # Example
     ///
     /// ```
-    /// # use tiberius::{Config, Query};
+    /// # use tds_driver::{Config, Query};
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # #[tokio::main]
@@ -215,7 +215,7 @@ impl<'a> Query<'a> {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let mut query = Query::new("SELECT @P1, @P2, @P3");
     ///
     /// query.bind(1i32);

@@ -44,7 +44,7 @@ use std::{borrow::Cow, fmt::Debug};
 /// # Example
 ///
 /// ```no_run
-/// # use tiberius::{Config, AuthMethod};
+/// # use tds_driver::{Config, AuthMethod};
 /// use tokio_util::compat::TokioAsyncWriteCompatExt;
 ///
 /// # #[tokio::main]
@@ -58,7 +58,7 @@ use std::{borrow::Cow, fmt::Debug};
 /// let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
 /// tcp.set_nodelay(true)?;
 /// // Client is ready to use.
-/// let client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+/// let client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -116,7 +116,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// # Example
     ///
     /// ```no_run
-    /// # use tiberius::Config;
+    /// # use tds_driver::Config;
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # #[tokio::main]
@@ -127,7 +127,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let results = client
     ///     .execute(
     ///         "INSERT INTO ##Test (id) VALUES (@P1), (@P2), (@P3)",
@@ -175,7 +175,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// # Example
     ///
     /// ```
-    /// # use tiberius::Config;
+    /// # use tds_driver::Config;
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # #[tokio::main]
@@ -186,7 +186,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let stream = client
     ///     .query(
     ///         "SELECT @P1, @P2, @P3",
@@ -229,7 +229,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// # Example
     ///
     /// ```
-    /// # use tiberius::Config;
+    /// # use tds_driver::Config;
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # #[tokio::main]
@@ -240,7 +240,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let row = client.simple_query("SELECT 1 AS col").await?.into_row().await?.unwrap();
     /// assert_eq!(Some(1i32), row.get("col"));
     /// # Ok(())
@@ -285,7 +285,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// # Example
     ///
     /// ```
-    /// # use tiberius::{Config, IntoRow};
+    /// # use tds_driver::{Config, IntoRow};
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # #[tokio::main]
@@ -296,7 +296,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let create_table = r#"
     ///     CREATE TABLE ##bulk_test (
     ///         id INT IDENTITY PRIMARY KEY,
@@ -337,7 +337,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// # Example
     ///
     /// ```
-    /// # use tiberius::{Config, IntoRow};
+    /// # use tds_driver::{Config, IntoRow};
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # #[tokio::main]
@@ -348,7 +348,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let create_table = r#"
     ///     CREATE TABLE ##bulk_test_columns (
     ///         id INT IDENTITY PRIMARY KEY,
@@ -462,7 +462,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// table.
     ///
     /// ```no_run
-    /// # use tiberius::Config;
+    /// # use tds_driver::Config;
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # #[tokio::main]
@@ -473,7 +473,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let meta = client.column_metadata("some_table", &["*"]).await?;
     /// assert!(meta[0].base().is_identity());
     /// # Ok(())

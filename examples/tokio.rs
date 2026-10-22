@@ -1,6 +1,6 @@
 use once_cell::sync::Lazy;
 use std::env;
-use tiberius::{Client, Config};
+use tds_driver::{Client, Config};
 use tokio::net::TcpStream;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 
@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(all(windows, feature = "sql-browser-tokio"))]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    use tiberius::SqlBrowser;
+    use tds_driver::SqlBrowser;
 
     let config = Config::from_ado_string(&CONN_STR)?;
 

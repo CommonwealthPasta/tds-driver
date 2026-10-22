@@ -212,7 +212,7 @@ impl From<&TypeInfo> for ColumnType {
 /// methods, or moving by value using the [`IntoIterator`] implementation.
 ///
 /// ```
-/// # use tiberius::{Config, FromSqlOwned};
+/// # use tds_driver::{Config, FromSqlOwned};
 /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
 /// # use std::env;
 /// # #[tokio::main]
@@ -223,7 +223,7 @@ impl From<&TypeInfo> for ColumnType {
 /// # let config = Config::from_ado_string(&c_str)?;
 /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
 /// # tcp.set_nodelay(true)?;
-/// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+/// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
 /// // by-reference
 /// let row = client
 ///     .query("SELECT @P1 AS col1", &[&"test"])
@@ -303,7 +303,7 @@ impl Row {
     /// # Example
     ///
     /// ```
-    /// # use tiberius::Config;
+    /// # use tds_driver::Config;
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # #[tokio::main]
@@ -314,7 +314,7 @@ impl Row {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let row = client
     ///     .query("SELECT 1 AS foo, 2 AS bar", &[])
     ///     .await?
@@ -347,7 +347,7 @@ impl Row {
     /// # Example
     ///
     /// ```
-    /// # use tiberius::Config;
+    /// # use tds_driver::Config;
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # #[tokio::main]
@@ -358,7 +358,7 @@ impl Row {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let row = client
     ///     .query("SELECT 1, 2", &[])
     ///     .await?
@@ -381,7 +381,7 @@ impl Row {
     /// # Example
     ///
     /// ```
-    /// # use tiberius::Config;
+    /// # use tds_driver::Config;
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # #[tokio::main]
@@ -392,7 +392,7 @@ impl Row {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let row = client
     ///     .query("SELECT @P1 AS col1", &[&1i32])
     ///     .await?

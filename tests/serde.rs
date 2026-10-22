@@ -10,14 +10,14 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use tiberius::numeric::Numeric;
-use tiberius::time::DateTime;
-use tiberius::xml::XmlData;
-use tiberius::{Column, ColumnData, ColumnType, TokenRow};
+use tds_driver::numeric::Numeric;
+use tds_driver::time::DateTime;
+use tds_driver::xml::XmlData;
+use tds_driver::{Column, ColumnData, ColumnType, TokenRow};
 use uuid::Uuid;
 
 #[cfg(feature = "tds73")]
-use tiberius::time::{Date, DateTime2, DateTimeOffset, Time};
+use tds_driver::time::{Date, DateTime2, DateTimeOffset, Time};
 
 fn json_round_trip<T>(value: &T) -> T
 where

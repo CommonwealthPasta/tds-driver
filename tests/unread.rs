@@ -16,7 +16,7 @@ use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use runtimes_macro::test_on_runtimes;
-use tiberius::{Client, Command, Config, QueryItem, Result, SqlTableDataRow, TableValueRow};
+use tds_driver::{Client, Command, Config, QueryItem, Result, SqlTableDataRow, TableValueRow};
 
 // This is used in the testing macro :)
 #[allow(dead_code)]

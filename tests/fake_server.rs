@@ -1,7 +1,7 @@
 //! Responses SQL Server doesn't send, from an in-process fake server.
 
 use std::time::Duration;
-use tiberius::{error::Error, AuthMethod, Client, Config, EncryptionLevel, Result};
+use tds_driver::{error::Error, AuthMethod, Client, Config, EncryptionLevel, Result};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},

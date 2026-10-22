@@ -12,7 +12,7 @@
 //! needs to be wrapped in Tokio's `Compat` module.
 //!
 //! ```no_run
-//! use tiberius::{Client, Config, AuthMethod};
+//! use tds_driver::{Client, Config, AuthMethod};
 //! use tokio::net::TcpStream;
 //! use tokio_util::compat::TokioAsyncWriteCompatExt;
 //!
@@ -50,7 +50,7 @@
 //! are easy to use.
 //!
 //! ```no_run
-//! # use tiberius::{Client, Config, AuthMethod};
+//! # use tds_driver::{Client, Config, AuthMethod};
 //! # use tokio::net::TcpStream;
 //! # use tokio_util::compat::TokioAsyncWriteCompatExt;
 //! # #[tokio::main]
@@ -74,7 +74,7 @@
 //! wanting to pass them by-value, use the [`Query`] object.
 //!
 //! ```no_run
-//! # use tiberius::{Client, Query, Config, AuthMethod};
+//! # use tds_driver::{Client, Query, Config, AuthMethod};
 //! # use tokio::net::TcpStream;
 //! # use tokio_util::compat::TokioAsyncWriteCompatExt;
 //! # #[tokio::main]
@@ -133,7 +133,7 @@
 //!
 //! ```no_run
 //! # #[cfg(feature = "sql-browser-tokio")]
-//! use tiberius::{Client, Config, AuthMethod};
+//! use tds_driver::{Client, Config, AuthMethod};
 //! # #[cfg(feature = "sql-browser-tokio")]
 //! use tokio::net::TcpStream;
 //! # #[cfg(feature = "sql-browser-tokio")]
@@ -142,7 +142,7 @@
 //! // An extra trait that allows connecting to a named instance with the given
 //! // `TcpStream`.
 //! # #[cfg(feature = "sql-browser-tokio")]
-//! use tiberius::SqlBrowser;
+//! use tds_driver::SqlBrowser;
 //!
 //! # #[cfg(feature = "sql-browser-tokio")]
 //! #[tokio::main]

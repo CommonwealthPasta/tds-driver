@@ -1,7 +1,7 @@
 use indicatif::ProgressBar;
 use once_cell::sync::Lazy;
 use std::env;
-use tiberius::{Client, Config, IntoRow};
+use tds_driver::{Client, Config, IntoRow};
 use tokio::net::TcpStream;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 use tracing::log::info;

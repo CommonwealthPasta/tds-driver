@@ -11,7 +11,7 @@ use std::env;
 use std::sync::Once;
 
 use runtimes_macro::test_on_runtimes;
-use tiberius::{IsolationLevel, Result};
+use tds_driver::{IsolationLevel, Result};
 
 // This is used in the testing macro :)
 #[allow(dead_code)]
@@ -39,7 +39,7 @@ async fn random_table() -> String {
     })
 }
 
-async fn row_count<S>(conn: &mut tiberius::Client<S>, table: &str) -> Result<i32>
+async fn row_count<S>(conn: &mut tds_driver::Client<S>, table: &str) -> Result<i32>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -54,7 +54,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn transaction_commit_persists_rows<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn transaction_commit_persists_rows<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -78,7 +78,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn transaction_rollback_discards_rows<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn transaction_rollback_discards_rows<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -107,7 +107,9 @@ where
 }
 
 #[test_on_runtimes]
-async fn transaction_with_explicit_isolation_levels<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn transaction_with_explicit_isolation_levels<S>(
+    mut conn: tds_driver::Client<S>,
+) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -139,7 +141,7 @@ where
 
 #[test_on_runtimes]
 async fn rolled_back_transaction_can_be_followed_by_a_new_one<S>(
-    mut conn: tiberius::Client<S>,
+    mut conn: tds_driver::Client<S>,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
@@ -170,7 +172,7 @@ where
     Ok(())
 }
 
-async fn session_isolation_level<S>(conn: &mut tiberius::Client<S>) -> Result<i16>
+async fn session_isolation_level<S>(conn: &mut tds_driver::Client<S>) -> Result<i16>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -194,7 +196,7 @@ const SERIALIZABLE: i16 = 4;
 
 #[test_on_runtimes]
 async fn begin_transaction_resets_isolation_to_read_committed<S>(
-    mut conn: tiberius::Client<S>,
+    mut conn: tds_driver::Client<S>,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
@@ -215,7 +217,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn unspecified_isolation_keeps_session_level<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn unspecified_isolation_keeps_session_level<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {

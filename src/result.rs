@@ -17,7 +17,7 @@ use std::fmt::Debug;
 /// # Example
 ///
 /// ```no_run
-/// # use tiberius::Config;
+/// # use tds_driver::Config;
 /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
 /// # use std::env;
 /// # #[tokio::main]
@@ -28,7 +28,7 @@ use std::fmt::Debug;
 /// # let config = Config::from_ado_string(&c_str)?;
 /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
 /// # tcp.set_nodelay(true)?;
-/// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+/// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
 /// let result = client
 ///     .execute(
 ///         "INSERT INTO #Test (id) VALUES (@P1); INSERT INTO #Test (id) VALUES (@P2, @P3)",
@@ -80,7 +80,7 @@ impl<'a> ExecuteResult {
     /// # Example
     ///
     /// ```no_run
-    /// # use tiberius::Config;
+    /// # use tds_driver::Config;
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # #[tokio::main]
@@ -91,7 +91,7 @@ impl<'a> ExecuteResult {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let rows_affected = client
     ///     .execute(
     ///         "INSERT INTO #Test (id) VALUES (@P1); INSERT INTO #Test (id) VALUES (@P2, @P3)",
@@ -125,7 +125,7 @@ impl IntoIterator for ExecuteResult {
 /// # Example
 ///
 /// ```no_run
-/// # use tiberius::{Config, Command};
+/// # use tds_driver::{Config, Command};
 /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
 /// # use std::env;
 /// # #[tokio::main]
@@ -136,7 +136,7 @@ impl IntoIterator for ExecuteResult {
 /// # let config = Config::from_ado_string(&c_str)?;
 /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
 /// # tcp.set_nodelay(true)?;
-/// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+/// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
 /// let mut cmd = Command::new("dbo.usp_SomeStoredProc");
 ///
 /// cmd.bind_param("@foo", 34i32);

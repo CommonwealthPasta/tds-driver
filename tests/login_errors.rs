@@ -1,4 +1,4 @@
-use tiberius::{Client, Config};
+use tds_driver::{Client, Config};
 use tokio::net::TcpStream;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 

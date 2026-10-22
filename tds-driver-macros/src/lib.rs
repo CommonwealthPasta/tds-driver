@@ -23,7 +23,7 @@ mod table_value_param;
 ///
 /// # Example
 /// ```rust,ignore
-/// # use tiberius::*;
+/// # use tds_driver::*;
 /// #[derive(TableValueRow)]
 /// pub struct SomeGeoList {
 ///   #[colname = "SomeID"]

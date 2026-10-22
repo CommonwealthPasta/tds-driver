@@ -2,7 +2,7 @@
 
 use once_cell::sync::Lazy;
 use std::env;
-use tiberius::{error::Error, Client, Config, Result};
+use tds_driver::{error::Error, Client, Config, Result};
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 #[cfg(any(
@@ -17,7 +17,7 @@ use {
         pin::Pin,
         task::{Context, Poll},
     },
-    tiberius::{AuthMethod, EncryptionLevel},
+    tds_driver::{AuthMethod, EncryptionLevel},
 };
 
 static CONN_STR: Lazy<String> = Lazy::new(|| {
@@ -108,7 +108,7 @@ async fn instance_name_with_explicit_port() -> Result<()> {
 #[cfg(feature = "sql-browser-tokio")]
 #[tokio::test]
 async fn connect_named_with_explicit_port_skips_the_browser() -> Result<()> {
-    use tiberius::SqlBrowser;
+    use tds_driver::SqlBrowser;
 
     let mut config = config();
     config.instance_name("NOSUCHINSTANCE");

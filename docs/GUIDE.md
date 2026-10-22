@@ -27,7 +27,7 @@ Tiberius is runtime-independent: you create the `TcpStream` and hand it to the
 **Tokio** (wrap the stream with `tokio_util::compat`):
 
 ```rust
-use tiberius::{Client, Config, AuthMethod};
+use tds_driver::{Client, Config, AuthMethod};
 use tokio::net::TcpStream;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 
@@ -49,7 +49,7 @@ let mut client = Client::connect(config, tcp.compat_write()).await?;
 ```rust,ignore
 let tcp = smol::net::TcpStream::connect(config.get_addr()).await?;
 tcp.set_nodelay(true)?;
-let mut client = tiberius::Client::connect(config, tcp).await?;
+let mut client = tds_driver::Client::connect(config, tcp).await?;
 ```
 
 ## Configuration
@@ -85,7 +85,7 @@ Encryption levels (`Config::encryption`): `NotSupported`, `Off`, `Required`
 `tds/8.0` ALPN (requires the `tds80` feature; native-tls or rustls).
 
 ```rust,ignore
-use tiberius::EncryptionLevel;
+use tds_driver::EncryptionLevel;
 config.encryption(EncryptionLevel::Strict);
 config.hostname_in_certificate("my-sql-host"); // validate against a specific CN/SAN
 config.client_certificate("client.pem", "client.key"); // mutual TLS
@@ -124,7 +124,7 @@ println!("{} rows", result.total());
 For dynamic or owned parameters, use the [`Query`] object:
 
 ```rust,ignore
-use tiberius::Query;
+use tds_driver::Query;
 let mut select = Query::new("SELECT @P1, @P2");
 for p in ["a", "b"] { select.bind(p); }
 let stream = select.query(&mut client).await?;
@@ -159,7 +159,7 @@ nullability and identity flags.
 Efficiently stream many rows into a table:
 
 ```rust,ignore
-use tiberius::IntoRow;
+use tds_driver::IntoRow;
 
 let mut req = client.bulk_insert("dbo.target").await?;      // all columns
 // or a specific column list:
@@ -178,7 +178,7 @@ Named RPC with input, output and table-valued parameters is supported via the
 [`Command`] API. A TVP row type derives `TableValueRow`:
 
 ```rust,ignore
-use tiberius::TableValueRow;
+use tds_driver::TableValueRow;
 
 #[derive(TableValueRow)]
 struct Item {
@@ -216,7 +216,7 @@ On Windows, a named instance's port is resolved through SQL Browser. Enable
 `sql-browser-tokio` or `sql-browser-smol` and use the `SqlBrowser` extension:
 
 ```rust,ignore
-use tiberius::SqlBrowser;
+use tds_driver::SqlBrowser;
 use tokio::net::TcpStream;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 
@@ -248,7 +248,7 @@ Here is a minimal [`bb8`](https://crates.io/crates/bb8) manager over Tokio:
 
 ```rust,ignore
 use bb8::{ManageConnection, Pool};
-use tiberius::{Client, Config};
+use tds_driver::{Client, Config};
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
@@ -259,7 +259,7 @@ struct TiberiusManager {
 #[async_trait::async_trait]
 impl ManageConnection for TiberiusManager {
     type Connection = Client<Compat<TcpStream>>;
-    type Error = tiberius::error::Error;
+    type Error = tds_driver::error::Error;
 
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {
         let tcp = TcpStream::connect(self.config.get_addr()).await?;
@@ -283,7 +283,7 @@ async fn main() -> anyhow::Result<()> {
     let mut config = Config::new();
     config.host("localhost");
     config.port(1433);
-    config.authentication(tiberius::AuthMethod::sql_server("SA", "<YourStrong@Passw0rd>"));
+    config.authentication(tds_driver::AuthMethod::sql_server("SA", "<YourStrong@Passw0rd>"));
     config.trust_cert(); // don't do this in production
 
     let pool = Pool::builder()
@@ -310,7 +310,7 @@ implement their manager trait with the `connect`/`is_valid` logic above.
 
 ## Error handling
 
-All fallible calls return `tiberius::Result<T>` (`Err` is [`tiberius::error::Error`]).
+All fallible calls return `tds_driver::Result<T>` (`Err` is [`tds_driver::error::Error`]).
 Server-side errors surface as `Error::Server(TokenError { .. })` carrying the SQL
 Server error code, state, class, message, procedure and line. That is the
 response's first error; `TokenError::other_errors` lists any later ones and
@@ -321,4 +321,4 @@ messages.
 [`Config`]: https://docs.rs/tiberius-ng/latest/tiberius/struct.Config.html
 [`Query`]: https://docs.rs/tiberius-ng/latest/tiberius/struct.Query.html
 [`Command`]: https://docs.rs/tiberius-ng/latest/tiberius/struct.Command.html
-[`tiberius::error::Error`]: https://docs.rs/tiberius-ng/latest/tiberius/error/enum.Error.html
+[`tds_driver::error::Error`]: https://docs.rs/tiberius-ng/latest/tiberius/error/enum.Error.html

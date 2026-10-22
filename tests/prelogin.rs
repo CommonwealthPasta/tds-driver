@@ -1,7 +1,7 @@
 //! PRELOGIN negotiation against an in-process fake server.
 
 use std::time::Duration;
-use tiberius::{error::Error, AuthMethod, Client, Config, EncryptionLevel};
+use tds_driver::{error::Error, AuthMethod, Client, Config, EncryptionLevel};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -118,7 +118,7 @@ async fn connect(
     answer: Vec<u8>,
     encryption: EncryptionLevel,
     instance: Option<&str>,
-) -> (tiberius::Result<()>, Option<u8>) {
+) -> (tds_driver::Result<()>, Option<u8>) {
     let (port, seen) = fake_server(answer).await;
     let mut config = Config::new();
     config.host("127.0.0.1");

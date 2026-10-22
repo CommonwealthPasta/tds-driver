@@ -23,8 +23,8 @@ use std::{
 ///
 /// ```no_run
 /// # use std::env;
-/// # use tiberius::Config;
-/// # use tiberius::{Command, CommandItem};
+/// # use tds_driver::Config;
+/// # use tds_driver::{Command, CommandItem};
 /// # use futures_util::TryStreamExt;
 /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
 /// # #[tokio::main]
@@ -35,7 +35,7 @@ use std::{
 /// # let config = Config::from_ado_string(&c_str)?;
 /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
 /// # tcp.set_nodelay(true)?;
-/// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+/// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
 /// let mut cmd = Command::new("dbo.usp_SomeStoredProc");
 ///
 /// cmd.bind_param("@foo", 34i32);

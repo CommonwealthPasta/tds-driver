@@ -5,7 +5,7 @@
 #![cfg(all(feature = "rustls", feature = "tds80"))]
 
 use std::{sync::Arc, time::Duration};
-use tiberius::{AuthMethod, Client, Config, EncryptionLevel};
+use tds_driver::{AuthMethod, Client, Config, EncryptionLevel};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -101,7 +101,7 @@ async fn tls13_only_server() -> (u16, tokio::task::JoinHandle<Option<ProtocolVer
 /// TDS 8.0 strict runs TLS straight over TCP, so TLS 1.3 works there; the
 /// TLS 1.2 cap is for TDS 7.x only.
 #[tokio::test]
-async fn strict_negotiates_tls13() -> tiberius::Result<()> {
+async fn strict_negotiates_tls13() -> tds_driver::Result<()> {
     let (port, server) = tls13_only_server().await;
     let mut config = Config::new();
     config.host("localhost");

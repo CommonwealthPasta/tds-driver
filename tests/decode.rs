@@ -6,7 +6,7 @@ use std::env;
 use std::sync::Once;
 
 use runtimes_macro::test_on_runtimes;
-use tiberius::{numeric::Numeric, ColumnData, ColumnType, Result, Row};
+use tds_driver::{numeric::Numeric, ColumnData, ColumnType, Result, Row};
 
 // This is used in the testing macro :)
 #[allow(dead_code)]
@@ -18,7 +18,7 @@ static CONN_STR: Lazy<String> = Lazy::new(|| {
     })
 });
 
-async fn rows<S>(conn: &mut tiberius::Client<S>, sql: &str) -> Result<Vec<Row>>
+async fn rows<S>(conn: &mut tds_driver::Client<S>, sql: &str) -> Result<Vec<Row>>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -26,7 +26,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn lone_utf16_surrogates_decode_lossily<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn lone_utf16_surrogates_decode_lossily<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -64,7 +64,7 @@ where
         .simple_query("DECLARE @m nvarchar(100) = N'boom' + NCHAR(0xDC00); RAISERROR(@m, 16, 1)")
         .await
     {
-        Err(tiberius::error::Error::Server(e)) => assert_eq!(e.message(), "boom\u{FFFD}"),
+        Err(tds_driver::error::Error::Server(e)) => assert_eq!(e.message(), "boom\u{FFFD}"),
         Err(e) => panic!("expected a server error, got {e:?}"),
         Ok(_) => panic!("RAISERROR must fail the query"),
     }
@@ -76,7 +76,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn money_decodes_exactly<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn money_decodes_exactly<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -107,7 +107,7 @@ where
     );
     #[cfg(feature = "bigdecimal")]
     assert_eq!(
-        r.get::<tiberius::numeric::BigDecimal, _>(2)
+        r.get::<tds_driver::numeric::BigDecimal, _>(2)
             .unwrap()
             .to_string(),
         "-922337203685477.5808"
@@ -118,7 +118,7 @@ where
 
 /// A wide all-NULL row makes the server send NBCROW; a one-column SELECT gets ROW.
 #[test_on_runtimes]
-async fn nullable_money_and_smalldatetime<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn nullable_money_and_smalldatetime<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -158,7 +158,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn oem_code_page_collations<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn oem_code_page_collations<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -200,7 +200,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn sql_variant_utf8_varchar<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn sql_variant_utf8_varchar<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -230,7 +230,9 @@ where
 /// 0x82 0x20, a Shift-JIS lead byte with an invalid trail byte, is stored as
 /// it is; it decodes as U+FFFD, then the space.
 #[test_on_runtimes]
-async fn invalid_code_page_sequences_decode_lossily<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn invalid_code_page_sequences_decode_lossily<S>(
+    mut conn: tds_driver::Client<S>,
+) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -257,7 +259,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn numeric_precision_and_display<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn numeric_precision_and_display<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -292,7 +294,7 @@ where
 
 #[cfg(feature = "rust_decimal")]
 #[test_on_runtimes]
-async fn rust_decimal_out_of_range<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn rust_decimal_out_of_range<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -318,7 +320,7 @@ where
 
 #[cfg(all(feature = "chrono", feature = "tds73"))]
 #[test_on_runtimes]
-async fn chrono_utc_from_datetimeoffset<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn chrono_utc_from_datetimeoffset<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -350,7 +352,7 @@ const DATETIMES: &str = "SELECT v, CONVERT(varchar(30), v, 121) FROM (VALUES \
 
 #[cfg(feature = "chrono")]
 #[test_on_runtimes]
-async fn chrono_datetime_rounds_to_milliseconds<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn chrono_datetime_rounds_to_milliseconds<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -368,7 +370,7 @@ where
 
 #[cfg(feature = "time")]
 #[test_on_runtimes]
-async fn time_datetime_rounds_to_milliseconds<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn time_datetime_rounds_to_milliseconds<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {

@@ -34,7 +34,7 @@ use std::{
 /// # Example
 ///
 /// ```
-/// # use tiberius::{Config, QueryItem};
+/// # use tds_driver::{Config, QueryItem};
 /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
 /// # use std::env;
 /// # use futures_util::stream::TryStreamExt;
@@ -46,7 +46,7 @@ use std::{
 /// # let config = Config::from_ado_string(&c_str)?;
 /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
 /// # tcp.set_nodelay(true)?;
-/// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+/// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
 /// let mut stream = client
 ///     .query(
 ///         "SELECT @P1 AS first; SELECT @P2 AS second",
@@ -145,7 +145,7 @@ impl<'a> QueryStream<'a> {
     /// # Example
     ///
     /// ```
-    /// # use tiberius::Config;
+    /// # use tds_driver::Config;
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # use futures_util::stream::TryStreamExt;
@@ -157,7 +157,7 @@ impl<'a> QueryStream<'a> {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let mut stream = client
     ///     .query(
     ///         "SELECT @P1 AS first; SELECT @P2 AS second",

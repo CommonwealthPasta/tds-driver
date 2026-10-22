@@ -16,7 +16,7 @@ use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 use runtimes_macro::test_on_runtimes;
-use tiberius::{CancelHandle, Client, Config, Result};
+use tds_driver::{CancelHandle, Client, Config, Result};
 
 // This is used in the testing macro :)
 #[allow(dead_code)]
@@ -32,13 +32,13 @@ static CONN_STR: Lazy<String> = Lazy::new(|| {
 /// request runs reports it aborted (error 3980) rather than returning nothing.
 fn cancelled<T: Default>(result: Result<T>) -> Result<T> {
     match result {
-        Err(tiberius::error::Error::Server(e)) if e.code() == 3980 => Ok(T::default()),
+        Err(tds_driver::error::Error::Server(e)) if e.code() == 3980 => Ok(T::default()),
         result => result,
     }
 }
 
 #[test_on_runtimes]
-async fn cancel_mid_stream<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn cancel_mid_stream<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -69,7 +69,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn cancel_after_a_server_error<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn cancel_after_a_server_error<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -98,7 +98,7 @@ where
 
 #[test_on_runtimes]
 async fn cancel_query_dropped_before_the_acknowledgement<S>(
-    mut conn: tiberius::Client<S>,
+    mut conn: tds_driver::Client<S>,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
@@ -131,7 +131,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn cancel_handle_before_the_server_answers<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn cancel_handle_before_the_server_answers<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -171,7 +171,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn cancel_handle_with_no_request_in_flight<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn cancel_handle_with_no_request_in_flight<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -191,7 +191,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn cancel_handle_racing_the_response<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn cancel_handle_racing_the_response<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -224,7 +224,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn cancel_query_after_cancel_handle<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn cancel_query_after_cancel_handle<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -264,7 +264,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn cancel_handle_then_dropped_response<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn cancel_handle_then_dropped_response<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {

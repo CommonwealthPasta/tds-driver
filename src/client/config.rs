@@ -189,7 +189,7 @@ impl Config {
     /// # Example
     ///
     /// ```
-    /// # use tiberius::{Config, AuthMethod};
+    /// # use tds_driver::{Config, AuthMethod};
     /// let config = Config::builder()
     ///     .host("localhost")
     ///     .port(1433)
@@ -368,7 +368,7 @@ impl Config {
     /// runtime's timeout.
     ///
     /// ```no_run
-    /// # use tiberius::{Client, Config};
+    /// # use tds_driver::{Client, Config};
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # #[tokio::main]
     /// # async fn main() -> anyhow::Result<()> {
@@ -695,7 +695,7 @@ impl Config {
 /// # Example
 ///
 /// ```
-/// # use tiberius::{Config, AuthMethod, EncryptionLevel};
+/// # use tds_driver::{Config, AuthMethod, EncryptionLevel};
 /// let config = Config::builder()
 ///     .host("localhost")
 ///     .port(1433)

@@ -6,8 +6,8 @@ use std::env;
 use std::future::Future;
 use std::sync::Once;
 use std::time::Duration;
-use tiberius::ColumnData;
-use tiberius::{IntoSql, Result, TokenRow};
+use tds_driver::ColumnData;
+use tds_driver::{IntoSql, Result, TokenRow};
 
 #[cfg(all(feature = "tds73", feature = "chrono"))]
 use chrono::DateTime;
@@ -46,7 +46,7 @@ macro_rules! test_bulk_type {
     ($name:ident($sql_type:literal, $total_generated:expr, $generator:expr)) => {
         paste::item! {
             #[test_on_runtimes]
-            async fn [< bulk_load_optional_ $name >]<S>(mut conn: tiberius::Client<S>) -> Result<()>
+            async fn [< bulk_load_optional_ $name >]<S>(mut conn: tds_driver::Client<S>) -> Result<()>
             where
                 S: AsyncRead + AsyncWrite + Unpin + Send,
             {
@@ -78,7 +78,7 @@ macro_rules! test_bulk_type {
             }
 
             #[test_on_runtimes]
-            async fn [< bulk_load_required_ $name >]<S>(mut conn: tiberius::Client<S>) -> Result<()>
+            async fn [< bulk_load_required_ $name >]<S>(mut conn: tds_driver::Client<S>) -> Result<()>
             where
                 S: AsyncRead + AsyncWrite + Unpin + Send,
             {
@@ -223,7 +223,7 @@ test_bulk_type!(datetime2_7(
 ));
 
 #[test_on_runtimes]
-async fn read_and_write_to_keyword_columns<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn read_and_write_to_keyword_columns<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -259,11 +259,11 @@ macro_rules! test_bulk_columns {
     ($name:ident($total_generated:literal $(, $sql_type:literal)+ $(, ($cols:expr, $generator:expr ))+ $(,)?)) => {
         paste::item! {
             #[test_on_runtimes]
-            async fn [< bulk_load_optional_ $name >]<S>(mut conn: tiberius::Client<S>) -> Result<()>
+            async fn [< bulk_load_optional_ $name >]<S>(mut conn: tds_driver::Client<S>) -> Result<()>
             where
                 S: AsyncRead + AsyncWrite + Unpin + Send,
             {
-                use tiberius::IntoRow;
+                use tds_driver::IntoRow;
 
                 let table = format!("##{}", random_table().await);
                 let column_defs = &[$($sql_type,)+];
@@ -296,11 +296,11 @@ macro_rules! test_bulk_columns {
             }
 
             #[test_on_runtimes]
-            async fn [< bulk_load_required_ $name >]<S>(mut conn: tiberius::Client<S>) -> Result<()>
+            async fn [< bulk_load_required_ $name >]<S>(mut conn: tds_driver::Client<S>) -> Result<()>
             where
                 S: AsyncRead + AsyncWrite + Unpin + Send,
             {
-                use tiberius::IntoRow;
+                use tds_driver::IntoRow;
                 let table = format!("##{}", random_table().await);
                 let column_defs = &[$(format!("{} NOT NULL", $sql_type),)+];
 
@@ -362,7 +362,7 @@ async fn within<T>(fut: impl Future<Output = Result<T>>) -> Result<T> {
     }
 }
 
-async fn select_int<S>(conn: &mut tiberius::Client<S>, sql: &str) -> Result<Option<i32>>
+async fn select_int<S>(conn: &mut tds_driver::Client<S>, sql: &str) -> Result<Option<i32>>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -374,11 +374,11 @@ where
 }
 
 #[test_on_runtimes]
-async fn bulk_load_dropped_mid_stream_cancels_it<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_dropped_mid_stream_cancels_it<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    use tiberius::IntoRow;
+    use tds_driver::IntoRow;
     let table = format!("##{}", random_table().await);
     conn.simple_query(format!("CREATE TABLE {table} (id INT, s NVARCHAR(400))"))
         .await?
@@ -406,7 +406,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn bulk_load_dropped_before_any_packet<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_dropped_before_any_packet<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -424,11 +424,11 @@ where
 }
 
 #[test_on_runtimes]
-async fn bulk_load_cancel_query_after_drop<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_cancel_query_after_drop<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    use tiberius::IntoRow;
+    use tds_driver::IntoRow;
     let table = format!("##{}", random_table().await);
     conn.simple_query(format!("CREATE TABLE {table} (id INT)"))
         .await?
@@ -447,7 +447,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn bulk_load_row_error_keeps_request_usable<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_row_error_keeps_request_usable<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -481,7 +481,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn bulk_load_row_error_then_drop<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_row_error_then_drop<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -506,7 +506,7 @@ where
 /// Bulk inserts `value` into a one-column table `v {column}` and reads
 /// `readback`, an expression over `v`, back as text.
 async fn bulk_one<S>(
-    conn: &mut tiberius::Client<S>,
+    conn: &mut tds_driver::Client<S>,
     column: &str,
     value: ColumnData<'static>,
     readback: &str,
@@ -538,7 +538,7 @@ where
 }
 
 async fn assert_bulk<S>(
-    conn: &mut tiberius::Client<S>,
+    conn: &mut tds_driver::Client<S>,
     cases: Vec<(&str, ColumnData<'static>, &str, &str)>,
 ) -> Result<()>
 where
@@ -554,7 +554,7 @@ where
 
 #[test_on_runtimes]
 async fn bulk_load_converts_numbers_to_the_column_width<S>(
-    mut conn: tiberius::Client<S>,
+    mut conn: tds_driver::Client<S>,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
@@ -580,7 +580,7 @@ where
         .await
         .unwrap_err();
     assert!(
-        matches!(err, tiberius::error::Error::Conversion(_)),
+        matches!(err, tds_driver::error::Error::Conversion(_)),
         "{err:?}"
     );
 
@@ -589,12 +589,12 @@ where
 
 #[test_on_runtimes]
 async fn bulk_load_decimal_the_column_cannot_hold_is_a_row_error<S>(
-    mut conn: tiberius::Client<S>,
+    mut conn: tds_driver::Client<S>,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    use tiberius::numeric::Numeric;
+    use tds_driver::numeric::Numeric;
 
     let table = format!("##{}", random_table().await);
     conn.simple_query(format!("CREATE TABLE {table} (v DECIMAL(5,2))"))
@@ -614,7 +614,7 @@ where
     for (v, s) in [(999_995, 3), (12_345, 0), (i128::MAX, 38)] {
         let err = req.send(row(v, s)).await.unwrap_err();
         assert!(
-            matches!(err, tiberius::error::Error::Conversion(_)),
+            matches!(err, tds_driver::error::Error::Conversion(_)),
             "{err:?}"
         );
     }
@@ -638,7 +638,7 @@ where
 
 #[test_on_runtimes]
 async fn bulk_load_encodes_varchar_in_the_column_collation<S>(
-    mut conn: tiberius::Client<S>,
+    mut conn: tds_driver::Client<S>,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
@@ -672,7 +672,7 @@ where
     }
     let err = req.send(unencodable).await.unwrap_err();
     assert!(
-        matches!(err, tiberius::error::Error::Encoding(_)),
+        matches!(err, tds_driver::error::Error::Encoding(_)),
         "{err:?}"
     );
 
@@ -704,7 +704,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn bulk_load_max_values_over_64k<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_max_values_over_64k<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -735,7 +735,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn bulk_load_nvarchar_up_to_4000<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_nvarchar_up_to_4000<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -761,7 +761,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn bulk_load_text_ntext_image<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_text_ntext_image<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -805,7 +805,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn bulk_load_sql_variant_string<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_sql_variant_string<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -842,8 +842,8 @@ struct VariantRow {
     b: i32,
 }
 
-impl<'a> tiberius::TableValueRow<'a> for VariantRow {
-    fn bind_fields(&self, row: &mut tiberius::SqlTableDataRow<'a>) {
+impl<'a> tds_driver::TableValueRow<'a> for VariantRow {
+    fn bind_fields(&self, row: &mut tds_driver::SqlTableDataRow<'a>) {
         row.add_field(self.v);
         row.add_field(self.b);
     }
@@ -854,7 +854,7 @@ impl<'a> tiberius::TableValueRow<'a> for VariantRow {
 }
 
 #[test_on_runtimes]
-async fn tvp_sql_variant_string_and_wider_column<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn tvp_sql_variant_string_and_wider_column<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -875,12 +875,12 @@ where
     .await?;
 
     let result = async {
-        let mut cmd = tiberius::Command::new(format!("dbo.[{proc_name}]"));
+        let mut cmd = tds_driver::Command::new(format!("dbo.[{proc_name}]"));
         cmd.bind_table_with_dbtype("@t", &db_type, vec![VariantRow { v: "abc", b: -5 }]);
         let result =
             within(async { cmd.exec(&mut conn).await?.into_command_result().await }).await?;
         let rows = result.to_query_result(0).unwrap();
-        Ok::<_, tiberius::error::Error>((
+        Ok::<_, tds_driver::error::Error>((
             rows[0].get::<&str, _>(0).map(str::to_owned),
             rows[0].get::<i64, _>(1),
         ))
@@ -903,11 +903,11 @@ where
 }
 
 #[test_on_runtimes]
-async fn bulk_load_not_null_money<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_not_null_money<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    use tiberius::numeric::Numeric;
+    use tds_driver::numeric::Numeric;
 
     assert_bulk(
         &mut conn,
@@ -936,7 +936,7 @@ where
 }
 
 #[test_on_runtimes]
-async fn bulk_load_escapes_column_names<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_escapes_column_names<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -969,7 +969,7 @@ fn ndt(h: u32, m: u32, s: u32, nanos: u32) -> NaiveDateTime {
 
 #[cfg(all(feature = "tds73", feature = "chrono"))]
 #[test_on_runtimes]
-async fn bulk_load_time_and_datetimeoffset_scale<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_time_and_datetimeoffset_scale<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -1028,7 +1028,7 @@ where
 #[cfg(all(feature = "tds73", feature = "chrono"))]
 #[test_on_runtimes]
 async fn bulk_load_datetime2_into_datetimeoffset_and_date<S>(
-    mut conn: tiberius::Client<S>,
+    mut conn: tds_driver::Client<S>,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
@@ -1081,11 +1081,11 @@ where
 }
 
 #[test_on_runtimes]
-async fn bulk_load_xml<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_xml<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    use tiberius::xml::XmlData;
+    use tds_driver::xml::XmlData;
 
     let xml = XmlData::new("<a b=\"\u{3b1}\">\u{1F600}</a>");
     let nul = "ISNULL(CONVERT(nvarchar(200), v), 'NULL')";
@@ -1124,7 +1124,7 @@ where
 
 /// As SqlBulkCopy takes a string for an xml column; it was an error.
 #[test_on_runtimes]
-async fn bulk_load_string_into_xml<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_string_into_xml<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -1146,7 +1146,7 @@ where
         .await
         .unwrap_err();
     assert!(
-        matches!(err, tiberius::error::Error::Server(ref e) if e.code() == 9400),
+        matches!(err, tds_driver::error::Error::Server(ref e) if e.code() == 9400),
         "{err:?}"
     );
 
@@ -1155,7 +1155,7 @@ where
 
 #[cfg(all(feature = "tds73", feature = "chrono"))]
 #[test_on_runtimes]
-async fn bulk_load_datetime_from_datetime2<S>(mut conn: tiberius::Client<S>) -> Result<()>
+async fn bulk_load_datetime_from_datetime2<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {

@@ -148,8 +148,8 @@ impl<'a> Command<'a> {
     ///
     /// ```no_run
     /// # use std::env;
-    /// # use tiberius::Config;
-    /// # use tiberius::{numeric::Numeric, Command, TableValueRow};
+    /// # use tds_driver::Config;
+    /// # use tds_driver::{numeric::Numeric, Command, TableValueRow};
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// #[derive(TableValueRow)]
     /// struct SomeGeoList {
@@ -165,7 +165,7 @@ impl<'a> Command<'a> {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let r1 = SomeGeoList {
     ///     eid: 1,
     ///     lat: Numeric::new_with_scale(10, 6),
@@ -218,7 +218,7 @@ impl<'a> Command<'a> {
     /// # Example
     ///
     /// ```no_run
-    /// # use tiberius::{Config, Command};
+    /// # use tds_driver::{Config, Command};
     /// # use tokio_util::compat::TokioAsyncWriteCompatExt;
     /// # use std::env;
     /// # #[tokio::main]
@@ -229,7 +229,7 @@ impl<'a> Command<'a> {
     /// # let config = Config::from_ado_string(&c_str)?;
     /// # let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
     /// # tcp.set_nodelay(true)?;
-    /// # let mut client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+    /// # let mut client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
     /// let mut cmd = Command::new("dbo.usp_SomeStoredProc");
     ///
     /// cmd.bind_param("@foo", 34i32);

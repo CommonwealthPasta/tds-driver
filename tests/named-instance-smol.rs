@@ -4,7 +4,7 @@ use async_net::TcpStream;
 use once_cell::sync::Lazy;
 use std::env;
 use std::sync::Once;
-use tiberius::{Client, Config, Result, SqlBrowser};
+use tds_driver::{Client, Config, Result, SqlBrowser};
 // use tokio::{net::TcpStream, runtime::Runtime};
 // use tokio_util::compat::TokioAsyncWriteCompatExt;
 

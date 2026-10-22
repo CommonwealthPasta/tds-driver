@@ -61,10 +61,10 @@ pub fn test_on_runtimes(args: TokenStream, input: TokenStream) -> TokenStream {
             let rt = tokio::runtime::Runtime::new()?;
 
             rt.block_on(async {
-                let config = tiberius::Config::from_ado_string(&#conn_str_ident)?;
+                let config = tds_driver::Config::from_ado_string(&#conn_str_ident)?;
                 let tcp = tokio::net::TcpStream::connect(config.get_addr()).await?;
                 tcp.set_nodelay(true)?;
-                let client = tiberius::Client::connect(config, tcp.compat_write()).await?;
+                let client = tds_driver::Client::connect(config, tcp.compat_write()).await?;
 
                 #func_name(client).await?;
                 Ok(())
@@ -78,10 +78,10 @@ pub fn test_on_runtimes(args: TokenStream, input: TokenStream) -> TokenStream {
             });
 
             smol::block_on(async {
-                let config = tiberius::Config::from_ado_string(&#conn_str_ident)?;
+                let config = tds_driver::Config::from_ado_string(&#conn_str_ident)?;
                 let tcp = smol::net::TcpStream::connect(config.get_addr()).await?;
                 tcp.set_nodelay(true)?;
-                let client = tiberius::Client::connect(config, tcp).await?;
+                let client = tds_driver::Client::connect(config, tcp).await?;
 
                 #func_name(client).await?;
                 Ok(())

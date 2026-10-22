@@ -8,7 +8,7 @@ is an actively-maintained **community fork** of the original
 driver for Rust. The upstream project is no longer maintained; this fork carries
 the work forward. It is published on crates.io as
 [`tiberius-ng`](https://crates.io/crates/tiberius-ng) (the library name stays
-`tiberius`, so downstream code keeps `use tiberius::...`).
+`tiberius`, so downstream code keeps `use tds_driver::...`).
 
 Contributions of all kinds are welcome and appreciated: bug reports, bug fixes,
 new type/feature support, documentation, tests, and CI improvements. If you are

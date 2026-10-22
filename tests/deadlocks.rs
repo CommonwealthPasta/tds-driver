@@ -2,7 +2,7 @@ use std::env;
 
 use indoc::indoc;
 use once_cell::sync::Lazy;
-use tiberius::{error::Error, Client, Config};
+use tds_driver::{error::Error, Client, Config};
 use tokio::{net::TcpStream, sync::mpsc};
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 
@@ -17,7 +17,7 @@ static CONN_STR: Lazy<String> = Lazy::new(|| {
 /// can still continue using our other connection in the main task.
 async fn spawn_actor() -> (
     mpsc::Sender<&'static str>,
-    mpsc::Receiver<tiberius::Result<()>>,
+    mpsc::Receiver<tds_driver::Result<()>>,
 ) {
     let (query_sender, mut query_receiver) = mpsc::channel(100);
     let (response_sender, response_receiver) = mpsc::channel(100);

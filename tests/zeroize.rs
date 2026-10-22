@@ -6,7 +6,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
-use tiberius::{AuthMethod, Client, Config, EncryptionLevel};
+use tds_driver::{AuthMethod, Client, Config, EncryptionLevel};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_util::compat::TokioAsyncWriteCompatExt;

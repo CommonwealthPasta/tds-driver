@@ -11,7 +11,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tiberius::{Client, Config};
+use tds_driver::{Client, Config};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -210,7 +210,7 @@ async fn fake_server(strict: bool) -> u16 {
     port
 }
 
-async fn connect(port: u16, connection_string: &str) -> tiberius::Result<()> {
+async fn connect(port: u16, connection_string: &str) -> tds_driver::Result<()> {
     let cs = format!("server=tcp:localhost,{port};user=sa;password=x;{connection_string}");
     let config = Config::from_ado_string(&cs)?;
     let tcp = TcpStream::connect(("127.0.0.1", port)).await?;
@@ -226,7 +226,7 @@ async fn connect(port: u16, connection_string: &str) -> tiberius::Result<()> {
 /// TLS 1.3 sends post-handshake messages the TDS 7.x framing cannot carry, so
 /// the client must cap the version at TLS 1.2 for a server that offers 1.3.
 #[tokio::test]
-async fn tds7_tls_handshake_against_a_tls13_capable_server() -> tiberius::Result<()> {
+async fn tds7_tls_handshake_against_a_tls13_capable_server() -> tds_driver::Result<()> {
     let port = fake_server(false).await;
     connect(port, &format!("encrypt=true;TrustServerCertificateCA={CA}")).await
 }
@@ -238,14 +238,14 @@ async fn strict_ignores_trust_server_certificate() {
     let port = fake_server(true).await;
     let res = connect(port, "encrypt=strict;TrustServerCertificate=true").await;
     assert!(
-        matches!(res, Err(tiberius::error::Error::Tls(_))),
+        matches!(res, Err(tds_driver::error::Error::Tls(_))),
         "{res:?}"
     );
 }
 
 #[cfg(feature = "tds80")]
 #[tokio::test]
-async fn strict_with_trust_server_certificate_honours_the_ca() -> tiberius::Result<()> {
+async fn strict_with_trust_server_certificate_honours_the_ca() -> tds_driver::Result<()> {
     let port = fake_server(true).await;
     connect(
         port,
@@ -261,13 +261,13 @@ async fn strict_ignores_trust_cert_set_through_the_api() {
     let mut config = Config::new();
     config.host("localhost");
     config.port(port);
-    config.authentication(tiberius::AuthMethod::sql_server("sa", "x"));
+    config.authentication(tds_driver::AuthMethod::sql_server("sa", "x"));
     config.trust_cert();
-    config.encryption(tiberius::EncryptionLevel::Strict);
+    config.encryption(tds_driver::EncryptionLevel::Strict);
     let tcp = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     let res = Client::connect(config, tcp.compat_write()).await.map(drop);
     assert!(
-        matches!(res, Err(tiberius::error::Error::Tls(_))),
+        matches!(res, Err(tds_driver::error::Error::Tls(_))),
         "{res:?}"
     );
 }

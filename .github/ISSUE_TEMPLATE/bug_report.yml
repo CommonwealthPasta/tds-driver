@@ -120,7 +120,7 @@ body:
       label: Logs
       description: >-
         Relevant logs or a backtrace. tiberius-ng emits diagnostics via the
-        `tracing` crate — enabling `RUST_LOG=tiberius=trace` (or a `tracing`
+        `tracing` crate — enabling `RUST_LOG=tds_driver=trace` (or a `tracing`
         subscriber at TRACE level) and pasting the TDS handshake / packet output
         is extremely helpful. Set `RUST_BACKTRACE=1` for panics. This field is
         automatically formatted as code, so no backticks are needed.

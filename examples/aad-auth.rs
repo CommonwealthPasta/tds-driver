@@ -11,7 +11,7 @@
 use azure_core::credentials::{Secret, TokenCredential};
 use azure_identity::ClientSecretCredential;
 use std::env;
-use tiberius::{AuthMethod, Client, Config, Query};
+use tds_driver::{AuthMethod, Client, Config, Query};
 use tokio::net::TcpStream;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 
