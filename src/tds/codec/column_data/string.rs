@@ -23,7 +23,10 @@ where
     match (data, ty) {
         // Codepages other than UTF
         (Some(buf), BigChar) | (Some(buf), BigVarChar) => {
-            let collation = collation.as_ref().unwrap();
+            // TYPE_INFO always reads one for these types.
+            let collation = collation
+                .as_ref()
+                .ok_or_else(|| Error::Protocol("varchar without a collation".into()))?;
             Ok(Some(decode_varchar(buf, collation)?.into()))
         }
         (Some(buf), _) => Ok(Some(decode_nchar(&buf)?.into())),
@@ -223,6 +226,24 @@ mod tests {
             decode_varchar(vec![b'a', 0xff, 0xe6, 0x97], &utf8).unwrap(),
             "a\u{FFFD}\u{FFFD}"
         );
+    }
+
+    #[tokio::test]
+    async fn varchar_without_a_collation_is_an_error() {
+        use crate::sql_read_bytes::test_utils::IntoSqlReadBytes;
+        use bytes::{BufMut, BytesMut};
+
+        let mut buf = BytesMut::new();
+        buf.put_u16_le(1);
+        buf.put_u8(b'a');
+        let res = decode(
+            &mut buf.into_sql_read_bytes(),
+            VarLenType::BigVarChar,
+            10,
+            None,
+        )
+        .await;
+        assert!(matches!(res, Err(Error::Protocol(_))), "{res:?}");
     }
 
     #[test]
