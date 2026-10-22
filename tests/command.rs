@@ -227,3 +227,34 @@ where
 
     Ok(())
 }
+
+#[test_on_runtimes]
+async fn command_result_keeps_empty_result_sets<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let proc = format!("#{}", random_table().await);
+    conn.simple_query(format!(
+        "CREATE PROCEDURE {} AS BEGIN \
+           SELECT 1 AS a; SELECT 2 AS b WHERE 1 = 0; SELECT 3 AS c WHERE 1 = 0; SELECT 4 AS d \
+         END",
+        proc
+    ))
+    .await?
+    .into_results()
+    .await?;
+
+    let res = Command::new(&proc)
+        .exec(&mut conn)
+        .await?
+        .into_command_result()
+        .await?;
+
+    let sets: Vec<Vec<Option<i32>>> = res
+        .into_iter()
+        .map(|rows| rows.iter().map(|r| r.get::<i32, _>(0)).collect())
+        .collect();
+    assert_eq!(sets, vec![vec![Some(1)], vec![], vec![], vec![Some(4)]]);
+
+    Ok(())
+}

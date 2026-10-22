@@ -115,21 +115,14 @@ impl<'a> CommandStream<'a> {
         let mut rows_affected = Vec::new();
 
         while let Some(item) = self.try_next().await? {
-            match (item, &mut result) {
-                (CommandItem::Row(row), None) => {
-                    result = Some(vec![row]);
-                }
-                (CommandItem::Row(row), Some(ref mut result)) => result.push(row),
-                (CommandItem::Metadata(_), None) => {
-                    result = Some(Vec::new());
-                }
-                (CommandItem::Metadata(_), ref mut previous_result) => {
-                    results.push(previous_result.take().unwrap());
-                    result = None;
-                }
-                (CommandItem::ReturnStatus(rs), _) => return_status = rs,
-                (CommandItem::ReturnValue(rv), _) => return_values.push(rv),
-                (CommandItem::RowsAffected(rows), _) => rows_affected.push(rows),
+            match item {
+                // Every COLMETADATA opens a result set, including one with no
+                // rows, so indexes line up with `ResultMetadata::result_index`.
+                CommandItem::Metadata(_) => results.extend(result.replace(Vec::new())),
+                CommandItem::Row(row) => result.get_or_insert_with(Vec::new).push(row),
+                CommandItem::ReturnStatus(rs) => return_status = rs,
+                CommandItem::ReturnValue(rv) => return_values.push(rv),
+                CommandItem::RowsAffected(rows) => rows_affected.push(rows),
             }
         }
 
@@ -338,5 +331,72 @@ impl<'a> Stream for CommandStream<'a> {
                 _ => continue,
             };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tds::codec::{DoneStatus, TokenColMetaData, TokenDone, TokenRow};
+    use futures_util::stream;
+
+    const SELECT: u16 = 0xC1;
+
+    fn meta() -> ReceivedToken {
+        ReceivedToken::NewResultset(Arc::new(TokenColMetaData { columns: vec![] }))
+    }
+
+    fn row() -> ReceivedToken {
+        ReceivedToken::Row(TokenRow::new())
+    }
+
+    fn count(cur_cmd: u16, rows: u64) -> TokenDone {
+        TokenDone::new(DoneStatus::More | DoneStatus::Count, cur_cmd, rows)
+    }
+
+    async fn collect(tokens: Vec<ReceivedToken>) -> CommandResult {
+        let tokens = stream::iter(tokens.into_iter().map(Ok)).boxed();
+        CommandStream::new(tokens)
+            .into_command_result()
+            .await
+            .unwrap()
+    }
+
+    fn set_sizes(res: &CommandResult) -> Vec<usize> {
+        res.query_results.iter().map(Vec::len).collect()
+    }
+
+    #[tokio::test]
+    async fn empty_result_sets_keep_their_index() {
+        let res = collect(vec![
+            meta(),
+            row(),
+            ReceivedToken::Done(count(SELECT, 1)),
+            meta(),
+            ReceivedToken::Done(count(SELECT, 0)),
+            meta(),
+            ReceivedToken::Done(count(SELECT, 0)),
+            meta(),
+            row(),
+            row(),
+            ReceivedToken::Done(count(SELECT, 2)),
+        ])
+        .await;
+        assert_eq!(set_sizes(&res), [1, 0, 0, 2]);
+    }
+
+    #[tokio::test]
+    async fn leading_empty_result_sets_are_kept() {
+        let res = collect(vec![
+            meta(),
+            ReceivedToken::Done(count(SELECT, 0)),
+            meta(),
+            ReceivedToken::Done(count(SELECT, 0)),
+            meta(),
+            row(),
+            ReceivedToken::Done(count(SELECT, 1)),
+        ])
+        .await;
+        assert_eq!(set_sizes(&res), [0, 0, 1]);
     }
 }

@@ -73,6 +73,15 @@ impl TokenDone {
             0
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn new(status: BitFlags<DoneStatus>, cur_cmd: u16, done_rows: u64) -> Self {
+        Self {
+            status,
+            cur_cmd,
+            done_rows,
+        }
+    }
 }
 
 impl Encode<BytesMut> for TokenDone {

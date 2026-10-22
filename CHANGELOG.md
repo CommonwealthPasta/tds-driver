@@ -54,6 +54,8 @@ that land will be documented here.
 - **A request that fails to encode no longer hangs the connection.** After an
   encode error, such as a TVP value too long for its column, the next request
   waited for a response to the request never sent.
+- **`into_command_result` keeps empty result sets.** An empty result set after
+  the first vanished and shifted later ones down an index.
 
 ### Changed
 
