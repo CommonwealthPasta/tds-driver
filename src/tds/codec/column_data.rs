@@ -58,6 +58,13 @@ use uuid::Uuid;
 
 const MAX_NVARCHAR_SIZE: usize = 1 << 30;
 
+/// Whether `s` fits `nvarchar(4000)`, whose limit is in UTF-16 code units.
+/// A UTF-8 byte is at most one unit and a unit at most three bytes, so only
+/// strings of 4001..=12000 bytes need counting.
+fn fits_nvarchar_4000(s: &str) -> bool {
+    s.len() <= 4000 || (s.len() <= 12000 && s.encode_utf16().count() <= 4000)
+}
+
 /// Number of days between `0001-01-01` (the `DateTime2`/`Date` epoch) and
 /// `1900-01-01` (the `datetime`/`Datetimen` epoch).
 #[cfg(feature = "tds73")]
@@ -159,7 +166,7 @@ impl<'a> ColumnData<'a> {
             ColumnData::F64(_) => "float(53)".into(),
             ColumnData::Bit(_) => "bit".into(),
             ColumnData::String(None) => "nvarchar(4000)".into(),
-            ColumnData::String(Some(ref s)) if s.len() <= 4000 => "nvarchar(4000)".into(),
+            ColumnData::String(Some(ref s)) if fits_nvarchar_4000(s) => "nvarchar(4000)".into(),
             ColumnData::String(Some(ref s)) if s.len() <= MAX_NVARCHAR_SIZE => {
                 "nvarchar(max)".into()
             }
@@ -565,7 +572,7 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     dst.put_u8(0);
                 }
             }
-            (ColumnData::String(Some(ref s)), None) if s.len() <= 4000 => {
+            (ColumnData::String(Some(ref s)), None) if fits_nvarchar_4000(s) => {
                 dst.put_u8(VarLenType::NVarchar as u8);
                 dst.put_u16_le(8000);
                 dst.extend_from_slice(&[0u8; 5][..]);
@@ -983,6 +990,37 @@ mod tests {
             ColumnData::String(Some("a".repeat(4001).into())).type_name(),
             "nvarchar(max)"
         );
+    }
+
+    #[test]
+    fn nvarchar_4000_threshold_counts_utf16_units() {
+        // (string, fits nvarchar(4000)); € is 3 UTF-8 bytes and 1 unit, 😀 is
+        // 4 bytes and 2 units.
+        let cases = [
+            ("\u{20AC}".repeat(1500), true),
+            ("\u{20AC}".repeat(4000), true),
+            ("\u{20AC}".repeat(4001), false),
+            ("\u{1F600}".repeat(2000), true),
+            ("\u{1F600}".repeat(2001), false),
+        ];
+
+        for (s, fits) in cases {
+            let data = ColumnData::String(Some(s.into()));
+            let expected = if fits {
+                "nvarchar(4000)"
+            } else {
+                "nvarchar(max)"
+            };
+            assert_eq!(data.type_name(), expected);
+
+            // The encoder must agree: TYPE_INFO max length 8000, or 0xFFFF for (max).
+            let mut buf = BytesMut::new();
+            data.encode(&mut BytesMutWithTypeInfo::new(&mut buf))
+                .unwrap();
+            assert_eq!(buf[0], VarLenType::NVarchar as u8);
+            let max_len = u16::from_le_bytes([buf[1], buf[2]]);
+            assert_eq!(max_len, if fits { 8000 } else { 0xFFFF }, "{expected}");
+        }
     }
 
     #[test]

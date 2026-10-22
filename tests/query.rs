@@ -3184,3 +3184,46 @@ where
 
     Ok(())
 }
+
+/// The `max_length` the server gives a parameter, read back through SELECT INTO.
+async fn declared_max_length<S>(conn: &mut tiberius::Client<S>, value: &str) -> Result<i16>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let row = conn
+        .query(
+            "SELECT @P1 AS v INTO #declared; \
+             SELECT max_length FROM tempdb.sys.columns WHERE object_id = OBJECT_ID('tempdb..#declared'); \
+             DROP TABLE #declared;",
+            &[&value],
+        )
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+
+    Ok(row.get(0).unwrap())
+}
+
+#[test_on_runtimes]
+async fn nvarchar_4000_threshold_is_in_utf16_units<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    // 1500 characters, 4500 UTF-8 bytes: still nvarchar(4000), one plan with short strings.
+    assert_eq!(
+        8000,
+        declared_max_length(&mut conn, &"\u{20AC}".repeat(1500)).await?
+    );
+    assert_eq!(
+        8000,
+        declared_max_length(&mut conn, &"\u{1F600}".repeat(2000)).await?
+    );
+    // 4002 UTF-16 code units: nvarchar(max).
+    assert_eq!(
+        -1,
+        declared_max_length(&mut conn, &"\u{1F600}".repeat(2001)).await?
+    );
+
+    Ok(())
+}

@@ -94,6 +94,9 @@ that land will be documented here.
   wrapped length byte (a debug-build panic).
 - A TVP row with more fields than the type has columns is an error instead of a
   panic; a row with fewer fields is an error instead of a corrupted request.
+- String parameters choose `nvarchar(4000)` or `nvarchar(max)` by UTF-16 length,
+  not UTF-8 byte length, so 1334–4000 non-ASCII characters no longer get a
+  second cached plan.
 
 ### Changed
 
