@@ -588,6 +588,32 @@ where
 }
 
 #[test_on_runtimes]
+async fn bulk_load_nvarchar_up_to_4000<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    assert_bulk(
+        &mut conn,
+        vec![
+            (
+                "NVARCHAR(3000)",
+                "a".repeat(3000).into_sql(),
+                "LEN(v)",
+                "3000",
+            ),
+            (
+                "NVARCHAR(4000) NOT NULL",
+                "\u{e9}".repeat(4000).into_sql(),
+                "LEN(v)",
+                "4000",
+            ),
+            ("NCHAR(2001)", "ab".into_sql(), "DATALENGTH(v)", "4002"),
+        ],
+    )
+    .await
+}
+
+#[test_on_runtimes]
 async fn bulk_load_escapes_column_names<S>(mut conn: tiberius::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,

@@ -95,14 +95,15 @@ impl<'a> Display for MetaDataColumn<'a> {
                 }
                 VarLenType::BigBinary => write!(f, "binary({})", ctx.len())?,
                 VarLenType::BigChar => write!(f, "char({})", ctx.len())?,
+                // Lengths of n-types count bytes; the declaration counts characters.
                 VarLenType::NVarchar => {
-                    if ctx.len() <= 4000 {
-                        write!(f, "nvarchar({})", ctx.len())?
+                    if ctx.len() <= 8000 {
+                        write!(f, "nvarchar({})", ctx.len() / 2)?
                     } else {
                         write!(f, "nvarchar(max)")?
                     }
                 }
-                VarLenType::NChar => write!(f, "nchar({})", ctx.len())?,
+                VarLenType::NChar => write!(f, "nchar({})", ctx.len() / 2)?,
                 VarLenType::Text => write!(f, "text")?,
                 VarLenType::Image => write!(f, "image")?,
                 VarLenType::NText => write!(f, "ntext")?,
@@ -782,7 +783,11 @@ mod tests {
             ),
             (
                 TypeInfo::VarLenSized(VarLenContext::new(VarLenType::NVarchar, 100, None)),
-                "c nvarchar(100)",
+                "c nvarchar(50)",
+            ),
+            (
+                TypeInfo::VarLenSized(VarLenContext::new(VarLenType::NVarchar, 8000, None)),
+                "c nvarchar(4000)",
             ),
             (
                 TypeInfo::VarLenSized(VarLenContext::new(VarLenType::NVarchar, 100000, None)),
@@ -790,7 +795,7 @@ mod tests {
             ),
             (
                 TypeInfo::VarLenSized(VarLenContext::new(VarLenType::NChar, 10, None)),
-                "c nchar(10)",
+                "c nchar(5)",
             ),
             (
                 TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Text, 0, None)),
