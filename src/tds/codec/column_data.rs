@@ -642,11 +642,11 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
             (
                 ColumnData::F64(Some(val)),
                 Some(TypeInfo::FixedLen(ty @ (FixedLenType::Money | FixedLenType::Money4))),
-            ) => put_fixed_money(dst, *ty, val)?,
+            ) => put_fixed_money(dst, *ty, |b, len| money::encode(b, len, val))?,
             (
                 ColumnData::Numeric(Some(num)),
                 Some(TypeInfo::FixedLen(ty @ (FixedLenType::Money | FixedLenType::Money4))),
-            ) => put_fixed_money(dst, *ty, f64::from(num))?,
+            ) => put_fixed_money(dst, *ty, |b, len| money::encode_numeric(b, len, num))?,
             (ColumnData::Guid(opt), Some(TypeInfo::VarLenSized(vlc)))
                 if vlc.r#type() == VarLenType::Guid =>
             {
@@ -1092,14 +1092,10 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
 fn put_fixed_money(
     dst: &mut BytesMutWithTypeInfo<'_>,
     ty: FixedLenType,
-    val: f64,
+    encode: impl FnOnce(&mut BytesMut, usize) -> crate::Result<()>,
 ) -> crate::Result<()> {
     let mut moneyn = BytesMut::new();
-    money::encode(
-        &mut moneyn,
-        if ty == FixedLenType::Money4 { 4 } else { 8 },
-        val,
-    )?;
+    encode(&mut moneyn, if ty == FixedLenType::Money4 { 4 } else { 8 })?;
     dst.extend_from_slice(&moneyn[1..]);
     Ok(())
 }
@@ -2483,6 +2479,11 @@ mod tests {
         assert_eq!(decode_with(&money, buf).await, exact(-12_345_000));
         let buf = encode_with_ti(&money4, ColumnData::F64(Some(1.25))).unwrap();
         assert_eq!(decode_with(&money4, buf).await, exact(12_500));
+
+        // Exact from a Numeric; through f64, .5806 would become .5807.
+        let max_but_one = i64::MAX as i128 - 1;
+        let buf = encode_with_ti(&money, exact(max_but_one)).unwrap();
+        assert_eq!(decode_with(&money, buf).await, exact(max_but_one));
 
         assert!(encode_with_ti(&money4, ColumnData::F64(Some(300_000.0))).is_err());
     }
