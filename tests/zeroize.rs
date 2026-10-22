@@ -154,4 +154,12 @@ fn credentials_are_zeroized_before_being_freed() {
     });
     assert!(done);
     assert_eq!(hits, 0, "SQL login with long fields");
+
+    const TOKEN: &str = "eyJAADTOKENMARKER";
+    let token = format!("{TOKEN}{}", "x".repeat(2000));
+
+    let auth = AuthMethod::aad_token(&token);
+    let (hits, done) = leaks(TOKEN, || login(&rt, auth, None, long));
+    assert!(done);
+    assert_eq!(hits, 0, "AAD token login");
 }

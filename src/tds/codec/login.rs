@@ -138,6 +138,14 @@ struct FedAuthExt<'a> {
     nonce: Option<[u8; 32]>,
 }
 
+impl Drop for FedAuthExt<'_> {
+    fn drop(&mut self) {
+        if let Cow::Owned(token) = &mut self.fed_auth_token {
+            token.zeroize();
+        }
+    }
+}
+
 // Manual Debug so the AAD bearer token is never printed. `LoginMessage`'s own
 // Debug redacts the SQL password; this keeps the federated-auth token redacted
 // too (its derived Debug would otherwise leak the full token via that field).
@@ -212,6 +220,17 @@ impl std::fmt::Debug for LoginMessage<'_> {
     }
 }
 
+impl Drop for LoginMessage<'_> {
+    fn drop(&mut self) {
+        if let Cow::Owned(password) = &mut self.password {
+            password.zeroize();
+        }
+        if let Some(sspi) = &mut self.integrated_security {
+            sspi.zeroize();
+        }
+    }
+}
+
 /// Maximum length in characters of the LOGIN7 strings (MS-TDS 2.2.6.4).
 const MAX_FIELD_CHARS: usize = 128;
 
@@ -221,14 +240,27 @@ const FIXED_PART_BYTES: usize = 94;
 
 impl<'a> LoginMessage<'a> {
     pub fn new() -> LoginMessage<'a> {
+        // No `..Default::default()`: it cannot move out of a `Drop` type.
         Self {
+            tds_version: Default::default(),
             packet_size: 4096,
+            client_prog_ver: 0,
+            client_pid: 0,
+            connection_id: 0,
             option_flags_1: OptionFlag1::UseDbNotify | OptionFlag1::InitDbFatal,
             option_flags_2: OptionFlag2::InitLangFatal | OptionFlag2::OdbcDriver,
+            integrated_security: None,
+            type_flags: Default::default(),
             option_flags_3: BitFlags::from_flag(OptionFlag3::UnknownCollationHandling),
-            app_name: "tiberius".into(),
+            client_timezone: 0,
+            client_lcid: 0,
             hostname: Self::get_hostname(),
-            ..Default::default()
+            username: Default::default(),
+            password: Default::default(),
+            app_name: "tiberius".into(),
+            server_name: Default::default(),
+            db_name: Default::default(),
+            fed_auth_ext: None,
         }
     }
 
@@ -795,8 +827,8 @@ mod tests {
 
         assert!(login.option_flags_3.contains(OptionFlag3::ExtensionUsed));
         assert_eq!(
-            login.fed_auth_ext.expect("fed_auto_specified"),
-            FedAuthExt {
+            login.fed_auth_ext.as_ref().expect("fed_auto_specified"),
+            &FedAuthExt {
                 fed_auth_echo: true,
                 fed_auth_token: token.into(),
                 nonce: Some(nonce)
@@ -883,7 +915,11 @@ mod tests {
         let decoded = LoginMessage::decode(&mut payload).expect("decode should succeed");
         assert_eq!(login, decoded);
         assert_eq!(
-            decoded.fed_auth_ext.expect("fed auth ext present").nonce,
+            decoded
+                .fed_auth_ext
+                .as_ref()
+                .expect("fed auth ext present")
+                .nonce,
             None
         );
     }

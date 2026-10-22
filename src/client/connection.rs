@@ -859,9 +859,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                 let (user, mut password) = auth.into_credentials();
 
                 login_message.user_name(user);
-                login_message.password(password.as_str());
+                // Moved, not copied: `LoginMessage` zeroizes it on drop.
+                login_message.password(std::mem::take(&mut *password));
                 let payload = login_message.encode_to_vec()?;
-                password.zeroize();
 
                 let id = self.context.next_packet_id();
                 self = self
