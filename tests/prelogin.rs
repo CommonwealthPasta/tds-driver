@@ -170,3 +170,15 @@ async fn prelogin_with_unknown_options_and_thread_id() {
     let (res, _) = connect(answer, EncryptionLevel::NotSupported, None).await;
     assert!(res.is_ok(), "{res:?}");
 }
+
+/// A rejected instance is reported as such, also when the validity byte is
+/// the last byte of the message.
+#[tokio::test]
+async fn instance_rejected_by_one_byte_instopt() {
+    let answer = prelogin(&[VERSION, (0x01, &[NOT_SUP]), (0x02, &[1])]);
+    let (res, _) = connect(answer, EncryptionLevel::NotSupported, Some("INST")).await;
+    match res {
+        Err(Error::Protocol(msg)) => assert!(msg.contains("rejected"), "{msg}"),
+        other => panic!("expected the instance to be rejected, got {other:?}"),
+    }
+}

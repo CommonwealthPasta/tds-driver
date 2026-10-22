@@ -228,26 +228,26 @@ impl Decode<BytesMut> for PreloginMessage {
     where
         Self: Sized,
     {
-        let mut cursor = Cursor::new(src);
+        let src: &[u8] = src;
+        let mut table = Cursor::new(src);
         let mut ret = PreloginMessage::new();
 
-        // read all options
         loop {
-            let token = cursor.read_u8()?;
+            let token = table.read_u8()?;
 
-            // read until terminator
-            if token == 0xff {
+            if token == PRELOGIN_TERMINATOR {
                 break;
             }
 
-            let offset = cursor.read_u16::<BigEndian>()?;
-            let length = cursor.read_u16::<BigEndian>()?;
-            let old_pos = cursor.position();
+            let offset = table.read_u16::<BigEndian>()? as usize;
+            let length = table.read_u16::<BigEndian>()?;
 
-            cursor.set_position(offset as u64);
+            // Each option is read only from its own bytes.
+            let data = src
+                .get(offset..offset + length as usize)
+                .ok_or_else(|| Error::Protocol("prelogin: option data out of bounds".into()))?;
+            let mut cursor = Cursor::new(data);
 
-            // verify whether the server acts in accordance to what we requested
-            // and if we can handle on what we seemingly agreed to
             match token {
                 // version
                 PRELOGIN_VERSION => {
@@ -261,18 +261,13 @@ impl Decode<BytesMut> for PreloginMessage {
                         Error::Protocol(format!("invalid encryption value: {}", encrypt).into())
                     })?;
                 }
-                // instance name
+                // The server answers with one validity byte, 0 or 1; the
+                // terminating NUL is optional.
                 PRELOGIN_INSTOPT => {
-                    let mut bytes = Vec::new();
-                    let mut next_byte = cursor.read_u8()?;
-
-                    while next_byte != 0x00 {
-                        bytes.push(next_byte);
-                        next_byte = cursor.read_u8()?;
-                    }
+                    let bytes = data.split(|b| *b == 0).next().unwrap_or_default();
 
                     if !bytes.is_empty() {
-                        ret.instance_name = Some(String::from_utf8_lossy(&bytes).into_owned());
+                        ret.instance_name = Some(String::from_utf8_lossy(bytes).into_owned());
                     }
                 }
                 // The server SHOULD send it empty; it is for debugging only.
@@ -287,9 +282,8 @@ impl Decode<BytesMut> for PreloginMessage {
                         ));
                     }
                 }
-                // mars
                 PRELOGIN_MARS => {
-                    ret.mars = cursor.read_u8()? != 0;
+                    ret.mars = data.first().is_some_and(|b| *b != 0);
                 }
                 // activity id
                 PRELOGIN_TRACEID => {
@@ -305,25 +299,17 @@ impl Decode<BytesMut> for PreloginMessage {
                         sequence: cursor.read_u32::<LittleEndian>()?,
                     });
                 }
-                // fed auth
                 PRELOGIN_FEDAUTHREQUIRED => {
-                    ret.fed_auth_required = cursor.read_u8()? != 0;
+                    ret.fed_auth_required = data.first().is_some_and(|b| *b != 0);
                 }
-                // nonce
                 PRELOGIN_NONCEOPT => {
-                    let mut data = [0u8; 32];
-
-                    for item in data.iter_mut() {
-                        *item = cursor.read_u8()?;
-                    }
-
-                    ret.nonce = Some(data);
+                    let mut nonce = [0u8; 32];
+                    cursor.read_exact(&mut nonce)?;
+                    ret.nonce = Some(nonce);
                 }
                 // Options of newer TDS versions; offset and length let us skip them.
                 _ => {}
             }
-
-            cursor.set_position(old_pos);
         }
 
         Ok(ret)
@@ -565,6 +551,34 @@ mod tests {
         ]);
         let decoded = PreloginMessage::decode(&mut buf).unwrap();
         assert_eq!(decoded.thread_id, 7);
+    }
+
+    #[test]
+    fn decode_reads_instopt_without_terminator() {
+        // One validity byte as the last option byte of the message.
+        let mut buf = response(&[(PRELOGIN_VERSION, VERSION), (PRELOGIN_INSTOPT, &[1])]);
+        let decoded = PreloginMessage::decode(&mut buf).expect("1-byte INSTOPT must decode");
+        assert!(decoded.validate_instance(Some("INST")).is_err());
+
+        let mut buf = response(&[(PRELOGIN_INSTOPT, &[0]), (PRELOGIN_VERSION, VERSION)]);
+        let decoded = PreloginMessage::decode(&mut buf).unwrap();
+        assert!(decoded.validate_instance(Some("INST")).is_ok());
+    }
+
+    #[test]
+    fn decode_reads_options_only_from_their_own_bytes() {
+        // An empty MARS option must not read the next option's data.
+        let mut buf = response(&[(PRELOGIN_MARS, &[]), (PRELOGIN_FEDAUTHREQUIRED, &[1])]);
+        let decoded = PreloginMessage::decode(&mut buf).unwrap();
+        assert!(!decoded.mars);
+        assert!(decoded.fed_auth_required);
+
+        // Data past the end of the message is an error, not a panic.
+        let mut buf = BytesMut::from(&[PRELOGIN_MARS, 0x00, 0x06, 0x00, 0x09, 0xff][..]);
+        assert!(matches!(
+            PreloginMessage::decode(&mut buf),
+            Err(Error::Protocol(_))
+        ));
     }
 
     #[cfg(any(

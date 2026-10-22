@@ -125,6 +125,8 @@ that land will be documented here.
 - **`host\INSTANCE,port` connects to `port`,** as documented for mssql-jdbc: the
   instance name no longer goes to the server for validation, and `connect_named`
   skips the SQL Browser (which it used to query on the TCP port).
+- **Prelogin answers:** unknown options are skipped, a non-empty THREADID no
+  longer panics debug builds, and a 1-byte INSTOPT is read correctly.
 - **The TLS handshake survives partial writes:** a flight interrupted by
   `Pending` lost its tail, and flights over 64 KB panicked; flights are now
   split into 4 KB PRELOGIN packets.
