@@ -18,6 +18,32 @@ where
     put_scaled(dst, max_len, scaled as i128, &val)
 }
 
+/// As [`encode`], but exact: rounds to four decimal places half away from
+/// zero, as the server converts decimal to money, without passing through
+/// `f64`.
+pub(crate) fn encode_numeric<B>(dst: &mut B, max_len: usize, num: Numeric) -> crate::Result<()>
+where
+    B: BufMut,
+{
+    let (value, scale) = (num.value(), num.scale() as u32);
+    let scaled = if scale <= 4 {
+        value.checked_mul(10i128.pow(4 - scale))
+    } else {
+        let divisor = 10i128.pow(scale - 4);
+        let (q, r) = (value / divisor, value % divisor);
+        Some(if r.unsigned_abs() * 2 >= divisor.unsigned_abs() {
+            q + value.signum()
+        } else {
+            q
+        })
+    };
+
+    match scaled {
+        Some(scaled) => put_scaled(dst, max_len, scaled, &num),
+        None => Err(out_of_range(max_len, &num)),
+    }
+}
+
 /// `scaled` is the value in 1/10000ths.
 fn put_scaled<B>(
     dst: &mut B,
@@ -175,7 +201,7 @@ mod tests {
             assert!((decode_bytes(&buf) - val).abs() < 1e-3, "val={}", val);
         }
     }
-    /// The scaled integer `encode` wrote, without its length byte.
+    /// The scaled integer `encode`/`encode_numeric` wrote, without its length byte.
     fn scaled_of(bytes: &[u8]) -> i64 {
         match bytes[0] {
             4 => i32::from_le_bytes(bytes[1..5].try_into().unwrap()) as i64,
@@ -211,7 +237,7 @@ mod tests {
         }
     }
 
-    // money's ends are not f64 values.
+    // money's ends are not f64 values; `encode_numeric` covers them.
     #[test]
     fn encode_accepts_the_ends_of_the_range() {
         for (max_len, val, scaled) in [
@@ -221,6 +247,37 @@ mod tests {
             let mut buf = Vec::new();
             encode(&mut buf, max_len, val).unwrap();
             assert_eq!(scaled_of(&buf), scaled, "{val}");
+        }
+    }
+
+    #[test]
+    fn encode_numeric_is_exact_and_range_checked() {
+        let n = Numeric::new_with_scale;
+        // (max_len, value, scaled): f64 cannot tell .5806 from .5807.
+        for (max_len, num, scaled) in [
+            (8, n(9223372036854775806, 4), 9223372036854775806i64),
+            (8, n(i64::MIN as i128, 4), i64::MIN),
+            (4, n(2147483647, 4), i32::MAX as i64),
+            (8, n(15, 1), 15000),
+            (8, n(-7, 0), -70000),
+            // Half away from zero.
+            (8, n(12345, 5), 1235),
+            (8, n(-12345, 5), -1235),
+            (8, n(12344, 5), 1234),
+        ] {
+            let mut buf = Vec::new();
+            encode_numeric(&mut buf, max_len, num).unwrap();
+            assert_eq!(scaled_of(&buf), scaled, "{num}");
+        }
+
+        for (max_len, num) in [
+            (8, n(9223372036854775808, 4)),
+            (4, n(2147483648, 4)),
+            (4, n(300000, 0)),
+            (8, n(10i128.pow(37), 0)),
+        ] {
+            let err = encode_numeric(&mut Vec::new(), max_len, num).unwrap_err();
+            assert!(matches!(err, Error::Conversion(_)), "{num}: {err:?}");
         }
     }
 }

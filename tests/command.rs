@@ -353,6 +353,50 @@ where
 }
 
 #[test_on_runtimes]
+async fn tvp_money_is_exact_from_numeric<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let (db_type, proc) = money_tvp(&mut conn, "money").await?;
+
+    // (sent, stored): f64 would turn .5806 into .5807, the saturated maximum.
+    let cases = [
+        (
+            Numeric::new_with_scale(9223372036854775806, 4),
+            "922337203685477.5806",
+        ),
+        (Numeric::new_with_scale(12345, 5), "0.1235"),
+        (Numeric::new_with_scale(-12345, 5), "-0.1235"),
+    ];
+
+    for (sent, stored) in cases {
+        let mut cmd = Command::new(&proc);
+        cmd.bind_table_with_dbtype("@t", &db_type, vec![MoneyRow { m: sent }]);
+        let result = cmd.exec(&mut conn).await?.into_command_result().await?;
+        let rows = result.to_query_result(0).unwrap();
+        assert_eq!(Some(stored), rows[0].get::<&str, _>(0), "{sent}");
+    }
+
+    // The rounding matches the server's own decimal-to-money conversion.
+    let row = conn
+        .simple_query(
+            "select convert(varchar(40), cast(cast(0.12345 as decimal(10,5)) as money), 2), \
+                    convert(varchar(40), cast(cast(-0.12345 as decimal(10,5)) as money), 2)",
+        )
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+    assert_eq!(Some("0.1235"), row.get::<&str, _>(0));
+    assert_eq!(Some("-0.1235"), row.get::<&str, _>(1));
+
+    conn.simple_query(format!("drop procedure {proc}; drop type dbo.[{db_type}]"))
+        .await?;
+
+    Ok(())
+}
+
+#[test_on_runtimes]
 async fn tvp_smallmoney_out_of_range_is_an_error<S>(mut conn: tiberius::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,

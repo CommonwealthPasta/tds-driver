@@ -103,6 +103,10 @@ that land will be documented here.
 - chrono and `time` dates before year 1 no longer panic in `to_sql`/`into_sql`,
   nor does a `time::OffsetDateTime` whose UTC date passes 9999-12-31; dates
   outside 0001-01-01..9999-12-31 fail the query with `Error::Conversion`.
+- money/smallmoney TVP and bulk values out of range (or NaN) are an
+  `Error::Conversion` instead of silently saturating (smallmoney 300000 was
+  stored as 214748.3647). A `Numeric` is converted exactly instead of through
+  `f64`.
 
 ### Changed
 
