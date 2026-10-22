@@ -301,8 +301,17 @@ impl<'a> Encode<BytesMut> for TokenColMetaData<'a> {
 
 impl<'a> Encode<BytesMut> for MetaDataColumn<'a> {
     fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
+        let long = matches!(&self.base.ty, TypeInfo::VarLenSized(cx)
+            if matches!(cx.r#type(), VarLenType::Text | VarLenType::NText | VarLenType::Image));
+
         dst.put_u32_le(0);
         self.base.encode(dst)?;
+
+        if long {
+            // TableName. SqlClient's WriteBulkCopyMetaData sends one
+            // US_VARCHAR here, not the NumParts list the server sends.
+            dst.put_u16_le(0);
+        }
 
         let len_pos = dst.len();
         let mut length = 0u8;
@@ -929,6 +938,25 @@ mod tests {
     fn display_quotes_the_column_name() {
         let m = meta(TypeInfo::FixedLen(FixedLenType::Int4), "a]b");
         assert_eq!(format!("{m}"), "[a]]b] int");
+    }
+
+    #[test]
+    fn text_column_metadata_carries_a_table_name() {
+        let text = meta(
+            TypeInfo::VarLenSized(VarLenContext::new(
+                VarLenType::Text,
+                2147483647,
+                Some(Collation::new(13632521, 52)),
+            )),
+            "c",
+        );
+        let mut buf = BytesMut::new();
+        text.encode(&mut buf).unwrap();
+
+        // user type 4, flags 2, type 1, length 4, collation 5, table name 2,
+        // column name 1 + 2.
+        assert_eq!(buf.len(), 21);
+        assert_eq!(&buf[16..18], &[0, 0]);
     }
 
     #[test]

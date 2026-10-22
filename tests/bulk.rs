@@ -645,6 +645,50 @@ where
 }
 
 #[test_on_runtimes]
+async fn bulk_load_text_ntext_image<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    assert_bulk(
+        &mut conn,
+        vec![
+            (
+                "TEXT",
+                "hello".into_sql(),
+                "CAST(v AS varchar(10))",
+                "hello",
+            ),
+            (
+                "NTEXT NOT NULL",
+                "h\u{e9}llo".into_sql(),
+                "CAST(v AS nvarchar(10))",
+                "h\u{e9}llo",
+            ),
+            (
+                "NTEXT",
+                "x".repeat(10_000).into_sql(),
+                "DATALENGTH(v)",
+                "20000",
+            ),
+            ("IMAGE", vec![1u8, 2, 3].into_sql(), "DATALENGTH(v)", "3"),
+            (
+                "TEXT",
+                None::<&str>.into_sql(),
+                "ISNULL(CAST(v AS varchar(10)), 'NULL')",
+                "NULL",
+            ),
+            (
+                "IMAGE",
+                None::<Vec<u8>>.into_sql(),
+                "ISNULL(CAST(DATALENGTH(v) AS varchar(10)), 'NULL')",
+                "NULL",
+            ),
+        ],
+    )
+    .await
+}
+
+#[test_on_runtimes]
 async fn bulk_load_escapes_column_names<S>(mut conn: tiberius::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,

@@ -687,13 +687,7 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                 if vlc.r#type() == VarLenType::Text || vlc.r#type() == VarLenType::NText =>
             {
                 if let Some(str) = opt {
-                    // TEXT/NTEXT row values carry a text pointer and a timestamp
-                    // ahead of the payload. The server ignores the values we
-                    // supply on bulk-load, so send a fixed-size dummy pointer
-                    // and timestamp.
-                    dst.put_u8(16); // text pointer length
-                    dst.extend_from_slice(&[0u8; 16]); // text pointer
-                    dst.extend_from_slice(&[0u8; 8]); // timestamp
+                    put_text_pointer(dst);
 
                     if vlc.r#type() == VarLenType::Text {
                         let bytes = encode_in_collation(&str, vlc)?;
@@ -717,6 +711,17 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                     }
                 } else {
                     // NULL: zero-length text pointer
+                    dst.put_u8(0);
+                }
+            }
+            (ColumnData::Binary(opt), Some(TypeInfo::VarLenSized(vlc)))
+                if vlc.r#type() == VarLenType::Image =>
+            {
+                if let Some(bytes) = opt {
+                    put_text_pointer(dst);
+                    dst.put_u32_le(bytes.len() as u32);
+                    dst.extend_from_slice(&bytes);
+                } else {
                     dst.put_u8(0);
                 }
             }
@@ -1037,6 +1042,13 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
 
         Ok(())
     }
+}
+
+/// The text pointer and timestamp SqlBulkCopy sends ahead of a text, ntext
+/// or image value; the server ignores both.
+fn put_text_pointer(dst: &mut BytesMutWithTypeInfo<'_>) {
+    dst.put_u8(16);
+    dst.extend_from_slice(&[0xff; 24]);
 }
 
 /// Reads a [`ColumnData`] straight out of a row without any conversion,
@@ -2472,5 +2484,14 @@ mod tests {
             ColumnData::Binary(Some(vec![7u8; 70_000].into())),
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn bulk_image() {
+        let ti = TypeInfo::VarLenSized(VarLenContext::new(VarLenType::Image, 0x7fff_ffff, None));
+        test_round_trip(ti.clone(), ColumnData::Binary(Some(vec![1u8, 2, 3].into()))).await;
+
+        let buf = encode_with_ti(&ti, ColumnData::Binary(None)).unwrap();
+        assert_eq!(&buf[..], &[0]);
     }
 }

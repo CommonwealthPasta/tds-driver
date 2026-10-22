@@ -153,6 +153,8 @@ that land will be documented here.
   4875); values are truncated to the column's scale, as SqlClient does.
 - **Bulk insert into `nvarchar(n)` with 2001 ≤ n ≤ 4000** (error 4816) and
   `nchar(n)` declared twice its length.
+- **Bulk insert into `text`, `ntext` and `image` columns** (error 4804, `image`
+  unsupported).
 - **`INSERT BULK` column names are quoted with `]` doubled** (a column named
   `we]ird` broke the statement).
 
