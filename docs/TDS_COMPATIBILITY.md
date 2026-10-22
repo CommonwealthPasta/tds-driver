@@ -44,7 +44,7 @@ standard query, bulk-load, RPC, or transaction path depends on.
 | SSPI (0x11) | ✅ |
 | FedAuth token | ✅ via LOGIN7 FeatureExt |
 | Attention / cancel (0x06) | ✅ (`Client::cancel_query`) |
-| Transaction Manager request (0x14) | ✅ (`begin`/`commit`/`rollback` with isolation levels) |
+| Transaction Manager request (0x0E) | ✅ (`begin`/`commit`/`rollback`/`save` with isolation levels) |
 
 ### Server → client tokens
 | Token | Status |

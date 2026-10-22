@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 uint_enum! {
     /// The request type of a Transaction Manager request, as defined in
-    /// MS-TDS 2.2.6.8 (`TM_*` request kinds).
+    /// MS-TDS 2.2.6.9 (`TM_*` request kinds).
     #[repr(u16)]
     pub enum TransactionManagerRequestType {
         /// Get the address of the Distributed Transaction Coordinator.
@@ -26,7 +26,7 @@ uint_enum! {
 
 uint_enum! {
     /// The transaction isolation level requested when beginning a transaction
-    /// through a Transaction Manager request (MS-TDS 2.2.6.8).
+    /// through a Transaction Manager request (MS-TDS 2.2.6.9).
     #[repr(u8)]
     pub enum IsolationLevel {
         /// Use the server's default isolation level.
@@ -44,7 +44,7 @@ uint_enum! {
     }
 }
 
-/// A Transaction Manager request (packet type `0x14`, MS-TDS 2.2.6.8).
+/// A Transaction Manager request (packet type `0x0E`, MS-TDS 2.2.6.9).
 ///
 /// These requests let the client begin, commit, roll back or create a
 /// savepoint in a transaction directly through the TDS protocol instead of

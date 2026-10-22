@@ -529,7 +529,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     }
 
     /// Begins a new transaction using a Transaction Manager request
-    /// (`TM_BEGIN_XACT`, MS-TDS 2.2.6.8) instead of a `BEGIN TRAN` T-SQL
+    /// (`TM_BEGIN_XACT`, MS-TDS 2.2.6.9) instead of a `BEGIN TRAN` T-SQL
     /// batch.
     ///
     /// On success the server replies with a `BeginTransaction` environment
@@ -550,7 +550,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     }
 
     /// Begins a new transaction with an explicit isolation level using a
-    /// Transaction Manager request (`TM_BEGIN_XACT`, MS-TDS 2.2.6.8).
+    /// Transaction Manager request (`TM_BEGIN_XACT`, MS-TDS 2.2.6.9).
     ///
     /// See [`begin_transaction`] for details on transaction scoping.
     ///
@@ -569,7 +569,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     }
 
     /// Commits the active transaction using a Transaction Manager request
-    /// (`TM_COMMIT_XACT`, MS-TDS 2.2.6.8).
+    /// (`TM_COMMIT_XACT`, MS-TDS 2.2.6.9).
     ///
     /// After a successful commit the connection is no longer scoped to a
     /// transaction.
@@ -583,7 +583,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     }
 
     /// Rolls back the active transaction using a Transaction Manager request
-    /// (`TM_ROLLBACK_XACT`, MS-TDS 2.2.6.8).
+    /// (`TM_ROLLBACK_XACT`, MS-TDS 2.2.6.9).
     ///
     /// After a successful rollback the connection is no longer scoped to a
     /// transaction.
@@ -597,7 +597,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
     }
 
     /// Creates a named savepoint in the active transaction using a Transaction
-    /// Manager request (`TM_SAVE_XACT`, MS-TDS 2.2.6.8).
+    /// Manager request (`TM_SAVE_XACT`, MS-TDS 2.2.6.9).
     ///
     /// The savepoint can later be targeted by a T-SQL `ROLLBACK TRANSACTION
     /// <name>` to undo work performed after it while keeping the surrounding
