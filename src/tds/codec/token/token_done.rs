@@ -64,6 +64,16 @@ impl TokenDone {
         self.status.contains(DoneStatus::Attention)
     }
 
+    /// DONE_ERROR: the statement failed.
+    pub(crate) fn is_error(&self) -> bool {
+        self.status.contains(DoneStatus::Error)
+    }
+
+    /// DONE_SRVERROR: an error severe enough to discard the results.
+    pub(crate) fn is_server_error(&self) -> bool {
+        self.status.contains(DoneStatus::SrvError)
+    }
+
     /// The statement's "records affected" count, as SqlClient's
     /// `ExecuteNonQuery` counts it: present only when DONE_COUNT is set
     /// (MS-TDS 2.2.7.6) and CurCmd is not SELECT (`TdsParser.TryProcessDone`).

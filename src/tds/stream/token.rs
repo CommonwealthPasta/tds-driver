@@ -79,12 +79,38 @@ impl ServerMessages {
         }
     }
 
+    /// As SqlClient's `TdsParser.TryProcessDone`: DONE_ERROR with no ERROR
+    /// token so far fails the response with a class 11 error, DONE_SRVERROR
+    /// always adds a class 20 one.
+    fn done(&mut self, done: &TokenDone) {
+        if done.is_error() && self.first_error.is_none() {
+            self.error(severe_error(11));
+        }
+        if done.is_server_error() {
+            self.error(severe_error(20));
+        }
+    }
+
     fn into_error(self) -> Option<Error> {
         let mut error = self.first_error?;
         if !self.related.is_empty() {
             error.related = Some(Box::new(self.related));
         }
         Some(Error::Server(error))
+    }
+}
+
+/// SqlClient's error for a DONE that reports one (`SQLMessage.SevereError`).
+fn severe_error(class: u8) -> TokenError {
+    TokenError {
+        code: 0,
+        state: 0,
+        class,
+        message: "A severe error occurred on the current command.  The results, if any, should be discarded.".into(),
+        server: "".into(),
+        procedure: "".into(),
+        line: 0,
+        related: None,
     }
 }
 
@@ -420,6 +446,11 @@ where
             if done.is_attention() {
                 self.conn.attention_acknowledged();
             }
+            // A request cancelled in a WAITFOR ends in DONE_ERROR without an
+            // ERROR token; cancelling is not an error here.
+            if (done.is_error() || done.is_server_error()) && !self.conn.is_cancelled() {
+                self.messages.get_or_insert_default().done(done);
+            }
         }
 
         Ok(Some(token))
@@ -474,6 +505,7 @@ mod tests {
     use crate::sql_read_bytes::test_utils::IntoSqlReadBytes;
     use crate::tds::codec::{DoneStatus, FeatureLevel};
     use bytes::{BufMut, BytesMut};
+    use enumflags2::BitFlags;
 
     fn error(code: u32, message: &str) -> TokenError {
         TokenError {
@@ -547,6 +579,61 @@ mod tests {
         };
         assert_eq!(err.other_errors().len(), MAX_RELATED_MESSAGES);
         assert_eq!(err.info_messages().len(), MAX_RELATED_MESSAGES);
+    }
+
+    fn done(status: BitFlags<DoneStatus>) -> TokenDone {
+        TokenDone::new(status, 0xC1, 0)
+    }
+
+    #[test]
+    fn done_error_without_an_error_token_fails_the_response() {
+        let mut messages = ServerMessages::default();
+        messages.info(&info(0, "note"));
+        messages.done(&done(DoneStatus::More | DoneStatus::Error));
+        messages.done(&done(DoneStatus::Error.into()));
+
+        let Some(Error::Server(err)) = messages.into_error() else {
+            panic!("expected a server error");
+        };
+        assert_eq!((err.code(), err.class()), (0, 11));
+        assert_eq!(err.message(), severe_error(11).message());
+        assert!(err.other_errors().is_empty(), "one per response");
+        assert_eq!(err.info_messages().len(), 1);
+    }
+
+    #[test]
+    fn done_error_after_an_error_token_adds_nothing() {
+        let mut messages = ServerMessages::default();
+        messages.error(error(208, "Invalid object name"));
+        messages.done(&done(DoneStatus::Error.into()));
+        assert_eq!(
+            messages.into_error(),
+            Some(Error::Server(error(208, "Invalid object name")))
+        );
+    }
+
+    #[test]
+    fn done_srverror_always_adds_a_class_20_error() {
+        let mut messages = ServerMessages::default();
+        messages.done(&done(DoneStatus::SrvError.into()));
+        assert_eq!(messages.into_error(), Some(Error::Server(severe_error(20))));
+
+        let mut messages = ServerMessages::default();
+        messages.error(error(208, "Invalid object name"));
+        messages.done(&done(DoneStatus::Error | DoneStatus::SrvError));
+        let Some(Error::Server(err)) = messages.into_error() else {
+            panic!("expected a server error");
+        };
+        assert_eq!(err.code(), 208);
+        assert_eq!(err.other_errors(), [severe_error(20)]);
+    }
+
+    #[test]
+    fn plain_dones_add_nothing() {
+        let mut messages = ServerMessages::default();
+        messages.done(&done(DoneStatus::Count | DoneStatus::More));
+        messages.done(&done(DoneStatus::Attention.into()));
+        assert!(messages.into_error().is_none());
     }
 
     #[tokio::test]

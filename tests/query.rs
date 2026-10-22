@@ -3128,6 +3128,27 @@ where
     let infos: Vec<_> = err.info_messages().iter().map(|e| e.message()).collect();
     assert_eq!(infos, ["before", "notice"]);
 
+    // A DONE_ERROR without an ERROR token fails a request; the server sends
+    // neither for an error that TRY...CATCH handles.
+    let results = conn
+        .simple_query(
+            "SET XACT_ABORT ON; \
+             BEGIN TRY SELECT 1 / 0 END TRY BEGIN CATCH SELECT ERROR_NUMBER() END CATCH; \
+             BEGIN TRY BEGIN TRAN; RAISERROR('x', 16, 1) END TRY \
+             BEGIN CATCH ROLLBACK; SELECT ERROR_NUMBER() END CATCH; \
+             BEGIN TRY EXEC('SELECT * FROM no_such_table') END TRY BEGIN CATCH SELECT ERROR_NUMBER() END CATCH; \
+             BEGIN TRY ;THROW 50001, 'y', 1 END TRY BEGIN CATCH SELECT ERROR_NUMBER() END CATCH; \
+             SET XACT_ABORT OFF",
+        )
+        .await?
+        .into_results()
+        .await?;
+    let numbers: Vec<_> = results
+        .iter()
+        .filter_map(|r| r.first().and_then(|row| row.get::<i32, _>(0)))
+        .collect();
+    assert_eq!(numbers, [8134, 50000, 208, 50001]);
+
     // The connection is still in step.
     let row = conn
         .query("SELECT 1", &[])

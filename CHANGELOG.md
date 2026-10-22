@@ -69,6 +69,10 @@ that land will be documented here.
   `Error::Server` still carries the first error; `TokenError::other_errors` and
   `TokenError::info_messages` (new) return the rest of the response's ERROR and
   INFO tokens.
+- **A DONE with DONE_ERROR and no ERROR token fails the request**, with
+  SqlClient's class 11 "A severe error occurred" error, and DONE_SRVERROR adds a
+  class 20 one; both were ignored. A cancelled request still ends without an
+  error. *Behavior change*.
 - **`DateTime<Utc>` from a `datetimeoffset` is no longer shifted by the
   offset.**
 - **`try_get::<rust_decimal::Decimal>` returns a conversion error instead of
