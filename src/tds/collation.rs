@@ -120,7 +120,11 @@ pub(crate) fn encode_oem(table: &[char; 128], s: &str) -> crate::Result<Vec<u8>>
                 .iter()
                 .position(|&t| t == c)
                 .map(|i| 0x80 + i as u8)
-                .ok_or_else(|| Error::Encoding("unrepresentable character".into())),
+                .ok_or_else(|| {
+                    Error::Encoding(
+                        format!("{c:?} has no representation in the OEM code page").into(),
+                    )
+                }),
         })
         .collect()
 }

@@ -60,8 +60,8 @@ pub(crate) fn decode_varchar(buf: Vec<u8>, collation: &Collation) -> crate::Resu
 
 /// Encodes `s` in the collation's code page; a character it lacks is an error.
 pub(crate) fn encode_varchar(s: &str, collation: &Collation) -> crate::Result<Vec<u8>> {
-    let mut encoder = match collation.charset()? {
-        Charset::Encoding(encoding) => encoding.new_encoder(),
+    let (encoding, mut encoder) = match collation.charset()? {
+        Charset::Encoding(encoding) => (encoding, encoding.new_encoder()),
         Charset::Oem(table) => return encode_oem(table, s),
     };
     let len = encoder
@@ -70,9 +70,9 @@ pub(crate) fn encode_varchar(s: &str, collation: &Collation) -> crate::Result<Ve
     let mut bytes = Vec::with_capacity(len);
     let (res, _) = encoder.encode_from_utf8_to_vec_without_replacement(s, &mut bytes, true);
     match res {
-        encoding_rs::EncoderResult::Unmappable(_) => {
-            Err(Error::Encoding("unrepresentable character".into()))
-        }
+        encoding_rs::EncoderResult::Unmappable(c) => Err(Error::Encoding(
+            format!("{c:?} has no representation in {}", encoding.name()).into(),
+        )),
         _ => Ok(bytes),
     }
 }
