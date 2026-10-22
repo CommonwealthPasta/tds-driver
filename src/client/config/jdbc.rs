@@ -21,14 +21,35 @@ impl ConfigString for JdbcConfig {
         self.config.properties().get(key).map(|v| v.as_str())
     }
 
+    /// The `serverName`, `instanceName` and `portNumber` properties override
+    /// the URL prefix, as mssql-jdbc takes the last occurrence of a property.
     fn server(&self) -> crate::Result<ServerDefinition> {
-        let def = ServerDefinition {
-            host: self.config.server_name().map(|s| s.to_string()),
-            port: self.config.port(),
-            instance: self.config.instance_name().map(|s| s.to_string()),
+        let host = self
+            .first(&["servername", "server"])
+            .or(self.config.server_name());
+
+        // mssql-jdbc accepts `host\instance` in the serverName property.
+        let (host, url_instance) = match host.map(|h| h.split_once('\\')) {
+            Some(Some((host, instance))) => (Some(host), Some(instance)),
+            Some(None) => (host, None),
+            None => (None, None),
         };
 
-        Ok(def)
+        let instance = self
+            .get("instancename")
+            .or(url_instance)
+            .or(self.config.instance_name());
+
+        let port = match self.first(&["portnumber", "port"]) {
+            Some(port) => Some(port.trim().parse()?),
+            None => self.config.port(),
+        };
+
+        Ok(ServerDefinition {
+            host: host.map(str::to_owned),
+            port,
+            instance: instance.map(str::to_owned),
+        })
     }
 }
 
@@ -331,6 +352,44 @@ mod tests {
 
         assert_eq!(Some("meow".into()), jdbc.application_name());
 
+        Ok(())
+    }
+
+    #[test]
+    fn server_properties_are_used() -> crate::Result<()> {
+        let jdbc: JdbcConfig =
+            "jdbc:sqlserver://;serverName=db.example.com;portNumber=2345;instanceName=INST"
+                .parse()?;
+        let server = jdbc.server()?;
+        assert_eq!(Some("db.example.com".to_string()), server.host);
+        assert_eq!(Some(2345), server.port);
+        assert_eq!(Some("INST".to_string()), server.instance);
+
+        let jdbc: JdbcConfig = "jdbc:sqlserver://;server=h;port=7".parse()?;
+        let server = jdbc.server()?;
+        assert_eq!(Some("h".to_string()), server.host);
+        assert_eq!(Some(7), server.port);
+
+        // connection-string's lexer needs `\` inside braces.
+        let jdbc: JdbcConfig = r"jdbc:sqlserver://;serverName={h\INST}".parse()?;
+        let server = jdbc.server()?;
+        assert_eq!(Some("h".to_string()), server.host);
+        assert_eq!(Some("INST".to_string()), server.instance);
+
+        // A property overrides the URL prefix.
+        let jdbc: JdbcConfig = r"jdbc:sqlserver://a\X:1;serverName=b;portNumber=2".parse()?;
+        let server = jdbc.server()?;
+        assert_eq!(Some("b".to_string()), server.host);
+        assert_eq!(Some(2), server.port);
+        assert_eq!(Some("X".to_string()), server.instance);
+
+        let jdbc: JdbcConfig = "jdbc:sqlserver://h;portNumber=x".parse()?;
+        assert!(jdbc.server().is_err());
+
+        let config = crate::Config::from_jdbc_string(
+            "jdbc:sqlserver://;serverName=db.example.com;portNumber=2345",
+        )?;
+        assert_eq!("db.example.com:2345", config.get_addr());
         Ok(())
     }
 }

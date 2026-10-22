@@ -117,6 +117,8 @@ that land will be documented here.
   `Mandatory`/`Optional`.
 - **`TrustServerCertificate=true` with `TrustServerCertificateCA`** returns an
   error from `from_ado_string`/`from_jdbc_string` instead of panicking.
+- **JDBC `serverName`/`server`, `portNumber`/`port` and `instanceName`
+  properties** are honoured instead of falling back to `localhost:1433`.
 
 ### Changed
 
