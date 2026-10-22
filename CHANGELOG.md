@@ -81,6 +81,8 @@ that land will be documented here.
 - **`Numeric::precision()` no longer counts a leading zero** (0.5 is 1, not 2),
   so a `decimal(38,38)` value is 38, not 39, and can be sent back as a
   parameter.
+- **`datetime` is rounded to the millisecond, not truncated** (`.997` was read
+  as `.996666…`), for both chrono and time, as SqlClient does.
 
 ### Changed
 

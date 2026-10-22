@@ -40,16 +40,52 @@ fn nanos_from_increments(increments: u64, scale: u8) -> i64 {
         .min(i64::MAX as u64) as i64
 }
 
-#[inline]
-fn from_sec_fragments(sec_fragments: i64) -> NaiveTime {
-    NaiveTime::from_hms_opt(0, 0, 0).unwrap()
-        + chrono::Duration::nanoseconds(sec_fragments * (1e9 as i64) / 300)
+fn from_millis(ms: u32) -> crate::Result<NaiveTime> {
+    NaiveTime::from_num_seconds_from_midnight_opt(ms / 1000, ms % 1000 * 1_000_000)
+        .ok_or_else(|| crate::Error::Conversion(format!("{ms} ms is past midnight").into()))
+}
+
+fn from_datetime(dt: super::DateTime) -> crate::Result<NaiveDateTime> {
+    let time = from_millis(dt.millis_of_day()?)?;
+    Ok(NaiveDateTime::new(from_days(dt.days() as i64, 1900), time))
 }
 
 #[inline]
 #[cfg(feature = "tds73")]
 fn from_mins(mins: u32) -> NaiveTime {
     NaiveTime::from_num_seconds_from_midnight_opt(mins, 0).unwrap()
+}
+
+impl<'a> crate::FromSql<'a> for NaiveDateTime {
+    fn from_sql(data: &'a ColumnData<'static>) -> crate::Result<Option<Self>> {
+        match data {
+            ColumnData::DateTime(dt) => dt.map(from_datetime).transpose(),
+            #[cfg(feature = "tds73")]
+            ColumnData::SmallDateTime(dt) => Ok(dt.map(|dt| {
+                NaiveDateTime::new(
+                    from_days(dt.days as i64, 1900),
+                    from_mins(dt.seconds_fragments as u32 * 60),
+                )
+            })),
+            #[cfg(feature = "tds73")]
+            ColumnData::DateTime2(dt) => Ok(dt.map(|dt| {
+                let ns = nanos_from_increments(dt.time.increments, dt.time.scale);
+                NaiveDateTime::new(
+                    from_days(dt.date.days() as i64, 1),
+                    NaiveTime::MIN + chrono::Duration::nanoseconds(ns),
+                )
+            })),
+            _ => Err(crate::Error::Conversion(
+                format!("cannot interpret {:?} as an NaiveDateTime value", data).into(),
+            )),
+        }
+    }
+}
+
+impl crate::FromSqlOwned for NaiveDateTime {
+    fn from_sql_owned(data: ColumnData<'static>) -> crate::Result<Option<Self>> {
+        <Self as crate::FromSql>::from_sql(&data)
+    }
 }
 
 #[inline]
@@ -70,19 +106,6 @@ fn to_sec_fragments(time: NaiveTime) -> i64 {
 
 #[cfg(feature = "tds73")]
 from_sql!(
-    NaiveDateTime:
-        ColumnData::SmallDateTime(ref dt) => dt.map(|dt| NaiveDateTime::new(
-            from_days(dt.days as i64, 1900),
-            from_mins(dt.seconds_fragments as u32 * 60),
-        )),
-        ColumnData::DateTime2(ref dt) => dt.map(|dt| NaiveDateTime::new(
-            from_days(dt.date.days() as i64, 1),
-            NaiveTime::from_hms_opt(0,0,0).unwrap() + chrono::Duration::nanoseconds(nanos_from_increments(dt.time.increments, dt.time.scale))
-        )),
-        ColumnData::DateTime(ref dt) => dt.map(|dt| NaiveDateTime::new(
-            from_days(dt.days as i64, 1900),
-            from_sec_fragments(dt.seconds_fragments as i64)
-        ));
     NaiveTime:
         ColumnData::Time(ref time) => time.map(|time| {
             let ns = nanos_from_increments(time.increments, time.scale);
@@ -249,15 +272,6 @@ into_sql!(self_,
         });
 );
 
-#[cfg(not(feature = "tds73"))]
-from_sql!(
-    NaiveDateTime:
-        ColumnData::DateTime(ref dt) => dt.map(|dt| NaiveDateTime::new(
-            from_days(dt.days as i64, 1900),
-            from_sec_fragments(dt.seconds_fragments as i64)
-        ))
-);
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,12 +288,34 @@ mod tests {
     }
 
     #[test]
-    fn from_sec_fragments_converts() {
-        // 300 sec-fragments (1/300 s units) == exactly one second.
+    fn datetime_rounds_to_the_millisecond() {
+        let get = |ticks| {
+            let cd = ColumnData::DateTime(Some(crate::tds::time::DateTime::new(0, ticks)));
+            NaiveDateTime::from_sql(&cd).unwrap().unwrap().time()
+        };
+        assert_eq!(get(300), NaiveTime::from_hms_opt(0, 0, 1).unwrap());
         assert_eq!(
-            from_sec_fragments(300),
-            NaiveTime::from_hms_opt(0, 0, 1).unwrap()
+            get(299),
+            NaiveTime::from_hms_milli_opt(0, 0, 0, 997).unwrap()
         );
+        assert_eq!(get(2), NaiveTime::from_hms_milli_opt(0, 0, 0, 7).unwrap());
+        assert_eq!(
+            get(25919999),
+            NaiveTime::from_hms_milli_opt(23, 59, 59, 997).unwrap()
+        );
+    }
+
+    #[test]
+    fn out_of_range_times_are_conversion_errors() {
+        use crate::tds::time::DateTime;
+        use crate::FromSqlOwned;
+
+        let dt = ColumnData::DateTime(Some(DateTime::new(0, 300 * 86_400)));
+        assert!(matches!(
+            NaiveDateTime::from_sql(&dt),
+            Err(crate::Error::Conversion(_))
+        ));
+        assert!(NaiveDateTime::from_sql_owned(dt).is_err());
     }
 
     #[cfg(feature = "tds73")]

@@ -227,3 +227,52 @@ where
 
     Ok(())
 }
+
+#[cfg(any(feature = "chrono", feature = "time"))]
+const DATETIMES: &str = "SELECT v, CONVERT(varchar(30), v, 121) FROM (VALUES \
+    (CAST('2023-01-01 12:34:56.997' AS datetime)), (CAST('2023-01-01 12:34:56.003' AS datetime)), \
+    (CAST('2023-01-01 12:34:56.007' AS datetime)), (CAST('9999-12-31 23:59:59.997' AS datetime)), \
+    (CAST('1753-01-01 00:00:00.000' AS datetime))) t(v)";
+
+#[cfg(feature = "chrono")]
+#[test_on_runtimes]
+async fn chrono_datetime_rounds_to_milliseconds<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    for r in rows(&mut conn, DATETIMES).await? {
+        let d: chrono::NaiveDateTime = r.get(0).unwrap();
+        let server: &str = r.get(1).unwrap();
+        assert_eq!(
+            d.format("%Y-%m-%d %H:%M:%S%.9f").to_string(),
+            format!("{server}000000")
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "time")]
+#[test_on_runtimes]
+async fn time_datetime_rounds_to_milliseconds<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    for r in rows(&mut conn, DATETIMES).await? {
+        let d: time::PrimitiveDateTime = r.get(0).unwrap();
+        let server: &str = r.get(1).unwrap();
+        let mine = format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:09}",
+            d.year(),
+            d.month() as u8,
+            d.day(),
+            d.hour(),
+            d.minute(),
+            d.second(),
+            d.nanosecond()
+        );
+        assert_eq!(mine, format!("{server}000000"));
+    }
+
+    Ok(())
+}

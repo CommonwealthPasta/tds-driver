@@ -4,6 +4,7 @@
 //! The time library offers better ergonomy and are highly recommended if
 //! needing to modify and deal with date and time in SQL Server.
 
+#[cfg(feature = "tds73")]
 use std::time::Duration;
 pub use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
 
@@ -36,15 +37,53 @@ fn nanos_from_increments(increments: u64, scale: u8) -> u64 {
     increments.saturating_mul(10u64.saturating_pow(pow))
 }
 
+fn from_millis(ms: u32) -> crate::Result<Time> {
+    let err = || crate::Error::Conversion(format!("{ms} ms is past midnight").into());
+    let hour = u8::try_from(ms / 3_600_000).map_err(|_| err())?;
+    let (min, sec, milli) = (ms / 60_000 % 60, ms / 1000 % 60, ms % 1000);
+
+    Time::from_hms_milli(hour, min as u8, sec as u8, milli as u16).map_err(|_| err())
+}
+
+fn from_datetime(dt: super::DateTime) -> crate::Result<PrimitiveDateTime> {
+    let time = from_millis(dt.millis_of_day()?)?;
+    Ok(from_days(dt.days() as i64, 1900).with_time(time))
+}
+
 #[inline]
 #[cfg(feature = "tds73")]
 fn from_secs(secs: u64) -> Time {
     Time::from_hms(0, 0, 0).unwrap() + Duration::from_secs(secs)
 }
 
-#[inline]
-fn from_sec_fragments(sec_fragments: u64) -> Time {
-    Time::from_hms(0, 0, 0).unwrap() + Duration::from_nanos(sec_fragments * (1e9 as u64) / 300)
+impl<'a> crate::FromSql<'a> for PrimitiveDateTime {
+    fn from_sql(data: &'a ColumnData<'static>) -> crate::Result<Option<Self>> {
+        match data {
+            ColumnData::DateTime(dt) => dt.map(from_datetime).transpose(),
+            #[cfg(feature = "tds73")]
+            ColumnData::SmallDateTime(dt) => Ok(dt.map(|dt| {
+                PrimitiveDateTime::new(
+                    from_days(dt.days as i64, 1900),
+                    from_secs(dt.seconds_fragments as u64 * 60),
+                )
+            })),
+            #[cfg(feature = "tds73")]
+            ColumnData::DateTime2(dt) => Ok(dt.map(|dt| {
+                let ns = nanos_from_increments(dt.time.increments, dt.time.scale);
+                from_days(dt.date.days() as i64, 1)
+                    .with_time(Time::MIDNIGHT + Duration::from_nanos(ns))
+            })),
+            _ => Err(crate::Error::Conversion(
+                format!("cannot interpret {:?} as an PrimitiveDateTime value", data).into(),
+            )),
+        }
+    }
+}
+
+impl crate::FromSqlOwned for PrimitiveDateTime {
+    fn from_sql_owned(data: ColumnData<'static>) -> crate::Result<Option<Self>> {
+        <Self as crate::FromSql>::from_sql(&data)
+    }
 }
 
 #[inline]
@@ -65,19 +104,6 @@ fn to_sec_fragments(from: Time) -> i64 {
 
 #[cfg(feature = "tds73")]
 from_sql!(
-    PrimitiveDateTime:
-        ColumnData::SmallDateTime(ref dt) => dt.map(|dt| PrimitiveDateTime::new(
-            from_days(dt.days as i64, 1900),
-            from_secs(dt.seconds_fragments as u64 * 60),
-        )),
-        ColumnData::DateTime2(ref dt) => dt.map(|dt| PrimitiveDateTime::new(
-            from_days(dt.date.days() as i64, 1),
-            Time::from_hms(0,0,0).unwrap() + Duration::from_nanos(nanos_from_increments(dt.time.increments, dt.time.scale))
-        )),
-        ColumnData::DateTime(ref dt) => dt.map(|dt| PrimitiveDateTime::new(
-            from_days(dt.days as i64, 1900),
-            from_sec_fragments(dt.seconds_fragments as u64)
-        ));
     Time:
         ColumnData::Time(ref time) => time.map(|time| {
             let ns = nanos_from_increments(time.increments, time.scale);
@@ -149,14 +175,6 @@ to_sql!(self_,
         });
 );
 
-#[cfg(not(feature = "tds73"))]
-from_sql!(
-    PrimitiveDateTime:
-    ColumnData::DateTime(ref dt) => dt.map(|dt| {
-        from_days(dt.days as i64, 1900).with_time(from_sec_fragments(dt.seconds_fragments as u64))
-    })
-);
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,10 +209,7 @@ mod tests {
         let expected_date = Date::from_calendar_date(1850, Month::January, 1).unwrap();
         let days = to_days(expected_date, 1900) as i32;
 
-        // Reconstruct the way the `from_sql!` mapping does for `ColumnData::DateTime`.
-        let dt = crate::tds::time::DateTime::new(days, 0);
-        let decoded = from_days(dt.days() as i64, 1900)
-            .with_time(from_sec_fragments(dt.seconds_fragments() as u64));
+        let decoded = from_datetime(crate::tds::time::DateTime::new(days, 0)).unwrap();
 
         assert_eq!(decoded.date(), expected_date);
         assert_eq!(decoded.time(), Time::from_hms(0, 0, 0).unwrap());
@@ -217,9 +232,34 @@ mod tests {
     }
 
     #[test]
-    fn from_sec_fragments_converts() {
-        // 300 sec-fragments (1/300 s units) == exactly one second.
-        assert_eq!(from_sec_fragments(300), Time::from_hms(0, 0, 1).unwrap());
+    fn datetime_rounds_to_the_millisecond() {
+        let get = |ticks| {
+            from_datetime(crate::tds::time::DateTime::new(0, ticks))
+                .unwrap()
+                .time()
+        };
+        assert_eq!(get(300), Time::from_hms(0, 0, 1).unwrap());
+        assert_eq!(get(299), Time::from_hms_milli(0, 0, 0, 997).unwrap());
+        assert_eq!(get(2), Time::from_hms_milli(0, 0, 0, 7).unwrap());
+        assert_eq!(
+            get(25919999),
+            Time::from_hms_milli(23, 59, 59, 997).unwrap()
+        );
+        assert!(from_millis(86_400_000).is_err());
+        assert!(from_millis(u32::MAX).is_err());
+    }
+
+    #[test]
+    fn out_of_range_times_are_conversion_errors() {
+        use crate::tds::time::DateTime;
+        use crate::{FromSql, FromSqlOwned};
+
+        let dt = ColumnData::DateTime(Some(DateTime::new(0, 300 * 86_400)));
+        assert!(matches!(
+            PrimitiveDateTime::from_sql(&dt),
+            Err(crate::Error::Conversion(_))
+        ));
+        assert!(PrimitiveDateTime::from_sql_owned(dt).is_err());
     }
 
     #[cfg(not(feature = "tds73"))]

@@ -77,11 +77,33 @@ impl DateTime {
     {
         let days = src.read_i32_le().await?;
         let seconds_fragments = src.read_u32_le().await?;
-
-        Ok(Self {
+        let dt = Self {
             days,
             seconds_fragments,
-        })
+        };
+
+        dt.millis_of_day()
+            .map_err(|_| crate::Error::Protocol(format!("invalid datetime {dt:?}").into()))?;
+        Ok(dt)
+    }
+
+    /// Milliseconds since midnight, rounded half up as SqlClient's
+    /// `SqlDateTime` does (so `.997` stays `.997`, not `.996666…`).
+    pub(crate) fn millis_of_day(self) -> crate::Result<u32> {
+        const TICKS_PER_DAY: u32 = 300 * 86_400;
+
+        if self.seconds_fragments >= TICKS_PER_DAY {
+            return Err(crate::Error::Conversion(
+                format!(
+                    "datetime: {} ticks is past midnight",
+                    self.seconds_fragments
+                )
+                .into(),
+            ));
+        }
+
+        // ticks / 0.3: a third is never a tie.
+        Ok((self.seconds_fragments * 10 + 1) / 3)
     }
 }
 
@@ -460,7 +482,9 @@ mod tests {
         for dt in [
             DateTime::new(0, 0),
             DateTime::new(200, 3000),
-            DateTime::new(-53690, 25920000),
+            // 1753-01-01 and 9999-12-31 23:59:59.997, the type's bounds.
+            DateTime::new(-53690, 0),
+            DateTime::new(2958463, 25919999),
         ] {
             let mut buf = BytesMut::new();
             dt.encode(&mut buf).unwrap();
@@ -469,6 +493,27 @@ mod tests {
                 .unwrap();
             assert_eq!(decoded, dt);
         }
+    }
+
+    #[tokio::test]
+    async fn decode_rejects_a_time_past_midnight() {
+        let mut buf = BytesMut::new();
+        DateTime::new(0, 25920000).encode(&mut buf).unwrap();
+        let err = DateTime::decode(&mut buf.into_sql_read_bytes()).await;
+        assert!(matches!(err, Err(crate::Error::Protocol(_))), "{err:?}");
+    }
+
+    #[test]
+    fn datetime_millis_round_half_up() {
+        let ms = |ticks| DateTime::new(0, ticks).millis_of_day().unwrap();
+        // .003, .007, .010 and .997 are stored as 1, 2, 3 and 299 ticks.
+        assert_eq!(ms(1), 3);
+        assert_eq!(ms(2), 7);
+        assert_eq!(ms(3), 10);
+        assert_eq!(ms(299), 997);
+        assert_eq!(ms(25919999), 86_399_997);
+        assert!(DateTime::new(0, 25920000).millis_of_day().is_err());
+        assert!(DateTime::new(0, u32::MAX).millis_of_day().is_err());
     }
 
     #[test]
