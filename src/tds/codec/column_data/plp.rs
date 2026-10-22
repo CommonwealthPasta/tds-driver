@@ -1,11 +1,39 @@
 use crate::sql_read_bytes::SqlReadBytes;
+use futures_util::io::AsyncReadExt;
+
+/// Appends exactly `n` bytes from `src` to `data`, growing `data` in bounded
+/// steps so an untrusted length can't force one huge allocation up front.
+///
+/// `Connection::poll_read` spans packet boundaries itself, so `read_exact`
+/// only sees EOF at the end of the stream.
+pub(crate) async fn read_into<R>(src: &mut R, data: &mut Vec<u8>, mut n: usize) -> crate::Result<()>
+where
+    R: SqlReadBytes + Unpin,
+{
+    const STEP: usize = 64 * 1024;
+
+    while n > 0 {
+        let step = n.min(STEP);
+        let start = data.len();
+        data.resize(start + step, 0);
+        src.read_exact(&mut data[start..]).await?;
+        n -= step;
+    }
+
+    Ok(())
+}
+
+/// Reads exactly `n` bytes from `src`.
+pub(crate) async fn read_bytes<R>(src: &mut R, n: usize) -> crate::Result<Vec<u8>>
+where
+    R: SqlReadBytes + Unpin,
+{
+    let mut data = Vec::with_capacity(n.min(super::MAX_PREALLOC));
+    read_into(src, &mut data, n).await?;
+    Ok(data)
+}
 
 // Decode a partially length-prefixed type.
-//
-// NOTE: values are read via the packet-aware `read_u8`/`read_u16_le`/`read_u32_le`
-// helpers (which transparently span TDS packet boundaries). The generic
-// `AsyncReadExt::read_exact` must NOT be used here: a PLP value can span multiple
-// packets, and `read_exact` treats a packet-boundary `Ok(0)` as EOF.
 pub(crate) async fn decode<R>(src: &mut R, len: usize) -> crate::Result<Option<Vec<u8>>>
 where
     R: SqlReadBytes + Unpin,
@@ -18,15 +46,7 @@ where
             match len {
                 // NULL
                 0xffff => Ok(None),
-                _ => {
-                    let mut data = Vec::with_capacity(len.min(super::MAX_PREALLOC));
-
-                    for _ in 0..len {
-                        data.push(src.read_u8().await?);
-                    }
-
-                    Ok(Some(data))
-                }
+                _ => Ok(Some(read_bytes(src, len).await?)),
             }
         }
         // Unknown size, length-prefixed blobs
@@ -44,39 +64,28 @@ where
                 _ => Vec::with_capacity((len as usize).min(super::MAX_PREALLOC)),
             };
 
-            let mut chunk_data_left = 0usize;
-
             loop {
-                if chunk_data_left == 0 {
-                    // We have no chunk. Start a new one.
-                    let chunk_size = src.read_u32_le().await? as usize;
+                let chunk_size = src.read_u32_le().await? as usize;
 
-                    if chunk_size == 0 {
-                        break; // found a sentinel, we're done
-                    }
-
-                    // The number of chunks in an "unknown length" PLP value is
-                    // unbounded on the wire. Cap the running total so a hostile
-                    // server cannot stream chunks forever and exhaust memory on
-                    // a single value.
-                    if data.len().saturating_add(chunk_size) > super::MAX_PLP_SIZE {
-                        return Err(crate::Error::Protocol(
-                            format!(
-                                "PLP value exceeds the maximum supported size of {} bytes",
-                                super::MAX_PLP_SIZE
-                            )
-                            .into(),
-                        ));
-                    }
-
-                    chunk_data_left = chunk_size;
-                } else {
-                    // Read a byte (packet-aware).
-                    let byte = src.read_u8().await?;
-                    chunk_data_left -= 1;
-
-                    data.push(byte);
+                if chunk_size == 0 {
+                    break; // found a sentinel, we're done
                 }
+
+                // The number of chunks in an "unknown length" PLP value is
+                // unbounded on the wire. Cap the running total so a hostile
+                // server cannot stream chunks forever and exhaust memory on
+                // a single value.
+                if data.len().saturating_add(chunk_size) > super::MAX_PLP_SIZE {
+                    return Err(crate::Error::Protocol(
+                        format!(
+                            "PLP value exceeds the maximum supported size of {} bytes",
+                            super::MAX_PLP_SIZE
+                        )
+                        .into(),
+                    ));
+                }
+
+                read_into(src, &mut data, chunk_size).await?;
             }
 
             Ok(Some(data))
