@@ -34,6 +34,10 @@ impl ActivityId {
     }
 }
 
+/// ENCRYPT_CLIENT_CERT (MS-TDS 2.2.6.5): certificate authentication,
+/// combined with the ENCRYPTION option's other values.
+const ENCRYPT_CLIENT_CERT: u8 = 0x80;
+
 /// The prelogin packet used to initialize a connection
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq))]
@@ -44,6 +48,8 @@ pub struct PreloginMessage {
     pub sub_build: u16,
     /// token=0x01
     pub encryption: EncryptionLevel,
+    /// The server's ENCRYPTION has ENCRYPT_CLIENT_CERT set; never sent.
+    pub client_cert: bool,
     /// token=0x02
     pub instance_name: Option<String>,
     /// [client] threadid for debugging purposes, token=0x03
@@ -64,6 +70,7 @@ impl PreloginMessage {
             version: driver_version as u32,
             sub_build: (driver_version >> 32) as u16,
             encryption: EncryptionLevel::NotSupported,
+            client_cert: false,
             instance_name: None,
             thread_id: 0,
             mars: false,
@@ -115,6 +122,14 @@ impl PreloginMessage {
         let level = match (expected, self.encryption) {
             // TLS was set up before the prelogin; the value is ignored.
             (Strict, _) => Strict,
+            // A certificate is exchanged in the TLS handshake, so certificate
+            // authentication without encryption ends the connection.
+            (_, NotSupported) | (NotSupported, _) if self.client_cert => {
+                return Err(Error::Protocol(
+                    "prelogin: the server asks for certificate authentication without encryption"
+                        .into(),
+                ))
+            }
             (_, Strict) => {
                 return Err(Error::Protocol(
                     "prelogin: invalid server encryption value 4".into(),
@@ -153,6 +168,12 @@ impl PreloginMessage {
         feature = "vendored-openssl"
     )))]
     pub fn negotiated_encryption(&self, _: EncryptionLevel) -> Result<EncryptionLevel> {
+        if self.client_cert {
+            return Err(Error::Protocol(
+                "prelogin: the server asks for certificate authentication without encryption"
+                    .into(),
+            ));
+        }
         Ok(EncryptionLevel::NotSupported)
     }
 }
@@ -270,7 +291,9 @@ impl Decode<BytesMut> for PreloginMessage {
                 // encryption
                 PRELOGIN_ENCRYPTION => {
                     let encrypt = cursor.read_u8()?;
-                    ret.encryption = tds::EncryptionLevel::try_from(encrypt).map_err(|_| {
+                    ret.client_cert = encrypt & ENCRYPT_CLIENT_CERT != 0;
+                    let level = encrypt & !ENCRYPT_CLIENT_CERT;
+                    ret.encryption = tds::EncryptionLevel::try_from(level).map_err(|_| {
                         Error::Protocol(format!("invalid encryption value: {}", encrypt).into())
                     })?;
                 }
@@ -444,6 +467,53 @@ mod tests {
         let mut buf = response(&[(PRELOGIN_TRACEID, &[0; 20]), (PRELOGIN_MARS, &[1])]);
         let decoded = PreloginMessage::decode(&mut buf).unwrap();
         assert_eq!((decoded.activity_id, decoded.mars), (None, true));
+    }
+
+    #[test]
+    fn decode_reads_the_client_cert_bit() {
+        use EncryptionLevel::*;
+        for (byte, level, cert) in [
+            (0x80, Off, true),
+            (0x81, On, true),
+            (0x82, NotSupported, true),
+            (0x83, Required, true),
+            (0x01, On, false),
+        ] {
+            let mut buf = response(&[(PRELOGIN_VERSION, VERSION), (PRELOGIN_ENCRYPTION, &[byte])]);
+            let decoded = PreloginMessage::decode(&mut buf).unwrap();
+            assert_eq!(
+                (decoded.encryption, decoded.client_cert),
+                (level, cert),
+                "{byte:#x}"
+            );
+        }
+        for byte in [0x20, 0x40, 0x85] {
+            let mut buf = response(&[(PRELOGIN_ENCRYPTION, &[byte])]);
+            assert!(PreloginMessage::decode(&mut buf).is_err(), "{byte:#x}");
+        }
+    }
+
+    #[cfg(any(
+        feature = "rustls",
+        feature = "native-tls",
+        feature = "vendored-openssl"
+    ))]
+    #[test]
+    fn client_cert_needs_encryption() {
+        use EncryptionLevel::*;
+        let neg = |client, server| {
+            let mut prelogin = PreloginMessage::new();
+            prelogin.encryption = server;
+            prelogin.client_cert = true;
+            prelogin.negotiated_encryption(client).ok()
+        };
+        assert_eq!(neg(Off, Off), Some(Off));
+        assert_eq!(neg(Off, Required), Some(On));
+        assert_eq!(neg(Required, On), Some(On));
+        assert_eq!(neg(Strict, NotSupported), Some(Strict));
+        assert_eq!(neg(NotSupported, Off), None);
+        assert_eq!(neg(NotSupported, NotSupported), None);
+        assert_eq!(neg(Off, NotSupported), None);
     }
 
     #[test]

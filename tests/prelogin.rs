@@ -10,6 +10,12 @@ use tokio::{
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 
 const OFF: u8 = 0;
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
+const ON: u8 = 1;
 const NOT_SUP: u8 = 2;
 #[cfg(any(
     feature = "rustls",
@@ -91,7 +97,11 @@ async fn fake_server(answer: Vec<u8>) -> (u16, oneshot::Receiver<Option<u8>>) {
             s.write_all(&packet(4, &login_response())).await.unwrap();
         }
         let _ = tx.send(next);
-        let _ = s.read(&mut [0u8; 1]).await;
+        // Keep a login open until the client has read the reply; close on
+        // anything else, such as a TLS handshake.
+        if next == Some(0x10) {
+            let _ = s.read(&mut [0u8; 1]).await;
+        }
     });
 
     (port, rx)
@@ -191,5 +201,36 @@ async fn instance_rejected_by_one_byte_instopt() {
     match res {
         Err(Error::Protocol(msg)) => assert!(msg.contains("rejected"), "{msg}"),
         other => panic!("expected the instance to be rejected, got {other:?}"),
+    }
+}
+
+/// ENCRYPT_CLIENT_CERT (0x80, MS-TDS 2.2.6.5) is decoded instead of
+/// failing the prelogin, and the TLS handshake follows as for its low bits.
+#[cfg(any(
+    feature = "rustls",
+    feature = "native-tls",
+    feature = "vendored-openssl"
+))]
+#[tokio::test]
+async fn client_cert_bit_is_decoded() {
+    for (client, server) in [
+        (EncryptionLevel::Off, 0x80 | OFF),
+        (EncryptionLevel::Off, 0x80 | REQ),
+        (EncryptionLevel::Required, 0x80 | ON),
+    ] {
+        let (res, seen) = connect(encryption(server), client, None).await;
+        // The fake server doesn't do TLS.
+        assert!(res.is_err(), "{client:?}/{server:#x}");
+        assert_eq!(seen, Some(0x12), "{client:?}/{server:#x}: TLS handshake");
+    }
+
+    // Certificate authentication without TLS ends the connection.
+    for client in [EncryptionLevel::NotSupported, EncryptionLevel::Off] {
+        let (res, seen) = connect(encryption(0x80 | NOT_SUP), client, None).await;
+        match res {
+            Err(Error::Protocol(msg)) => assert!(!msg.contains("invalid"), "{client:?}: {msg}"),
+            other => panic!("{client:?}: {other:?}"),
+        }
+        assert_eq!(seen, None, "{client:?}");
     }
 }

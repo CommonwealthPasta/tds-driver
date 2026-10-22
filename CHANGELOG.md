@@ -230,6 +230,8 @@ that land will be documented here.
   SQL login as user "".
 - **PRELOGIN's TRACEID is MS-TDS 2.2.6.5's 36 bytes** (connection id, activity
   id, sequence), not 20.
+- **A server's ENCRYPT_CLIENT_CERT bit (0x80) is decoded** instead of failing
+  the prelogin; with it, no encryption ends the connection.
 - **JDBC URLs are split as mssql-jdbc splits them:** a bare `\` and non-ASCII
   values parse, `}}` in braces is `}`, names and unbraced values are trimmed,
   and the last of a property's synonyms wins.
