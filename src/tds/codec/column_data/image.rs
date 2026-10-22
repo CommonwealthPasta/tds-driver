@@ -10,20 +10,13 @@ where
         return Ok(ColumnData::Binary(None));
     }
 
-    for _ in 0..ptr_len {
-        src.read_u8().await?;
-    }
+    super::plp::read_bytes(src, ptr_len).await?;
 
     src.read_i32_le().await?; // days
     src.read_u32_le().await?; // second fractions
 
     let len = src.read_u32_le().await? as usize;
-    // `len` is untrusted; cap the up-front reservation (see MAX_PREALLOC).
-    let mut buf = Vec::with_capacity(len.min(super::MAX_PREALLOC));
-
-    for _ in 0..len {
-        buf.push(src.read_u8().await?);
-    }
+    let buf = super::plp::read_bytes(src, len).await?;
 
     Ok(ColumnData::Binary(Some(buf.into())))
 }
