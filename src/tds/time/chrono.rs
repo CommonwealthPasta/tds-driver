@@ -91,16 +91,13 @@ from_sql!(
     NaiveDate:
         ColumnData::Date(ref date) => date.map(|date| from_days(date.days() as i64, 1));
     chrono::DateTime<Utc>:
+        // The datetime2 part of a datetimeoffset is already UTC.
         ColumnData::DateTimeOffset(ref dto) => dto.map(|dto| {
             let date = from_days(dto.datetime2.date.days() as i64, 1);
             let ns = nanos_from_increments(dto.datetime2.time.increments, dto.datetime2.time.scale);
             let time = NaiveTime::from_hms_opt(0,0,0).unwrap() + chrono::Duration::nanoseconds(ns);
 
-            let offset = chrono::Duration::minutes(dto.offset as i64);
-            let base = NaiveDateTime::new(date, time);
-            let naive = base.checked_sub_signed(offset).unwrap_or(base);
-
-            chrono::DateTime::from_naive_utc_and_offset(naive, Utc)
+            chrono::DateTime::from_naive_utc_and_offset(NaiveDateTime::new(date, time), Utc)
         }),
         ColumnData::DateTime2(ref dt2) => dt2.map(|dt2| {
             let date = from_days(dt2.date.days() as i64, 1);
@@ -394,8 +391,10 @@ mod tests {
         let cd: ColumnData<'static> = dt.into_sql();
         assert!(matches!(cd, ColumnData::DateTimeOffset(Some(_))));
 
-        let utc = chrono::DateTime::<Utc>::from_sql(&cd).unwrap();
-        assert!(utc.is_some());
+        // Same instant: the wire time is UTC, the offset only labels it.
+        let utc = chrono::DateTime::<Utc>::from_sql(&cd).unwrap().unwrap();
+        assert_eq!(utc.naive_utc(), naive);
+        assert_eq!(utc, dt);
     }
 
     #[cfg(feature = "tds73")]

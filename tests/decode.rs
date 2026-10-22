@@ -74,3 +74,29 @@ where
 
     Ok(())
 }
+
+#[cfg(feature = "chrono")]
+#[test_on_runtimes]
+async fn chrono_utc_from_datetimeoffset<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use chrono::{DateTime, FixedOffset, Utc};
+
+    let r = rows(
+        &mut conn,
+        "SELECT CAST('2020-01-01 12:00:00.1234567 +02:00' AS datetimeoffset), \
+         CAST('2020-01-01 00:30:00 -05:30' AS datetimeoffset(0))",
+    )
+    .await?;
+
+    let utc: DateTime<Utc> = r[0].get(0).unwrap();
+    let fixed: DateTime<FixedOffset> = r[0].get(0).unwrap();
+    assert_eq!(utc.to_rfc3339(), "2020-01-01T10:00:00.123456700+00:00");
+    assert_eq!(utc, fixed);
+
+    let utc: DateTime<Utc> = r[0].get(1).unwrap();
+    assert_eq!(utc.to_rfc3339(), "2020-01-01T06:00:00+00:00");
+
+    Ok(())
+}
