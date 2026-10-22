@@ -284,6 +284,14 @@ that land will be documented here.
   unclosed quote) are errors; `key=;` unsets `key`; an instance name with an
   explicit port is ignored; `Encrypt=false` against a server that answers
   ENCRYPT_NOT_SUP fails before TLS rather than during it.
+- **ADO.NET keys SqlClient doesn't know are errors** ("Keyword not supported"),
+  as are keywords the crate can't honour without changing the connection:
+  `MultipleActiveResultSets=true`, `Failover Partner`, `Column Encryption
+  Setting=Enabled`, `AttachDbFilename`, `Current Language`, `Server
+  Certificate`, `User Instance=true`, `Replication=true`, Entra ID
+  `Authentication` values and a non-TCP `Network Library`. Pooling, retry,
+  timeout and enlistment keywords are accepted and ignored. Invalid `Integrated
+  Security` values are errors.
 
 ## [0.13.1] - 2026-08-30
 

@@ -17,7 +17,9 @@ impl FromStr for AdoNetConfig {
                 format!("Connection string: Keyword not supported: '{key}'").into(),
             )),
         })?;
-        Ok(Self { dict })
+        let config = Self { dict };
+        config.reject_unsupported()?;
+        Ok(config)
     }
 }
 
@@ -85,6 +87,77 @@ fn keyword(key: &str) -> Option<&'static str> {
         }
         _ => return None,
     })
+}
+
+impl AdoNetConfig {
+    /// Rejects keywords SqlClient honours and this crate can't, where
+    /// ignoring them would change what the connection does. Pooling, retry,
+    /// command-timeout, enlistment and similar keywords stay accepted and
+    /// ignored.
+    fn reject_unsupported(&self) -> crate::Result<()> {
+        let unsupported = |what: &str| {
+            Err(crate::Error::Conversion(
+                format!("Connection string: {what} is not supported").into(),
+            ))
+        };
+        let is = |key: &str, value: &str| {
+            self.get(key)
+                .is_some_and(|v| v.trim().eq_ignore_ascii_case(value))
+        };
+
+        for (key, name) in [
+            ("attachdbfilename", "AttachDbFilename"),
+            ("failover partner", "Failover Partner"),
+            ("current language", "Current Language"),
+            (
+                "server certificate",
+                "Server Certificate (use TrustServerCertificateCA)",
+            ),
+        ] {
+            if self.get(key).is_some() {
+                return unsupported(name);
+            }
+        }
+        for (key, name) in [
+            (
+                "multiple active result sets",
+                "MultipleActiveResultSets=true",
+            ),
+            ("user instance", "User Instance=true"),
+            ("replication", "Replication=true"),
+            ("context connection", "Context Connection=true"),
+        ] {
+            if let Some(v) = self.get(key) {
+                if Self::parse_bool(v)? {
+                    return unsupported(name);
+                }
+            }
+        }
+        if let Some(v) = self.get("column encryption setting") {
+            if is("column encryption setting", "enabled") {
+                return unsupported("Column Encryption Setting=Enabled");
+            } else if !v.trim().eq_ignore_ascii_case("disabled") {
+                return Err(crate::Error::Conversion(
+                    "Connection string: Column Encryption Setting must be Enabled or Disabled"
+                        .into(),
+                ));
+            }
+        }
+        // DbConnectionStringUtilities.TryConvertToAuthenticationType.
+        if let Some(v) = self.get("authentication") {
+            if !is("authentication", "sql password") && !is("authentication", "sqlpassword") {
+                let v = v.trim();
+                return unsupported(&format!(
+                    "Authentication={v} (use AuthMethod::aad_token for Entra ID)"
+                ));
+            }
+        }
+        // .NET Framework's NetlibMapping; only `dbmssocn` is TCP.
+        if self.get("network library").is_some() && !is("network library", "dbmssocn") {
+            return unsupported("a Network Library other than dbmssocn (TCP)");
+        }
+        Ok(())
+    }
 }
 
 /// Splits an ADO.NET connection string into its pairs, each stored under
@@ -1132,6 +1205,37 @@ mod tests {
              Transparent Network IP Resolution=true;Connection Idle Timeout=0",
         );
         config("Authentication=SqlPassword;Server SPN=MSSQLSvc/h:1433");
+    }
+
+    #[test]
+    fn known_keywords_that_would_change_the_connection_are_errors() {
+        for s in [
+            "MultipleActiveResultSets=true",
+            "Multiple Active Result Sets=yes",
+            "Failover Partner=mirror",
+            "Column Encryption Setting=Enabled",
+            "Column Encryption Setting=sometimes",
+            "AttachDbFilename=db.mdf",
+            "Server Certificate=server.cer",
+            "Current Language=british",
+            "Language=british",
+            "User Instance=true",
+            "Replication=true",
+            "Context Connection=true",
+            "Authentication=Active Directory Default",
+            "Authentication=ActiveDirectoryPassword",
+            "Authentication=Kerberos",
+            "Network Library=dbnmpntw",
+            "MultipleActiveResultSets=maybe",
+        ] {
+            assert!(
+                matches!(
+                    crate::Config::from_ado_string(s),
+                    Err(crate::Error::Conversion(_))
+                ),
+                "{s}"
+            );
+        }
     }
 
     #[test]

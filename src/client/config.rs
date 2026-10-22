@@ -565,7 +565,12 @@ impl Config {
     /// |`Packet Size`|`512` to `32768`|See [`Config::packet_size`].|
     ///
     /// SqlClient's pooling, retry, `Command Timeout`, `Enlist` and similar
-    /// keywords are accepted and ignored.
+    /// keywords are accepted and ignored. Those this crate can't honour without
+    /// changing the connection are errors: `MultipleActiveResultSets=true`,
+    /// `Failover Partner`, `Column Encryption Setting=Enabled`,
+    /// `AttachDbFilename`, `Current Language`, `Server Certificate`,
+    /// `User Instance=true`, `Replication=true`, Entra ID `Authentication`
+    /// values and `Network Library` other than `dbmssocn`.
     ///
     /// [ADO.NET connection string]: https://docs.microsoft.com/en-us/dotnet/framework/data/adonet/connection-strings
     pub fn from_ado_string(s: &str) -> crate::Result<Self> {
