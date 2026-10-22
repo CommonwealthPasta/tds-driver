@@ -326,7 +326,18 @@ impl<'a> Encode<BytesMut> for MetaDataColumn<'a> {
             if matches!(cx.r#type(), VarLenType::Text | VarLenType::NText | VarLenType::Image));
 
         dst.put_u32_le(0);
-        self.base.encode(dst)?;
+
+        match self.base.ty {
+            // The server rejects an xml TYPE_INFO here (4816). SqlClient's
+            // WriteBulkCopyMetaData sends nvarchar(max) with a zero collation
+            // (s_xmlMetadataSubstituteSequence, TdsParser.cs:136 and :11643,
+            // dotnet/SqlClient@5394363); xml values are the same PLP UTF-16.
+            TypeInfo::Xml { .. } => {
+                dst.put_u16_le(self.base.flags.bits());
+                dst.extend_from_slice(&[VarLenType::NVarchar as u8, 0xff, 0xff, 0, 0, 0, 0, 0]);
+            }
+            _ => self.base.encode(dst)?,
+        }
 
         if long {
             // TableName. SqlClient's WriteBulkCopyMetaData sends one

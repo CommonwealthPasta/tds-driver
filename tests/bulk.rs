@@ -1065,6 +1065,48 @@ where
     .await
 }
 
+#[test_on_runtimes]
+async fn bulk_load_xml<S>(mut conn: tiberius::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use tiberius::xml::XmlData;
+
+    let xml = XmlData::new("<a b=\"\u{3b1}\">\u{1F600}</a>");
+    let nul = "ISNULL(CONVERT(nvarchar(200), v), 'NULL')";
+
+    assert_bulk(
+        &mut conn,
+        vec![
+            ("XML", xml.clone().into_sql(), "v", xml.as_ref()),
+            ("XML NOT NULL", XmlData::new("").into_sql(), "v", ""),
+            ("XML", None::<XmlData>.into_sql(), nul, "NULL"),
+        ],
+    )
+    .await?;
+
+    // Next to other columns, which must stay aligned.
+    let table = format!("##{}", random_table().await);
+    conn.simple_query(format!("CREATE TABLE {table} (a INT, x XML, b INT)"))
+        .await?
+        .into_results()
+        .await?;
+    let mut req = conn.bulk_insert(&table).await?;
+    for i in 0..3 {
+        let mut row = TokenRow::new();
+        row.push(i.into_sql());
+        row.push(XmlData::new(format!("<n>{i}</n>")).into_sql());
+        row.push((i * 10).into_sql());
+        req.send(row).await?;
+    }
+    assert_eq!(3, within(req.finalize()).await?.total());
+
+    let sum = format!("SELECT SUM(x.value('(/n)[1]', 'int') + b) FROM {table}");
+    assert_eq!(Some(33), select_int(&mut conn, &sum).await?);
+
+    Ok(())
+}
+
 #[cfg(all(feature = "tds73", feature = "chrono"))]
 #[test_on_runtimes]
 async fn bulk_load_datetime_from_datetime2<S>(mut conn: tiberius::Client<S>) -> Result<()>

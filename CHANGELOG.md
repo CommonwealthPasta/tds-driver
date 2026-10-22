@@ -190,6 +190,9 @@ that land will be documented here.
 - **NULL binary and decimal parameters are declared like values of their type**,
   `varbinary(8000)` and `numeric(38,0)` instead of `varbinary(max)` and
   `numeric` (18,0), so they no longer get a cached plan of their own.
+- **Bulk/TVP `DateTime<Utc>` and `NaiveDateTime` go into `datetimeoffset`
+  columns** (at +00:00) **and `date` columns**, as SqlBulkCopy converts them,
+  and **bulk insert into `xml` columns works** (error 4816).
 - **A TLS handshake over OpenSSL survives a socket that can't take a flight at
   once.** OpenSSL fails the handshake on a flush that would block, which
   affected `native-tls` on Linux and `vendored-openssl`.
