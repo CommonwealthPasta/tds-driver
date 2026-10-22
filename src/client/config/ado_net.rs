@@ -25,15 +25,24 @@ impl FromStr for AdoNetConfig {
 /// stored by keyword, so the last of a set of synonyms wins.
 fn keyword(key: &str) -> Option<&'static str> {
     Some(match key {
-        "application name" | "applicationname" => "application name",
-        "connect timeout" | "connection timeout" | "timeout" => "connect timeout",
-        "data source" | "server" => "data source",
-        "hostnameincertificate" | "hostname in certificate" => "hostnameincertificate",
+        "application intent" | "applicationintent" => "application intent",
+        "application name" | "app" | "applicationname" => "application name",
+        "connect timeout" | "connection timeout" | "connecttimeout" | "timeout" => {
+            "connect timeout"
+        }
+        "data source" | "addr" | "address" | "network address" | "server" => "data source",
+        "host name in certificate" | "hostnameincertificate" | "hostname in certificate" => {
+            "host name in certificate"
+        }
         "initial catalog" | "database" | "databasename" => "initial catalog",
-        "integrated security" | "integratedsecurity" => "integrated security",
+        "integrated security" | "trusted_connection" | "integratedsecurity" => {
+            "integrated security"
+        }
+        "multi subnet failover" | "multisubnetfailover" => "multi subnet failover",
         "password" | "pwd" => "password",
+        "trust server certificate" | "trustservercertificate" => "trust server certificate",
         "user id" | "uid" | "user" | "username" => "user id",
-        "workstation id" | "workstationid" => "workstation id",
+        "workstation id" | "workstationid" | "wsid" => "workstation id",
         _ => return None,
     })
 }
@@ -960,8 +969,42 @@ mod tests {
     }
 
     #[test]
+    fn sqlclient_keywords_and_synonyms() {
+        for key in [
+            "Addr",
+            "Address",
+            "Network Address",
+            "Server",
+            "Data Source",
+        ] {
+            assert_eq!(config(&format!("{key}=h,1500")).get_addr(), "h:1500");
+        }
+        let c = config("App=a;WSID=w");
+        assert_eq!(c.application_name.as_deref(), Some("a"));
+        assert_eq!(c.client_name.as_deref(), Some("w"));
+
+        let c = config(
+            "Application Intent=ReadOnly;Multi Subnet Failover=true;\
+             Host Name In Certificate=cert.host;connecttimeout=5",
+        );
+        assert!(c.readonly && c.multi_subnet_failover);
+        assert_eq!(c.hostname_in_certificate.as_deref(), Some("cert.host"));
+        assert_eq!(c.connect_timeout(), Some(Duration::from_secs(5)));
+        assert!(matches!(
+            config("Trust Server Certificate=true").trust,
+            super::super::TrustConfig::TrustAll
+        ));
+        assert!(matches!(
+            config("Trusted_Connection=no;uid=u").auth,
+            AuthMethod::SqlServer(_)
+        ));
+    }
+
+    #[test]
     fn last_of_synonyms_wins() {
         assert_eq!(config("Server=a;Data Source=b").get_host(), "b");
+        assert_eq!(config("Data Source=b;Addr=a").get_host(), "a");
+        assert_eq!(config("Server=a;Address=").get_host(), "localhost");
         assert_eq!(
             config("uid=a;User ID=b;pwd=x;Password=y").auth,
             AuthMethod::sql_server("b", "y")
@@ -972,6 +1015,16 @@ mod tests {
         );
         assert_eq!(
             config("Initial Catalog=a;Database=b").database.as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            config("Application Name=a;App=b")
+                .application_name
+                .as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            config("WSID=a;Workstation ID=b").client_name.as_deref(),
             Some("b")
         );
         assert_eq!(

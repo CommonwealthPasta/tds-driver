@@ -548,18 +548,19 @@ impl Config {
     ///
     /// |Parameter|Allowed values|Description|
     /// |--------|--------|--------|
-    /// |`Data Source`, `server`|`<string>`|The name or network address of the instance of SQL Server to which to connect. The port number can be specified after the server name. The correct form of this parameter is either `tcp:host,port` or `tcp:host\\instance`; other protocols (`np:`, `lpc:`, `admin:`) are errors.|
-    /// |`Integrated Security`, `IntegratedSecurity`|`true`,`false`,`yes`,`no`|Toggle between Windows/Kerberos authentication and SQL authentication.|
+    /// |`Data Source`, `server`, `addr`, `address`, `network address`|`<string>`|The name or network address of the instance of SQL Server to which to connect. The port number can be specified after the server name. The correct form of this parameter is either `tcp:host,port` or `tcp:host\\instance`; other protocols (`np:`, `lpc:`, `admin:`) are errors.|
+    /// |`Integrated Security`, `IntegratedSecurity`, `Trusted_Connection`|`true`,`false`,`yes`,`no`|Toggle between Windows/Kerberos authentication and SQL authentication.|
     /// |`User ID`, `uid`, `user`, `username`|`<string>`|The SQL Server login account.|
     /// |`password`,`pwd`|`<string>`|The password for the SQL Server account logging on.|
     /// |`Initial Catalog`, `database`|`<string>`|The name of the database.|
-    /// |`TrustServerCertificate`|`true`,`false`,`yes`,`no`|Specifies whether the driver trusts the server certificate when connecting using TLS. Cannot be used toghether with `TrustServerCertificateCA`|
+    /// |`Trust Server Certificate`, `TrustServerCertificate`|`true`,`false`,`yes`,`no`|Specifies whether the driver trusts the server certificate when connecting using TLS. Cannot be used toghether with `TrustServerCertificateCA`|
     /// |`TrustServerCertificateCA`|`<path>`|Path to a `pem`, `crt` or `der` certificate file. Cannot be used together with `TrustServerCertificate`|
     /// |`encrypt`|`strict`,`true`,`false`,`yes`,`no`,`DANGER_PLAINTEXT`|Specifies whether the driver uses TLS to encrypt communication. `strict` (TDS 8.0) requires the `tds80` feature.|
-    /// |`Application Name`, `ApplicationName`|`<string>`|Sets the application name for the connection.|
-    /// |`HostNameInCertificate`, `HostName In Certificate`|`<string>`|The hostname the server certificate is validated against. Defaults to `server`.|
-    /// |`Workstation ID`, `WorkstationID`|`<string>`|The client / workstation name reported to the server.|
-    /// |`MultiSubnetFailover`|`true`,`false`,`yes`,`no`|When enabled, connections are attempted in parallel to all IP addresses the server resolves to, and the first to succeed is used.|
+    /// |`Application Name`, `app`, `ApplicationName`|`<string>`|Sets the application name for the connection.|
+    /// |`Application Intent`, `ApplicationIntent`|`ReadOnly`,`ReadWrite`|Declares a read-only workload.|
+    /// |`Host Name In Certificate`, `HostNameInCertificate`|`<string>`|The hostname the server certificate is validated against. Defaults to `server`.|
+    /// |`Workstation ID`, `WorkstationID`, `wsid`|`<string>`|The client / workstation name reported to the server.|
+    /// |`Multi Subnet Failover`, `MultiSubnetFailover`|`true`,`false`,`yes`,`no`|When enabled, connections are attempted in parallel to all IP addresses the server resolves to, and the first to succeed is used.|
     /// |`Connect Timeout`, `Connection Timeout`, `Timeout`|`<seconds>`|See [`Config::connect_timeout`].|
     ///
     /// [ADO.NET connection string]: https://docs.microsoft.com/en-us/dotnet/framework/data/adonet/connection-strings
@@ -911,7 +912,7 @@ pub(crate) trait ConfigString {
     }
 
     fn trust_cert(&self) -> crate::Result<bool> {
-        self.first(&["trustservercertificate"])
+        self.first(&["trust server certificate", "trustservercertificate"])
             .map(Self::parse_bool)
             .unwrap_or(Ok(false))
     }
@@ -922,12 +923,16 @@ pub(crate) trait ConfigString {
     }
 
     fn hostname_in_certificate(&self) -> Option<String> {
-        self.first(&["hostnameincertificate", "hostname in certificate"])
-            .map(|host| host.to_string())
+        self.first(&[
+            "host name in certificate",
+            "hostnameincertificate",
+            "hostname in certificate",
+        ])
+        .map(|host| host.to_string())
     }
 
     fn client_name(&self) -> Option<String> {
-        self.first(&["workstationid", "workstation id"])
+        self.first(&["workstation id", "workstationid"])
             .map(|name| name.to_string())
     }
 
@@ -988,13 +993,13 @@ pub(crate) trait ConfigString {
     }
 
     fn readonly(&self) -> bool {
-        self.first(&["applicationintent"])
+        self.first(&["application intent", "applicationintent"])
             .filter(|val| val.trim().eq_ignore_ascii_case("ReadOnly"))
             .is_some()
     }
 
     fn multi_subnet_failover(&self) -> crate::Result<bool> {
-        self.first(&["multisubnetfailover"])
+        self.first(&["multi subnet failover", "multisubnetfailover"])
             .map(Self::parse_bool)
             .unwrap_or(Ok(false))
     }
