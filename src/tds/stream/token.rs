@@ -320,43 +320,7 @@ where
                 }
             }
 
-            let ty_byte = this.conn.read_u8().await?;
-
-            let ty = TokenType::try_from(ty_byte)
-                .map_err(|_| Error::Protocol(format!("invalid token type {:x}", ty_byte).into()))?;
-
-            let token = match ty {
-                TokenType::ReturnStatus => this.get_return_status().await?,
-                TokenType::ColMetaData => this.get_col_metadata().await?,
-                TokenType::AltMetaData => this.get_alt_col_metadata().await?,
-                TokenType::Row => this.get_row().await?,
-                TokenType::AltRow => this.get_alt_row().await?,
-                TokenType::NbcRow => this.get_nbc_row().await?,
-                TokenType::Done => this.get_done_value().await?,
-                TokenType::DoneProc => this.get_done_proc_value().await?,
-                TokenType::DoneInProc => this.get_done_in_proc_value().await?,
-                TokenType::ReturnValue => this.get_return_value().await?,
-                TokenType::Error => this.get_error().await?,
-                TokenType::Order => this.get_order().await?,
-                TokenType::ColInfo => this.get_col_info().await?,
-                TokenType::TabName => this.get_tab_name().await?,
-                TokenType::EnvChange => this.get_env_change().await?,
-                TokenType::Info => this.get_info().await?,
-                TokenType::LoginAck => this.get_login_ack().await?,
-                TokenType::Sspi => this.get_sspi().await?,
-                TokenType::SessionState => this.get_session_state().await?,
-                TokenType::FedAuthInfo => this.get_fed_auth_info().await?,
-                TokenType::FeatureExtAck => this.get_feature_ext_ack().await?,
-                // Defensive fallback for any token type without a dedicated
-                // handler. Currently every variant is handled, so this is
-                // unreachable, but it is kept as new token types are added.
-                #[allow(unreachable_patterns)]
-                _ => {
-                    return Err(Error::Protocol(
-                        format!("Token {:?} unimplemented!", ty).into(),
-                    ))
-                }
-            };
+            let token = this.read_token().await?;
 
             if let ReceivedToken::Done(done)
             | ReceivedToken::DoneProc(done)
@@ -371,5 +335,47 @@ where
         });
 
         Box::pin(stream)
+    }
+
+    async fn read_token(&mut self) -> crate::Result<ReceivedToken> {
+        let ty_byte = self.conn.read_u8().await?;
+
+        let ty = TokenType::try_from(ty_byte)
+            .map_err(|_| Error::Protocol(format!("invalid token type {:x}", ty_byte).into()))?;
+
+        let token = match ty {
+            TokenType::ReturnStatus => self.get_return_status().await?,
+            TokenType::ColMetaData => self.get_col_metadata().await?,
+            TokenType::AltMetaData => self.get_alt_col_metadata().await?,
+            TokenType::Row => self.get_row().await?,
+            TokenType::AltRow => self.get_alt_row().await?,
+            TokenType::NbcRow => self.get_nbc_row().await?,
+            TokenType::Done => self.get_done_value().await?,
+            TokenType::DoneProc => self.get_done_proc_value().await?,
+            TokenType::DoneInProc => self.get_done_in_proc_value().await?,
+            TokenType::ReturnValue => self.get_return_value().await?,
+            TokenType::Error => self.get_error().await?,
+            TokenType::Order => self.get_order().await?,
+            TokenType::ColInfo => self.get_col_info().await?,
+            TokenType::TabName => self.get_tab_name().await?,
+            TokenType::EnvChange => self.get_env_change().await?,
+            TokenType::Info => self.get_info().await?,
+            TokenType::LoginAck => self.get_login_ack().await?,
+            TokenType::Sspi => self.get_sspi().await?,
+            TokenType::SessionState => self.get_session_state().await?,
+            TokenType::FedAuthInfo => self.get_fed_auth_info().await?,
+            TokenType::FeatureExtAck => self.get_feature_ext_ack().await?,
+            // Defensive fallback for any token type without a dedicated
+            // handler. Currently every variant is handled, so this is
+            // unreachable, but it is kept as new token types are added.
+            #[allow(unreachable_patterns)]
+            _ => {
+                return Err(Error::Protocol(
+                    format!("Token {:?} unimplemented!", ty).into(),
+                ))
+            }
+        };
+
+        Ok(token)
     }
 }
