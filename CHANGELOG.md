@@ -14,14 +14,19 @@ earlier are that history, under those names; up to 0.12.3 it is upstream's.
 
 ### Added
 
-- **`Client::simple_execute`** runs SQL with no parameters as a plain batch
-  and returns an `ExecuteResult`, the counterpart of `simple_query` for
-  statements that return no rows. Unlike `execute`, which goes through
-  `sp_executesql`, a `SET` option or `BEGIN TRAN` in it applies to the session.
 - **`Client::in_transaction`** reports whether the server says the connection
   is in a transaction. It goes `false` when the server rolls one back on its
   own -- a deadlock, an error under `SET XACT_ABORT ON`, a `ROLLBACK` in a
   procedure -- which the client otherwise has no way to learn.
+
+## [0.1.1] - 2026-10-23
+
+### Added
+
+- **`Client::simple_execute`** runs SQL with no parameters as a plain batch
+  and returns an `ExecuteResult`, the counterpart of `simple_query` for
+  statements that return no rows. Unlike `execute`, which goes through
+  `sp_executesql`, a `SET` option or `BEGIN TRAN` in it applies to the session.
 
 ## [0.1.0] - 2026-10-22
 
@@ -866,7 +871,8 @@ has completely settled on Tokio 1.0.
 - Support for many more types
 - Async/await, futures 0.3
 
-[Unreleased]: https://github.com/CommonwealthPasta/tds-driver/compare/c4558192e166e5a8940c34be3ca33f745c19b048...main
+[Unreleased]: https://github.com/CommonwealthPasta/tds-driver/compare/3f5767cab63bf5a8f4221c84cebc56073503c345...main
+[0.1.1]: https://github.com/CommonwealthPasta/tds-driver/compare/c4558192e166e5a8940c34be3ca33f745c19b048...3f5767cab63bf5a8f4221c84cebc56073503c345
 [0.1.0]: https://github.com/CommonwealthPasta/tds-driver/compare/435b72d...c4558192e166e5a8940c34be3ca33f745c19b048
 [0.13.1]: https://github.com/MattJackson/tiberius-ng/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/MattJackson/tiberius-ng/compare/v0.12.3...v0.13.0
