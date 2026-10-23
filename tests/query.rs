@@ -772,6 +772,48 @@ where
     Ok(())
 }
 
+// SQL Server's float has no NaN or infinity. The server rejects one with
+// error 8023, a generic "the RPC stream is incorrect"; the driver says what
+// is wrong before sending anything.
+#[test_on_runtimes]
+async fn a_non_finite_float_parameter_is_a_conversion_error<S>(
+    mut conn: tds_driver::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let values: [&dyn tds_driver::ToSql; 6] = [
+        &f64::NAN,
+        &f64::INFINITY,
+        &f64::NEG_INFINITY,
+        &f32::NAN,
+        &f32::INFINITY,
+        &f32::NEG_INFINITY,
+    ];
+
+    for value in values {
+        let err = conn.query("SELECT @P1", &[value]).await.unwrap_err();
+
+        match err {
+            tds_driver::error::Error::Conversion(msg) => {
+                assert!(msg.contains("float"), "{msg}");
+            }
+            other => panic!("expected a conversion error, got {other:?}"),
+        }
+    }
+
+    // The connection is still usable: nothing was sent.
+    let row = conn
+        .query("SELECT @P1", &[&1.5f64])
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+    assert_eq!(Some(1.5f64), row.get(0));
+
+    Ok(())
+}
+
 #[test_on_runtimes]
 async fn read_nullable_u8<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where

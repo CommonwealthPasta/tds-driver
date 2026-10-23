@@ -12,6 +12,13 @@ earlier are that history, under those names; up to 0.12.3 it is upstream's.
 
 ## [Unreleased]
 
+### Changed
+
+- **A NaN or infinite `f32`/`f64` is an `Error::Conversion` before anything
+  is sent**, as a parameter or a bulk-load value. SQL Server's `float` has
+  no such value; the server used to answer with its error 8023, "the RPC
+  stream is incorrect", which named the parameter but not the problem.
+
 ### Fixed
 
 - **Without `tds73`, a `datetime` parameter is rounded to the nearest 1/300 s

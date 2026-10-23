@@ -262,7 +262,20 @@ fn int_bytes(value: i64, width: usize) -> crate::Result<[u8; 8]> {
     Ok(value.to_le_bytes())
 }
 
+/// The server rejects a NaN or infinite float with its generic error 8023,
+/// "the RPC stream is incorrect"; this says what is wrong before sending.
+fn finite(value: f64) -> crate::Result<f64> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(crate::Error::Conversion(
+            format!("float: SQL Server has no NaN or infinity, got {value}").into(),
+        ))
+    }
+}
+
 fn float_bytes(value: f64, width: usize) -> crate::Result<[u8; 8]> {
+    let value = finite(value)?;
     let mut bytes = [0u8; 8];
 
     match width {
@@ -736,6 +749,7 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                 let header = [VarLenType::Floatn as u8, 4];
                 dst.extend_from_slice(&header);
                 if let Some(val) = opt {
+                    finite(val.into())?;
                     dst.put_u8(4);
                     dst.put_f32_le(val);
                 } else {
@@ -746,6 +760,7 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
                 let header = [VarLenType::Floatn as u8, 8];
                 dst.extend_from_slice(&header);
                 if let Some(val) = opt {
+                    finite(val)?;
                     dst.put_u8(8);
                     dst.put_f64_le(val);
                 } else {
@@ -2723,6 +2738,24 @@ mod tests {
 
         let err = encode_with_ti(&float_ti(4), ColumnData::F64(Some(1e300))).unwrap_err();
         assert!(matches!(err, Error::Conversion(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn a_non_finite_float_is_rejected_before_it_is_sent() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            // As an RPC parameter, at both widths, and into a bulk column.
+            for data in [ColumnData::F64(Some(value)), ColumnData::F32(Some(value as f32))] {
+                let mut buf = BytesMut::new();
+                let err = data
+                    .clone()
+                    .encode(&mut BytesMutWithTypeInfo::new(&mut buf))
+                    .unwrap_err();
+                assert!(matches!(err, Error::Conversion(_)), "{data:?}: {err:?}");
+
+                let err = encode_with_ti(&float_ti(8), data.clone()).unwrap_err();
+                assert!(matches!(err, Error::Conversion(_)), "{data:?}: {err:?}");
+            }
+        }
     }
 
     #[test]
