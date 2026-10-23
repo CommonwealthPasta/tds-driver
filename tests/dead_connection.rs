@@ -64,7 +64,11 @@ async fn a_killed_connection_reports_the_cause_once_then_not_connected() -> anyh
         .unwrap()
         .get(0)
         .unwrap();
-    admin.simple_query(format!("KILL {spid}")).await?.into_results().await?;
+    admin
+        .simple_query(format!("KILL {spid}"))
+        .await?
+        .into_results()
+        .await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     assert_dead(&mut conn).await;
@@ -76,7 +80,10 @@ async fn a_killed_connection_reports_the_cause_once_then_not_connected() -> anyh
 async fn a_severity_20_error_closes_the_connection() -> anyhow::Result<()> {
     let mut conn = connect().await?;
 
-    let err = match conn.simple_query("RAISERROR('fatal', 20, 1) WITH LOG").await {
+    let err = match conn
+        .simple_query("RAISERROR('fatal', 20, 1) WITH LOG")
+        .await
+    {
         Ok(stream) => stream.into_results().await.unwrap_err(),
         Err(e) => e,
     };
