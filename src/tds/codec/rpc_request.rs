@@ -1,6 +1,9 @@
 use super::TypeInfoTvp;
 use super::{put_b_varchar, put_us_varchar, AllHeaderTy, Encode, ALL_HEADERS_LEN_TX};
-use crate::{tds::codec::ColumnData, Result};
+use crate::{
+    tds::{codec::ColumnData, collation::Collation},
+    Result,
+};
 use bytes::{BufMut, BytesMut};
 use enumflags2::{bitflags, BitFlags};
 use std::borrow::Cow;
@@ -30,10 +33,17 @@ pub struct TokenRpcRequest<'a> {
     flags: BitFlags<RpcOption>,
     params: Vec<RpcParam<'a>>,
     transaction_desc: [u8; 8],
+    /// The session's collation, which a `varchar` parameter is sent in.
+    collation: Option<Collation>,
 }
 
 impl<'a> TokenRpcRequest<'a> {
-    pub fn new<I>(proc_id: I, params: Vec<RpcParam<'a>>, transaction_desc: [u8; 8]) -> Self
+    pub fn new<I>(
+        proc_id: I,
+        params: Vec<RpcParam<'a>>,
+        transaction_desc: [u8; 8],
+        collation: Option<Collation>,
+    ) -> Self
     where
         I: Into<RpcProcIdValue<'a>>,
     {
@@ -42,6 +52,7 @@ impl<'a> TokenRpcRequest<'a> {
             flags: BitFlags::empty(),
             params,
             transaction_desc,
+            collation,
         }
     }
 }
@@ -120,7 +131,26 @@ impl<'a> Encode<BytesMut> for TokenRpcRequest<'a> {
         dst.put_u16_le(self.flags.bits());
 
         for param in self.params.into_iter() {
-            param.encode(dst)?;
+            param.encode_in(dst, self.collation)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<'a> RpcParam<'a> {
+    /// Encodes the parameter, sending a `varchar` value in `collation`.
+    fn encode_in(self, dst: &mut BytesMut, collation: Option<Collation>) -> Result<()> {
+        put_b_varchar(dst, &self.name, "RPC parameter name")?;
+        dst.put_u8(self.flags.bits());
+
+        match self.value {
+            RpcValue::Scalar(value) => value.encode_rpc_param(
+                dst,
+                self.flags.contains(RpcStatus::ByRefValue),
+                collation,
+            )?,
+            RpcValue::Table(value) => value.encode(dst)?,
         }
 
         Ok(())
@@ -129,17 +159,7 @@ impl<'a> Encode<BytesMut> for TokenRpcRequest<'a> {
 
 impl<'a> Encode<BytesMut> for RpcParam<'a> {
     fn encode(self, dst: &mut BytesMut) -> Result<()> {
-        put_b_varchar(dst, &self.name, "RPC parameter name")?;
-        dst.put_u8(self.flags.bits());
-
-        match self.value {
-            RpcValue::Scalar(value) => {
-                value.encode_rpc_param(dst, self.flags.contains(RpcStatus::ByRefValue))?
-            }
-            RpcValue::Table(value) => value.encode(dst)?,
-        }
-
-        Ok(())
+        self.encode_in(dst, None)
     }
 }
 
@@ -162,6 +182,7 @@ mod tests {
                 value: scalar(ColumnData::I32(Some(1))),
             }],
             [0u8; 8],
+            None,
         );
 
         let mut buf = BytesMut::new();
@@ -190,13 +211,13 @@ mod tests {
     fn proc_name_over_65535_utf16_units_is_an_error() {
         // 65536 wrapped the US_VARCHAR length to 0; a surrogate pair is two units.
         for name in ["a".repeat(65_536), "\u{1F600}".repeat(32_768)] {
-            let req = TokenRpcRequest::new(name, vec![], [0u8; 8]);
+            let req = TokenRpcRequest::new(name, vec![], [0u8; 8], None);
             let err = req.encode(&mut BytesMut::new()).unwrap_err();
             assert!(matches!(err, crate::Error::Conversion(_)), "{err:?}");
         }
 
         let mut buf = BytesMut::new();
-        TokenRpcRequest::new("a".repeat(65_535), vec![], [0u8; 8])
+        TokenRpcRequest::new("a".repeat(65_535), vec![], [0u8; 8], None)
             .encode(&mut buf)
             .unwrap();
         let len = u16::from_le_bytes([buf[ALL_HEADERS_LEN_TX], buf[ALL_HEADERS_LEN_TX + 1]]);
@@ -206,7 +227,7 @@ mod tests {
     #[test]
     fn named_and_by_id_differ_only_in_proc_slot() {
         let by_id = {
-            let req = TokenRpcRequest::new(RpcProcId::ExecuteSQL, vec![], [0u8; 8]);
+            let req = TokenRpcRequest::new(RpcProcId::ExecuteSQL, vec![], [0u8; 8], None);
             let mut buf = BytesMut::new();
             req.encode(&mut buf).unwrap();
             buf

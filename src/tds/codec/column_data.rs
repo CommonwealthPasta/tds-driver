@@ -45,6 +45,7 @@ pub(crate) const MAX_PREALLOC: usize = 8192; // 8 KiB
 pub(crate) const MAX_PLP_SIZE: usize = i32::MAX as usize;
 
 use super::{Encode, FixedLenType, TypeInfo, VarLenContext, VarLenType};
+use crate::tds::collation::Collation;
 #[cfg(feature = "tds73")]
 use crate::tds::time::{Date, DateTime2, DateTimeOffset, Time};
 use crate::{
@@ -123,6 +124,49 @@ pub(crate) fn put_plp_utf16(dst: &mut BytesMut, s: &str) -> crate::Result<()> {
 }
 
 /// `nvarchar(max)` TYPE_INFO and value.
+/// A `varchar` parameter: TYPE_INFO in the session's `collation`, then the
+/// value in that collation's code page. `varchar(8000)`, or `varchar(max)` as
+/// PLP when `max`; a NULL is `varchar(8000)` either way, unless `max` asks for
+/// an OUT parameter's full width.
+fn put_varchar(
+    dst: &mut BytesMutWithTypeInfo<'_>,
+    s: Option<&str>,
+    collation: Option<Collation>,
+    max: bool,
+) -> crate::Result<()> {
+    let collation = collation.ok_or_else(|| {
+        crate::Error::Encoding(
+            "a varchar parameter needs the session collation, which the server has not sent".into(),
+        )
+    })?;
+    let bytes = s
+        .map(|s| string::encode_varchar(s, &collation))
+        .transpose()?;
+
+    dst.put_u8(VarLenType::BigVarChar as u8);
+    dst.put_u16_le(if max { 0xffff } else { 8000 });
+    dst.put_u32_le(collation.info());
+    dst.put_u8(collation.sort_id());
+
+    match (bytes, max) {
+        (Some(bytes), false) => {
+            // `type_name` promises this: UTF-8 is never shorter than the code page.
+            let len = u16::try_from(bytes.len()).map_err(|_| {
+                crate::Error::Encoding(
+                    format!("{} bytes do not fit varchar(8000)", bytes.len()).into(),
+                )
+            })?;
+            dst.put_u16_le(len);
+            dst.extend_from_slice(&bytes);
+        }
+        (Some(bytes), true) => put_plp(dst, &bytes),
+        (None, false) => dst.put_u16_le(0xffff),
+        (None, true) => dst.put_u64_le(PLP_NULL),
+    }
+
+    Ok(())
+}
+
 fn put_nvarchar_max(dst: &mut BytesMut, s: Option<&str>) -> crate::Result<()> {
     // length: 0xffff and raw collation
     dst.put_u8(VarLenType::NVarchar as u8);
@@ -540,8 +584,20 @@ pub enum ColumnData<'a> {
     F64(Option<f64>),
     /// Boolean.
     Bit(Option<bool>),
-    /// A string value.
+    /// A string value. Sent as `nvarchar`; every character column reads as
+    /// this.
     String(Option<Cow<'a, str>>),
+    /// A string value to send as `varchar`, in the session's collation.
+    ///
+    /// Use it for a parameter compared with a `varchar` column under a
+    /// `SQL_*` collation: an `nvarchar` parameter outranks the column there,
+    /// so the server converts every row and cannot seek the index. A
+    /// character the collation's code page lacks is an error, and a value
+    /// over 8000 bytes goes as `varchar(max)`.
+    ///
+    /// Only sent, never read: a `varchar` column arrives as
+    /// [`String`](Self::String) too.
+    VarChar(Option<Cow<'a, str>>),
     /// A Guid (UUID) value.
     Guid(Option<Uuid>),
     /// Binary data.
@@ -586,6 +642,11 @@ impl<'a> ColumnData<'a> {
             ColumnData::String(Some(ref s)) if fits_nvarchar_4000(s) => "nvarchar(4000)".into(),
             // The encoder rejects a string nvarchar(max) cannot hold.
             ColumnData::String(Some(_)) => "nvarchar(max)".into(),
+            // By UTF-8 length, as the encoder decides: no code page takes
+            // more bytes than UTF-8, so what fits here fits on the wire.
+            ColumnData::VarChar(None) => "varchar(8000)".into(),
+            ColumnData::VarChar(Some(ref s)) if s.len() <= 8000 => "varchar(8000)".into(),
+            ColumnData::VarChar(Some(_)) => "varchar(max)".into(),
             ColumnData::Guid(_) => "uniqueidentifier".into(),
             // A NULL is declared as a short value of its type, and as the
             // TYPE_INFO `encode` sends with it, so they share a cached plan.
@@ -651,11 +712,26 @@ impl<'a> ColumnData<'a> {
     /// the result. SqlClient sends the larger of `Size` and the value's
     /// length, or (max) for `Size = -1`, and rejects a NULL variable-length
     /// OUT parameter with no `Size`; there is no `Size` here.
-    pub(crate) fn encode_rpc_param(self, dst: &mut BytesMut, out: bool) -> crate::Result<()> {
+    ///
+    /// `collation` is the session's, for a `varchar` value.
+    pub(crate) fn encode_rpc_param(
+        self,
+        dst: &mut BytesMut,
+        out: bool,
+        collation: Option<Collation>,
+    ) -> crate::Result<()> {
         match self {
             ColumnData::String(s) if out => put_nvarchar_max(dst, s.as_deref())?,
+            ColumnData::VarChar(s) if out => put_varchar(
+                &mut BytesMutWithTypeInfo::new(dst),
+                s.as_deref(),
+                collation,
+                true,
+            )?,
             ColumnData::Binary(b) if out => put_varbinary_max(dst, b.as_deref())?,
-            value => return value.encode(&mut BytesMutWithTypeInfo::new(dst)),
+            value => {
+                return value.encode(&mut BytesMutWithTypeInfo::new(dst).with_collation(collation))
+            }
         }
 
         Ok(())
@@ -678,7 +754,18 @@ impl<'a> Encode<BytesMutWithTypeInfo<'a>> for ColumnData<'a> {
         #[cfg(not(feature = "tds73"))]
         let data = self;
 
+        // A column (bulk load, TVP) has its own character type and collation;
+        // `varchar` only means something for a parameter.
+        let data = match (data, dst.type_info()) {
+            (ColumnData::VarChar(s), Some(_)) => ColumnData::String(s),
+            (data, _) => data,
+        };
+
         match (data, dst.type_info()) {
+            (ColumnData::VarChar(opt), None) => {
+                let max = opt.as_ref().is_some_and(|s| s.len() > 8000);
+                put_varchar(dst, opt.as_deref(), dst.collation(), max)?;
+            }
             (ColumnData::Bit(opt), Some(TypeInfo::VarLenSized(vlc)))
                 if vlc.r#type() == VarLenType::Bitn =>
             {
@@ -1373,13 +1460,93 @@ mod tests {
         for null in nulls {
             for out in [false, true] {
                 let mut buf = BytesMut::new();
-                null.clone().encode_rpc_param(&mut buf, out).unwrap();
+                null.clone().encode_rpc_param(&mut buf, out, None).unwrap();
                 assert_ne!(buf[0], FixedLenType::Null as u8, "{null:?}");
 
                 let (_, decoded) = decode_rpc_param(buf).await;
                 assert_eq!(decoded, null);
             }
         }
+    }
+
+    #[tokio::test]
+    async fn varchar_params_go_in_the_session_collation() {
+        // Windows-1252, as SQL_Latin1_General_CP1_CI_AS.
+        let collation = Some(Collation::new(0x0409, 0));
+        let text = |v: &ColumnData<'_>| match v {
+            ColumnData::VarChar(s) | ColumnData::String(s) => s.clone().map(Cow::into_owned),
+            _ => None,
+        };
+
+        for (value, out, expected_len) in [
+            (ColumnData::VarChar(Some("Väinämöinen".into())), false, 8000),
+            (
+                ColumnData::VarChar(Some("Väinämöinen".into())),
+                true,
+                0xffff,
+            ),
+            (ColumnData::VarChar(None), false, 8000),
+            (ColumnData::VarChar(None), true, 0xffff),
+            (
+                ColumnData::VarChar(Some("a".repeat(8001).into())),
+                false,
+                0xffff,
+            ),
+        ] {
+            let mut buf = BytesMut::new();
+            value
+                .clone()
+                .encode_rpc_param(&mut buf, out, collation)
+                .unwrap();
+
+            // One byte per character, so the TYPE_INFO, the 2-byte length and
+            // 11 bytes of value, when not PLP.
+            if expected_len == 8000 {
+                let value_len = text(&value).map_or(0, |s| s.chars().count());
+                assert_eq!(buf.len(), 1 + 2 + 5 + 2 + value_len, "{value:?}");
+            }
+
+            let (ti, decoded) = decode_rpc_param(buf).await;
+            match ti {
+                TypeInfo::VarLenSized(vlc) => {
+                    assert_eq!(vlc.r#type(), VarLenType::BigVarChar, "{value:?}");
+                    assert_eq!(vlc.len(), expected_len, "{value:?}");
+                    assert_eq!(vlc.collation(), collation, "{value:?}");
+                }
+                other => panic!("{other:?}"),
+            }
+            // Read back as the plain string every character column is.
+            assert_eq!(decoded, ColumnData::String(text(&value).map(Cow::Owned)));
+        }
+    }
+
+    #[test]
+    fn a_varchar_param_needs_a_collation_and_a_character_it_holds() {
+        let mut buf = BytesMut::new();
+        let err = ColumnData::VarChar(Some("a".into()))
+            .encode_rpc_param(&mut buf, false, None)
+            .unwrap_err();
+        assert!(matches!(err, Error::Encoding(_)), "{err:?}");
+
+        let collation = Some(Collation::new(0x0409, 0));
+        let err = ColumnData::VarChar(Some("日本".into()))
+            .encode_rpc_param(&mut buf, false, collation)
+            .unwrap_err();
+        assert!(matches!(err, Error::Encoding(_)), "{err:?}");
+        assert!(buf.is_empty(), "nothing written before the error");
+    }
+
+    #[test]
+    fn varchar_params_are_declared_by_utf8_length() {
+        assert_eq!(ColumnData::VarChar(None).type_name(), "varchar(8000)");
+        assert_eq!(
+            ColumnData::VarChar(Some("a".repeat(8000).into())).type_name(),
+            "varchar(8000)"
+        );
+        assert_eq!(
+            ColumnData::VarChar(Some("a".repeat(8001).into())).type_name(),
+            "varchar(max)"
+        );
     }
 
     #[tokio::test]
@@ -1394,7 +1561,7 @@ mod tests {
         for value in values {
             for (out, max_len) in [(true, 0xffff), (false, 8000)] {
                 let mut buf = BytesMut::new();
-                value.clone().encode_rpc_param(&mut buf, out).unwrap();
+                value.clone().encode_rpc_param(&mut buf, out, None).unwrap();
 
                 let (ti, decoded) = decode_rpc_param(buf).await;
                 match ti {
@@ -1471,7 +1638,7 @@ mod tests {
             // And the TYPE_INFO sent with the NULL is the declared type's.
             let ti = |data: ColumnData<'static>| async {
                 let mut buf = BytesMut::new();
-                data.encode_rpc_param(&mut buf, false).unwrap();
+                data.encode_rpc_param(&mut buf, false, None).unwrap();
                 format!("{:?}", decode_rpc_param(buf).await.0)
             };
             assert_eq!(ti(null.clone()).await, ti(value).await, "{null:?}");
@@ -1544,7 +1711,7 @@ mod tests {
 
         // 2^30 units, one more than nvarchar(max) holds.
         let err = ColumnData::String(Some("a".repeat(1 << 30).into()))
-            .encode_rpc_param(&mut BytesMut::new(), false)
+            .encode_rpc_param(&mut BytesMut::new(), false, None)
             .unwrap_err();
         assert!(matches!(err, Error::Conversion(_)), "{err:?}");
     }
@@ -1557,7 +1724,7 @@ mod tests {
 
         let mut buf = BytesMut::new();
         ColumnData::String(Some(euros.into()))
-            .encode_rpc_param(&mut buf, false)
+            .encode_rpc_param(&mut buf, false, None)
             .unwrap();
 
         // TYPE_INFO (8 bytes), unknown length (8), chunk length, units, terminator.
@@ -2744,7 +2911,10 @@ mod tests {
     fn a_non_finite_float_is_rejected_before_it_is_sent() {
         for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
             // As an RPC parameter, at both widths, and into a bulk column.
-            for data in [ColumnData::F64(Some(value)), ColumnData::F32(Some(value as f32))] {
+            for data in [
+                ColumnData::F64(Some(value)),
+                ColumnData::F32(Some(value as f32)),
+            ] {
                 let mut buf = BytesMut::new();
                 let err = data
                     .clone()
@@ -2990,7 +3160,7 @@ mod tests {
         assert!(matches!(err, Error::Conversion(_)), "{err:?}");
 
         let err = ColumnData::Xml(Some(Cow::Owned(XmlData::new(s))))
-            .encode_rpc_param(&mut BytesMut::new(), false)
+            .encode_rpc_param(&mut BytesMut::new(), false, None)
             .unwrap_err();
         assert!(matches!(err, Error::Conversion(_)), "{err:?}");
     }
@@ -3003,7 +3173,7 @@ mod tests {
 
         for out in [false, true] {
             let err = ColumnData::Binary(Some(big.as_slice().into()))
-                .encode_rpc_param(&mut BytesMut::new(), out)
+                .encode_rpc_param(&mut BytesMut::new(), out, None)
                 .unwrap_err();
             assert!(matches!(err, Error::Conversion(_)), "{out}: {err:?}");
         }

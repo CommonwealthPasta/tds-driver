@@ -3428,6 +3428,129 @@ where
     Ok(row.get(0).unwrap())
 }
 
+/// The type a parameter arrives as, and its declared length.
+async fn param_type<S>(
+    conn: &mut tds_driver::Client<S>,
+    value: &dyn tds_driver::ToSql,
+) -> Result<(String, i32)>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    // ISNULL takes the first argument's type, so a NULL parameter answers too.
+    let row = conn
+        .query(
+            "SELECT CAST(SQL_VARIANT_PROPERTY(ISNULL(@P1, ''), 'BaseType') AS nvarchar(20)), \
+             CAST(SQL_VARIANT_PROPERTY(ISNULL(@P1, ''), 'MaxLength') AS int)",
+            &[value],
+        )
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+
+    Ok((
+        row.get::<&str, _>(0).unwrap().to_owned(),
+        row.get(1).unwrap(),
+    ))
+}
+
+// A `&str` goes as nvarchar. Against an indexed varchar column under a SQL_*
+// collation that forces a scan (the nvarchar parameter outranks the column),
+// so a caller can ask for varchar instead; it is sent in the session's
+// collation.
+#[test_on_runtimes]
+async fn a_varchar_parameter_is_sent_as_varchar<S>(mut conn: tds_driver::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use tds_driver::ColumnData;
+
+    let varchar = |s: &'static str| ColumnData::VarChar(Some(s.into()));
+
+    assert_eq!(
+        param_type(&mut conn, &"abc").await?,
+        ("nvarchar".into(), 8000)
+    );
+    assert_eq!(
+        param_type(&mut conn, &varchar("abc")).await?,
+        ("varchar".into(), 8000)
+    );
+    assert_eq!(
+        param_type(&mut conn, &ColumnData::VarChar(None)).await?,
+        ("varchar".into(), 8000)
+    );
+
+    // Over 8000 bytes it goes as varchar(max), which sql_variant cannot
+    // hold: one byte per character shows varchar, 8001 of them shows max.
+    let long = "a".repeat(8001);
+    let row = conn
+        .query(
+            "SELECT DATALENGTH(@P1), LEN(@P1)",
+            &[&ColumnData::VarChar(Some(long.as_str().into()))],
+        )
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+    assert_eq!(row.get::<i64, _>(0), Some(8001));
+    assert_eq!(row.get::<i64, _>(1), Some(8001));
+
+    // Round trips, in the session collation: SQL_Latin1_General_CP1 is code
+    // page 1252 on the test server, which holds these and not kanji.
+    for s in ["", "abc", "Väinämöinen", "€"] {
+        let row = conn
+            .query("SELECT @P1, DATALENGTH(@P1)", &[&varchar(s)])
+            .await?
+            .into_row()
+            .await?
+            .unwrap();
+        assert_eq!(row.get::<&str, _>(0), Some(s));
+        assert_eq!(row.get::<i32, _>(1), Some(s.chars().count() as i32), "{s}");
+    }
+
+    let row = conn
+        .query("SELECT @P1", &[&ColumnData::VarChar(None)])
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+    assert_eq!(row.get::<&str, _>(0), None);
+
+    let code_page: i32 = conn
+        .query(
+            "SELECT CONVERT(int, COLLATIONPROPERTY(CONVERT(nvarchar(128), DATABASEPROPERTYEX(DB_NAME(), 'Collation')), 'CodePage'))",
+            &[],
+        )
+        .await?
+        .into_row()
+        .await?
+        .unwrap()
+        .get(0)
+        .unwrap();
+
+    if code_page == 1252 {
+        // Not silently a '?': the caller asked for a type that cannot hold it.
+        let err = conn
+            .query("SELECT @P1", &[&varchar("日本")])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, tds_driver::error::Error::Encoding(_)),
+            "got {err:?}"
+        );
+
+        let row = conn
+            .query("SELECT @P1", &[&1])
+            .await?
+            .into_row()
+            .await?
+            .unwrap();
+        assert_eq!(row.get::<i32, _>(0), Some(1));
+    }
+
+    Ok(())
+}
+
 #[test_on_runtimes]
 async fn nvarchar_4000_threshold_is_in_utf16_units<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where

@@ -93,7 +93,7 @@ impl<'a> FromSql<'a> for &'a XmlData {
 impl FromSqlOwned for String {
     fn from_sql_owned(value: ColumnData<'static>) -> crate::Result<Option<Self>> {
         match value {
-            ColumnData::String(s) => Ok(s.map(|s| s.into_owned())),
+            ColumnData::String(s) | ColumnData::VarChar(s) => Ok(s.map(|s| s.into_owned())),
             v => Err(crate::Error::Conversion(
                 format!("cannot interpret {:?} as a String value", v).into(),
             )),
@@ -104,7 +104,7 @@ impl FromSqlOwned for String {
 impl<'a> FromSql<'a> for &'a str {
     fn from_sql(value: &'a ColumnData<'static>) -> crate::Result<Option<Self>> {
         match value {
-            ColumnData::String(s) => Ok(s.as_ref().map(|s| s.as_ref())),
+            ColumnData::String(s) | ColumnData::VarChar(s) => Ok(s.as_ref().map(|s| s.as_ref())),
             v => Err(crate::Error::Conversion(
                 format!("cannot interpret {:?} as a String value", v).into(),
             )),

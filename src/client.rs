@@ -797,6 +797,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
             proc_id,
             rpc_params,
             self.connection.context().transaction_descriptor(),
+            self.connection.context().collation(),
         );
 
         let id = self.connection.context_mut().next_packet_id();
@@ -820,6 +821,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
             command_name,
             rpc_params,
             self.connection.context().transaction_descriptor(),
+            self.connection.context().collation(),
         );
 
         let id = self.connection.context_mut().next_packet_id();

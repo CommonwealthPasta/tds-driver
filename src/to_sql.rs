@@ -23,6 +23,8 @@ use uuid::Uuid;
 /// |`bool`|`bit`|
 /// |`String`/`&str` (< 4000 characters)|`nvarchar(4000)`|
 /// |`String`/`&str`|`nvarchar(max)`|
+/// |[`ColumnData::VarChar`] (< 8000 bytes)|`varchar(8000)`|
+/// |[`ColumnData::VarChar`]|`varchar(max)`|
 /// |`Vec<u8>`/`&[u8]` (< 8000 bytes)|`varbinary(8000)`|
 /// |`Vec<u8>`/`&[u8]`|`varbinary(max)`|
 /// |[`Uuid`]|`uniqueidentifier`|
@@ -43,6 +45,11 @@ use uuid::Uuid;
 /// types can also be used with `ntext`, `text`, `varchar`, `nchar` and `char`
 /// columns. All binary types can also be used with `binary` and `image`
 /// columns.
+///
+/// A string compared with an indexed `varchar` column under a `SQL_*`
+/// collation is better sent as [`ColumnData::VarChar`]: an `nvarchar`
+/// parameter outranks the column there, so the server converts every row and
+/// scans the index instead of seeking it.
 ///
 /// See the [`time`] module for more information about the date and time structs.
 ///

@@ -1,4 +1,4 @@
-use crate::TypeInfo;
+use crate::{tds::collation::Collation, TypeInfo};
 use bytes::buf::UninitSlice;
 use bytes::{BufMut, BytesMut};
 use std::borrow::{Borrow, BorrowMut};
@@ -7,6 +7,7 @@ use std::ops::{Deref, DerefMut};
 pub(crate) struct BytesMutWithTypeInfo<'a> {
     bytes: &'a mut BytesMut,
     type_info: Option<&'a TypeInfo>,
+    collation: Option<Collation>,
 }
 
 impl<'a> BytesMutWithTypeInfo<'a> {
@@ -14,6 +15,7 @@ impl<'a> BytesMutWithTypeInfo<'a> {
         BytesMutWithTypeInfo {
             bytes,
             type_info: None,
+            collation: None,
         }
     }
 
@@ -22,8 +24,19 @@ impl<'a> BytesMutWithTypeInfo<'a> {
         self
     }
 
+    /// The session's collation, which a `varchar` parameter is sent in. A
+    /// column's own collation is in its type info instead.
+    pub fn with_collation(mut self, collation: Option<Collation>) -> Self {
+        self.collation = collation;
+        self
+    }
+
     pub fn type_info(&self) -> Option<&'a TypeInfo> {
         self.type_info
+    }
+
+    pub fn collation(&self) -> Option<Collation> {
+        self.collation
     }
 }
 

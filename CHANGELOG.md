@@ -12,6 +12,22 @@ earlier are that history, under those names; up to 0.12.3 it is upstream's.
 
 ## [Unreleased]
 
+### Breaking
+
+- **`ColumnData` has a new variant, `VarChar`.** An exhaustive `match` on it
+  needs an arm.
+
+### Added
+
+- **`ColumnData::VarChar` sends a string as `varchar`** in the session's
+  collation, where `&str` and `String` go as `nvarchar`. Against an indexed
+  `varchar` column under a `SQL_*` collation an `nvarchar` parameter outranks
+  the column, so the server converts every row and scans instead of seeking;
+  a `varchar` parameter seeks. A value over 8000 bytes goes as
+  `varchar(max)`; a character the code page lacks is an `Error::Encoding`,
+  not a `?`. Only sent, never read: a `varchar` column still arrives as
+  `ColumnData::String`.
+
 ### Changed
 
 - **A NaN or infinite `f32`/`f64` is an `Error::Conversion` before anything
