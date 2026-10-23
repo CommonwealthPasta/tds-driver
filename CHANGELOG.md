@@ -12,8 +12,17 @@ earlier are that history, under those names; up to 0.12.3 it is upstream's.
 
 ## [Unreleased]
 
-The first release as `tds-driver` (0.1.0). It breaks compatibility with
-`tiberius` and `tiberius-ng`; see **Breaking** below.
+### Added
+
+- **`Client::simple_execute`** runs SQL with no parameters as a plain batch
+  and returns an `ExecuteResult`, the counterpart of `simple_query` for
+  statements that return no rows. Unlike `execute`, which goes through
+  `sp_executesql`, a `SET` option or `BEGIN TRAN` in it applies to the session.
+
+## [0.1.0] - 2026-10-22
+
+The first release as `tds-driver`. It breaks compatibility with `tiberius` and
+`tiberius-ng`; see **Breaking** below.
 
 ### Added
 
@@ -853,6 +862,7 @@ has completely settled on Tokio 1.0.
 - Support for many more types
 - Async/await, futures 0.3
 
-[Unreleased]: https://github.com/CommonwealthPasta/tds-driver/commits/main
+[Unreleased]: https://github.com/CommonwealthPasta/tds-driver/compare/c4558192e166e5a8940c34be3ca33f745c19b048...main
+[0.1.0]: https://github.com/CommonwealthPasta/tds-driver/compare/435b72d...c4558192e166e5a8940c34be3ca33f745c19b048
 [0.13.1]: https://github.com/MattJackson/tiberius-ng/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/MattJackson/tiberius-ng/compare/v0.12.3...v0.13.0

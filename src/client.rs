@@ -275,6 +275,35 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
         Ok(result)
     }
 
+    /// Executes a batch of SQL statements sent verbatim, as [`simple_query`]
+    /// does, and returns the rows each affected rather than any result set.
+    /// The counterpart of [`execute`] for SQL with no parameters.
+    ///
+    /// Because it is a plain batch and not `sp_executesql`, a `SET` option or
+    /// `BEGIN TRAN` in it applies to the session, as it would from a query
+    /// tool.
+    ///
+    /// # Warning
+    ///
+    /// Do not use this with any user specified input. Please resort to prepared
+    /// statements using the [`execute`] method.
+    ///
+    /// [`simple_query`]: #method.simple_query
+    /// [`execute`]: #method.execute
+    pub async fn simple_execute<'a>(
+        &mut self,
+        query: impl Into<Cow<'a, str>>,
+    ) -> crate::Result<ExecuteResult> {
+        self.connection.flush_stream().await?;
+
+        let req = BatchRequest::new(query, self.connection.context().transaction_descriptor());
+
+        let id = self.connection.context_mut().next_packet_id();
+        self.connection.send(PacketHeader::batch(id), req).await?;
+
+        ExecuteResult::new(&mut self.connection).await
+    }
+
     /// Execute a `BULK INSERT` statement, efficiently storing a large number of
     /// rows to a specified table. Note: make sure the input row follows the same
     /// schema as the table, otherwise calling `send()` will return an error.

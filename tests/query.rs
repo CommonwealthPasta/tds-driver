@@ -517,6 +517,68 @@ where
 }
 
 #[test_on_runtimes]
+async fn simple_execute_counts_rows_like_execute<S>(mut conn: tds_driver::Client<S>) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let table = random_table().await;
+
+    conn.simple_execute(format!("CREATE TABLE ##{table} (id int)"))
+        .await?;
+
+    let result = conn
+        .simple_execute(format!(
+            "INSERT INTO ##{table} (id) VALUES (1); INSERT INTO ##{table} (id) VALUES (2), (3); SELECT 1"
+        ))
+        .await?;
+
+    assert_eq!(vec![1, 2], result.rows_affected());
+    assert_eq!(3, result.total());
+
+    Ok(())
+}
+
+#[test_on_runtimes]
+async fn simple_execute_is_a_batch_so_set_options_stick<S>(
+    mut conn: tds_driver::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    // Through sp_executesql, which `execute` uses, a SET is undone on return.
+    conn.execute("SET LOCK_TIMEOUT 4321", &[]).await?;
+    let row = conn
+        .simple_query("SELECT @@LOCK_TIMEOUT")
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+    assert_eq!(Some(-1i32), row.get(0));
+
+    conn.simple_execute("SET LOCK_TIMEOUT 4321").await?;
+    let row = conn
+        .simple_query("SELECT @@LOCK_TIMEOUT")
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+    assert_eq!(Some(4321i32), row.get(0));
+
+    // A transaction statement works too, where sp_executesql raises 266.
+    conn.simple_execute("BEGIN TRAN").await?;
+    let row = conn
+        .simple_query("SELECT @@TRANCOUNT")
+        .await?
+        .into_row()
+        .await?
+        .unwrap();
+    assert_eq!(Some(1i32), row.get(0));
+    conn.simple_execute("ROLLBACK").await?;
+
+    Ok(())
+}
+
+#[test_on_runtimes]
 async fn correct_row_handling_when_not_enough_data<S>(mut conn: tds_driver::Client<S>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
