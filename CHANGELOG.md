@@ -18,6 +18,10 @@ earlier are that history, under those names; up to 0.12.3 it is upstream's.
   and returns an `ExecuteResult`, the counterpart of `simple_query` for
   statements that return no rows. Unlike `execute`, which goes through
   `sp_executesql`, a `SET` option or `BEGIN TRAN` in it applies to the session.
+- **`Client::in_transaction`** reports whether the server says the connection
+  is in a transaction. It goes `false` when the server rolls one back on its
+  own -- a deadlock, an error under `SET XACT_ABORT ON`, a `ROLLBACK` in a
+  procedure -- which the client otherwise has no way to learn.
 
 ## [0.1.0] - 2026-10-22
 

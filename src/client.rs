@@ -588,6 +588,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Client<S> {
         self.connection.cancel_handle()
     }
 
+    /// Whether the connection is inside a transaction, as far as the server
+    /// has said.
+    ///
+    /// `true` from the ENVCHANGE token that begins one, whether through
+    /// [`begin_transaction`] or a `BEGIN TRAN` in a batch, until the one that
+    /// ends it. The server also sends that one when it rolls a transaction
+    /// back on its own -- a deadlock, an error under `SET XACT_ABORT ON`, a
+    /// `ROLLBACK` in a procedure -- so this is how a client learns that the
+    /// transaction it thinks it is in is gone, and that its next statement
+    /// would run in autocommit.
+    ///
+    /// [`begin_transaction`]: #method.begin_transaction
+    pub fn in_transaction(&self) -> bool {
+        self.connection.context().transaction_descriptor() != [0; 8]
+    }
+
     /// Closes this database connection explicitly.
     pub async fn close(self) -> crate::Result<()> {
         self.connection.close().await

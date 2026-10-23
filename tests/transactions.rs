@@ -272,3 +272,47 @@ where
 
     Ok(())
 }
+
+#[test_on_runtimes]
+async fn in_transaction_follows_what_the_server_says<S>(
+    mut conn: tds_driver::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    assert!(!conn.in_transaction());
+
+    conn.begin_transaction().await?;
+    assert!(conn.in_transaction());
+    conn.commit_transaction().await?;
+    assert!(!conn.in_transaction());
+
+    // T-SQL transaction statements send the same ENVCHANGE tokens.
+    conn.simple_query("BEGIN TRAN")
+        .await?
+        .into_results()
+        .await?;
+    assert!(conn.in_transaction());
+    conn.simple_query("ROLLBACK").await?.into_results().await?;
+    assert!(!conn.in_transaction());
+
+    // Under XACT_ABORT the server rolls back by itself on an error, and says so.
+    conn.simple_query("SET XACT_ABORT ON")
+        .await?
+        .into_results()
+        .await?;
+    conn.begin_transaction().await?;
+    assert!(conn.in_transaction());
+    let failed = match conn.simple_query("SELECT 1 / 0").await {
+        Ok(stream) => stream.into_results().await.map(|_| ()),
+        Err(e) => Err(e),
+    };
+    assert!(failed.is_err());
+    assert!(!conn.in_transaction());
+    conn.simple_query("SET XACT_ABORT OFF")
+        .await?
+        .into_results()
+        .await?;
+
+    Ok(())
+}
