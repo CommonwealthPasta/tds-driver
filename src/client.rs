@@ -76,6 +76,16 @@ use std::{borrow::Cow, fmt::Debug};
 /// new connection (a connection pool should discard the connection on error)
 /// rather than reuse it.
 ///
+/// # A connection that is gone
+///
+/// When the server drops the connection -- a `KILL`, a severity 20+ error, a
+/// restart, a network failure -- the request in flight fails with the I/O
+/// error. From then on every use fails with an [`Error::Io`] whose `kind` is
+/// [`NotConnected`](std::io::ErrorKind::NotConnected) and whose message names
+/// that first error; the same follows a cancelled write. A pool can discard a
+/// connection on that kind alone.
+///
+/// [`Error::Io`]: crate::error::Error::Io
 /// [`Config`]: struct.Config.html
 #[derive(Debug)]
 pub struct Client<S: AsyncRead + AsyncWrite + Unpin + Send> {

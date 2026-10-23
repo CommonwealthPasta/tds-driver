@@ -19,6 +19,15 @@ earlier are that history, under those names; up to 0.12.3 it is upstream's.
   no such value; the server used to answer with its error 8023, "the RPC
   stream is incorrect", which named the parameter but not the problem.
 
+- **A connection the server has dropped says so once, then says it is
+  closed.** The first failure is the I/O error itself (it used to come wrapped
+  in a second I/O error), a clean EOF reads "the server closed the
+  connection", and every later use is `Error::Io` with `kind:
+  NotConnected` naming that first error. It used to be a `Protocol` error
+  blaming a cancelled write that never happened. A connection poisoned by a
+  write cancelled partway through a message reports the same way, with that
+  as the cause.
+
 ### Fixed
 
 - **Without `tds73`, a `datetime` parameter is rounded to the nearest 1/300 s

@@ -44,6 +44,18 @@ use sspi::{
 #[cfg(all(unix, feature = "integrated-auth-gssapi"))]
 use std::ops::Deref;
 use std::{cmp, fmt::Debug, io, pin::Pin, task};
+
+/// What poisons a connection whose multi-packet write did not complete.
+const CANCELLED_WRITE: &str = "a write was cancelled partway through a message";
+
+/// The error as a poison cause: an I/O error's own message, so it is not
+/// prefixed twice when reported again.
+fn cause_of(e: &crate::Error) -> String {
+    match e {
+        crate::Error::Io { message, .. } => message.clone(),
+        other => other.to_string(),
+    }
+}
 use task::Poll;
 use tracing::{event, Level};
 #[cfg(all(windows, feature = "winauth"))]
@@ -67,13 +79,15 @@ where
     flushed: bool,
     context: Context,
     buf: BytesMut,
-    /// Set for the duration of a multi-packet write. A message is only partly
-    /// on the wire while this is `true`; if the writing future is dropped
-    /// (a cancelled `query`/`execute`, a `select!` losing the race, a
-    /// `tokio::time::timeout` firing) the flag stays set, so the next write on
-    /// the same connection fails cleanly instead of appending a second message
-    /// after a half-sent one and silently desyncing the server.
-    poisoned: bool,
+    /// Why the connection can no longer be used, once it can't. Set for the
+    /// duration of a multi-packet write: a message is only partly on the wire
+    /// then, and if the writing future is dropped (a cancelled
+    /// `query`/`execute`, a `select!` losing the race, a `tokio::time::timeout`
+    /// firing) it stays set, so the next write fails cleanly instead of
+    /// appending a second message after a half-sent one and silently desyncing
+    /// the server. An I/O error that ends the connection sets it to that
+    /// error, so every later use names it.
+    poisoned: Option<String>,
     /// Shared with the [`CancelHandle`]s handed out for this connection.
     cancel: CancelHandle,
     /// A request has been sent and `flush_stream` hasn't discarded the rest of
@@ -174,7 +188,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
             context,
             flushed: false,
             buf: BytesMut::new(),
-            poisoned: false,
+            poisoned: None,
             cancel: CancelHandle::default(),
             awaiting_response: false,
             attention: Attention::None,
@@ -297,8 +311,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         let packet_size = (self.context.packet_size() as usize) - HEADER_BYTES;
 
         // Mark the connection poisoned across the multi-packet write; a clean
-        // completion clears it below. A future dropped mid-loop leaves it set.
-        self.poisoned = true;
+        // completion clears it below. A future dropped mid-loop leaves it set,
+        // and a failed write replaces it with the error.
+        self.poisoned = Some(CANCELLED_WRITE.into());
 
         while !payload.is_empty() {
             let writable = cmp::min(payload.len(), packet_size);
@@ -316,27 +331,39 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                 split_payload.len() + HEADER_BYTES,
             );
 
-            self.write_to_wire(header, split_payload).await?;
+            let written = self.write_to_wire(header, split_payload).await;
+            self.poison_on_error(written)?;
         }
 
-        self.flush_sink().await?;
-        self.poisoned = false;
+        let flushed = self.flush_sink().await;
+        self.poison_on_error(flushed)?;
+        self.poisoned = None;
 
         Ok(())
     }
 
-    /// Returns an error if a previous multi-packet write on this connection was
-    /// interrupted (e.g. the query/execute future was cancelled), which would
-    /// have left a partial message on the wire. The connection cannot be safely
-    /// reused in that state and should be dropped.
+    /// Fails if the connection can no longer be used: a multi-packet write on
+    /// it was interrupted (e.g. the query/execute future was cancelled) and
+    /// left a partial message on the wire, or an error ended it. The error
+    /// names the cause; the connection should be dropped.
     fn ensure_not_poisoned(&self) -> crate::Result<()> {
-        if self.poisoned {
-            return Err(crate::Error::Protocol(
-                "connection was left in an inconsistent state by a cancelled write and can no longer be used; open a new connection"
-                    .into(),
-            ));
+        match &self.poisoned {
+            Some(cause) => Err(crate::Error::Io {
+                kind: io::ErrorKind::NotConnected,
+                message: format!(
+                    "the connection can no longer be used: {cause}; open a new connection"
+                ),
+            }),
+            None => Ok(()),
         }
-        Ok(())
+    }
+
+    /// Records the error in `result`, if any, as what ended the connection.
+    fn poison_on_error<T>(&mut self, result: crate::Result<T>) -> crate::Result<T> {
+        if let Err(e) = &result {
+            self.poisoned = Some(cause_of(e));
+        }
+        result
     }
 
     /// Sends a LOGIN7 message from a zeroizing buffer. Under login-only
@@ -353,7 +380,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         let packet_size = (self.context.packet_size() as usize) - HEADER_BYTES;
         let mut offset = 0;
 
-        self.poisoned = true;
+        self.poisoned = Some(CANCELLED_WRITE.into());
 
         while offset < payload.len() {
             let end = cmp::min(payload.len(), offset + packet_size);
@@ -374,20 +401,23 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
 
             event!(Level::TRACE, "Sending a packet ({} bytes)", frame.len(),);
 
-            self.transport.write_all(frame.as_slice()).await?;
+            let written = self.transport.write_all(frame.as_slice()).await;
+            self.poison_on_error(written.map_err(crate::Error::from))?;
             frame.zeroize();
             payload[offset..end].zeroize();
 
             if offset == 0 {
-                (&mut *self.transport).flush().await?;
+                let flushed = (&mut *self.transport).flush().await;
+                self.poison_on_error(flushed.map_err(crate::Error::from))?;
                 self = self.post_login_encryption(encryption);
             }
 
             offset = end;
         }
 
-        (&mut *self.transport).flush().await?;
-        self.poisoned = false;
+        let flushed = (&mut *self.transport).flush().await;
+        self.poison_on_error(flushed.map_err(crate::Error::from))?;
+        self.poisoned = None;
 
         Ok(self)
     }
@@ -443,11 +473,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         match self.attention {
             Attention::Acknowledged => return Ok(()),
             _ if self.token == TokenState::Unrecoverable => {
-                self.poisoned = true;
-                return Err(crate::Error::Protocol(
+                let err = crate::Error::Protocol(
                     "a cancelled response was abandoned partway through a token too large to read again; open a new connection"
                         .into(),
-                ));
+                );
+                self.poisoned = Some(cause_of(&err));
+                return Err(err);
             }
             Attention::Sent => (),
             Attention::None => {
@@ -494,11 +525,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
         // An Attention's acknowledgement may be in what is left of the
         // response, so read up to it rather than discarding packets.
         if self.attention == Attention::Sent || self.bulk_load_open {
-            if let Err(e) = self.cancel_request().await {
-                self.poisoned = true;
-                return Err(e);
-            }
-            return Ok(());
+            let cancelled = self.cancel_request().await;
+            return self.poison_on_error(cancelled);
         }
 
         if self.is_eof() {
@@ -546,7 +574,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                 // abandoned at an unrecoverable offset). Poison the connection
                 // so it is not silently reused in an inconsistent state.
                 Err(e) => {
-                    self.poisoned = true;
+                    self.poisoned = Some(cause_of(&e));
                     return Err(e);
                 }
             }
@@ -975,7 +1003,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Connection<S> {
                     context,
                     flushed: false,
                     buf: BytesMut::new(),
-                    poisoned: false,
+                    poisoned: None,
                     cancel: CancelHandle::default(),
                     awaiting_response: false,
                     attention: Attention::None,
@@ -1098,21 +1126,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> futures_util::io::AsyncRead for C
                             break;
                         }
                     }
+                    // The connection is done for: a read error is the socket
+                    // gone or the packet framing lost. Carried as is:
+                    // `Error::from` unwraps it on the way back out, so the
+                    // caller sees the error itself, wrapped once.
                     Err(e) => {
-                        return Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::BrokenPipe,
-                            e.to_string(),
-                        )))
+                        this.poisoned = Some(cause_of(&e));
+                        return Poll::Ready(Err(io::Error::new(io::ErrorKind::BrokenPipe, e)));
                     }
                 }
             }
 
             // Got EOF before having all the data.
             if this.buf.len() - this.token_read < size {
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "No more packets in the wire",
-                )));
+                const CLOSED: &str = "the server closed the connection";
+                this.poisoned = Some(CLOSED.into());
+                return Poll::Ready(Err(io::Error::new(io::ErrorKind::UnexpectedEof, CLOSED)));
             }
         }
 

@@ -113,6 +113,12 @@ impl From<Infallible> for Error {
 
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Error {
+        // One of ours carried through an `AsyncRead` comes back as itself
+        // instead of wrapped in a second I/O error.
+        if let Some(inner) = err.get_ref().and_then(|e| e.downcast_ref::<Error>()) {
+            return inner.clone();
+        }
+
         Self::Io {
             kind: err.kind(),
             message: format!("{}", err),
@@ -238,6 +244,20 @@ mod tests {
             }
             _ => panic!("expected Io"),
         }
+    }
+
+    #[test]
+    fn an_error_carried_through_an_io_error_comes_back_as_itself() {
+        let ours = Error::Io {
+            kind: io::ErrorKind::ConnectionReset,
+            message: "reset by peer".into(),
+        };
+        let io_err = io::Error::new(io::ErrorKind::BrokenPipe, ours.clone());
+        assert_eq!(Error::from(io_err), ours);
+
+        let ours = Error::Protocol("bad token".into());
+        let io_err = io::Error::other(ours.clone());
+        assert_eq!(Error::from(io_err), ours);
     }
 
     #[test]
