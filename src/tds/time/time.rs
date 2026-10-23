@@ -86,15 +86,34 @@ fn to_days(date: Date, start_year: i32) -> i64 {
     (date - Date::from_calendar_date(start_year, Month::January, 1).unwrap()).whole_days()
 }
 
+/// 1/300 s since midnight, rounded to the nearest tick as the server rounds
+/// a `datetime` literal (00:00:00.999 is 00:00:01.000). The last tick of a
+/// day rounds up to 300 * 86,400, which `to_datetime` carries into the next
+/// day.
 #[inline]
 #[cfg(not(feature = "tds73"))]
-fn to_sec_fragments(from: Time) -> i64 {
-    let nanos: i64 = (from - Time::from_hms(0, 0, 0).unwrap())
+fn to_sec_fragments(from: Time) -> u32 {
+    let nanos: u64 = (from - Time::from_hms(0, 0, 0).unwrap())
         .whole_nanoseconds()
         .try_into()
         .unwrap();
 
-    nanos * 300 / (1e9 as i64)
+    // 3 * ns / 10^7, half up; a day's nanoseconds fit u64.
+    ((nanos * 3 + 5_000_000) / 10_000_000) as u32
+}
+
+/// `datetime`: days since 1900-01-01 and ticks since midnight.
+#[cfg(not(feature = "tds73"))]
+fn to_datetime(dt: PrimitiveDateTime) -> super::DateTime {
+    let mut days = to_days(dt.date(), 1900) as i32;
+    let mut ticks = to_sec_fragments(dt.time());
+
+    if ticks == 300 * 86_400 {
+        days += 1;
+        ticks = 0;
+    }
+
+    super::DateTime::new(days, ticks)
 }
 
 #[cfg(feature = "tds73")]
@@ -172,15 +191,7 @@ to_sql!(self_,
 
 #[cfg(not(feature = "tds73"))]
 to_sql!(self_,
-        PrimitiveDateTime: (ColumnData::DateTime, {
-            let date = self_.date();
-            let time = self_.time();
-
-            let days = to_days(date, 1900) as i32;
-            let seconds_fragments = to_sec_fragments(time);
-
-            super::DateTime::new(days, seconds_fragments as u32)
-        });
+        PrimitiveDateTime: (ColumnData::DateTime, to_datetime(*self_));
 );
 
 #[cfg(test)]
@@ -272,6 +283,28 @@ mod tests {
     fn to_sec_fragments_converts() {
         // One second == 300 sec-fragments (1/300 s units).
         assert_eq!(to_sec_fragments(Time::from_hms(0, 0, 1).unwrap()), 300);
+    }
+
+    #[cfg(not(feature = "tds73"))]
+    #[test]
+    fn to_datetime_rounds_to_the_nearest_tick_and_carries_the_day() {
+        let at = |h, m, s, nano| {
+            Date::from_calendar_date(1900, Month::January, 1)
+                .unwrap()
+                .with_hms_nano(h, m, s, nano)
+                .unwrap()
+        };
+        let ticks = |dt: PrimitiveDateTime| {
+            let dt = to_datetime(dt);
+            (dt.days(), dt.seconds_fragments())
+        };
+
+        // 299.7 ticks rounds up to the next second; 299.49 stays.
+        assert_eq!(ticks(at(0, 0, 0, 999_000_000)), (0, 300));
+        assert_eq!(ticks(at(0, 0, 0, 998_300_000)), (0, 299));
+        assert_eq!(ticks(at(0, 0, 0, 998_500_000)), (0, 300));
+        assert_eq!(ticks(at(23, 59, 59, 999_000_000)), (1, 0));
+        assert_eq!(ticks(at(23, 59, 59, 998_000_000)), (0, 25_919_999));
     }
 
     #[cfg(feature = "tds73")]

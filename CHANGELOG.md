@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 of [`tiberius`](https://github.com/prisma/tiberius). The entries for 0.13.1 and
 earlier are that history, under those names; up to 0.12.3 it is upstream's.
 
+## [Unreleased]
+
+### Fixed
+
+- **Without `tds73`, a `datetime` parameter is rounded to the nearest 1/300 s
+  tick**, as the server rounds a literal, instead of cut: 00:00:00.999 now
+  arrives as 00:00:01.000 rather than 00:00:00.997, and the last millisecond
+  of a day as the next day. With `tds73` (the default) a `NaiveDateTime` is
+  sent as `datetime2` and was never affected.
+
 ## [0.1.2] - 2026-10-23
 
 ### Added

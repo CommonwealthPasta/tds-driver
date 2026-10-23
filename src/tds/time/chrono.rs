@@ -89,9 +89,11 @@ fn to_days(date: NaiveDate, start_year: i32) -> i64 {
         .num_days()
 }
 
-/// 1/300 s since midnight. A leap second (nanosecond >= 1e9) becomes
-/// `DateTime::LEAP_SECOND`: counted on, it would read as the next second, or
-/// past 24:00.
+/// 1/300 s since midnight, rounded to the nearest tick as the server rounds
+/// a `datetime` literal (00:00:00.999 is 00:00:01.000). The last tick of a
+/// day rounds up to 300 * 86,400, which `to_datetime` carries into the next
+/// day. A leap second (nanosecond >= 1e9) becomes `DateTime::LEAP_SECOND`:
+/// counted on, it would read as the next second, or past 24:00.
 #[inline]
 #[cfg(not(feature = "tds73"))]
 fn to_sec_fragments(time: NaiveTime) -> u32 {
@@ -99,9 +101,26 @@ fn to_sec_fragments(time: NaiveTime) -> u32 {
 
     match time.nanosecond() {
         n if n >= 1_000_000_000 => DateTime1::LEAP_SECOND,
-        // n * 300 / 10^9, within u32; the total is under 25,920,000.
-        n => time.num_seconds_from_midnight() * 300 + n * 3 / 10_000_000,
+        n => {
+            // 3 * ns / 10^7, half up; a day's nanoseconds fit u64.
+            let ns = u64::from(time.num_seconds_from_midnight()) * 1_000_000_000 + u64::from(n);
+            ((ns * 3 + 5_000_000) / 10_000_000) as u32
+        }
     }
+}
+
+/// `datetime`: days since 1900-01-01 and ticks since midnight.
+#[cfg(not(feature = "tds73"))]
+fn to_datetime(dt: NaiveDateTime) -> DateTime1 {
+    let mut days = to_days(dt.date(), 1900) as i32;
+    let mut ticks = to_sec_fragments(dt.time());
+
+    if ticks == 300 * 86_400 {
+        days += 1;
+        ticks = 0;
+    }
+
+    DateTime1::new(days, ticks)
 }
 
 #[cfg(feature = "tds73")]
@@ -202,28 +221,12 @@ into_sql!(self_,
 
 #[cfg(not(feature = "tds73"))]
 to_sql!(self_,
-        NaiveDateTime: (ColumnData::DateTime, {
-            let date = self_.date();
-            let time = self_.time();
-
-            let days = to_days(date, 1900) as i32;
-            let seconds_fragments = to_sec_fragments(time);
-
-            DateTime1::new(days, seconds_fragments)
-        });
+        NaiveDateTime: (ColumnData::DateTime, to_datetime(*self_));
 );
 
 #[cfg(not(feature = "tds73"))]
 into_sql!(self_,
-        NaiveDateTime: (ColumnData::DateTime, {
-            let date = self_.date();
-            let time = self_.time();
-
-            let days = to_days(date, 1900) as i32;
-            let seconds_fragments = to_sec_fragments(time);
-
-            DateTime1::new(days, seconds_fragments)
-        });
+        NaiveDateTime: (ColumnData::DateTime, to_datetime(self_));
 );
 
 #[cfg(test)]
@@ -302,6 +305,28 @@ mod tests {
             to_sec_fragments(NaiveTime::from_hms_opt(0, 0, 1).unwrap()),
             300
         );
+    }
+
+    #[cfg(not(feature = "tds73"))]
+    #[test]
+    fn to_datetime_rounds_to_the_nearest_tick_and_carries_the_day() {
+        let at = |h, m, s, nano| {
+            NaiveDate::from_ymd_opt(1900, 1, 1)
+                .unwrap()
+                .and_hms_nano_opt(h, m, s, nano)
+                .unwrap()
+        };
+        let ticks = |dt: NaiveDateTime| {
+            let dt = to_datetime(dt);
+            (dt.days(), dt.seconds_fragments())
+        };
+
+        // 299.7 ticks rounds up to the next second; 299.49 stays.
+        assert_eq!(ticks(at(0, 0, 0, 999_000_000)), (0, 300));
+        assert_eq!(ticks(at(0, 0, 0, 998_300_000)), (0, 299));
+        assert_eq!(ticks(at(0, 0, 0, 998_500_000)), (0, 300));
+        assert_eq!(ticks(at(23, 59, 59, 999_000_000)), (1, 0));
+        assert_eq!(ticks(at(23, 59, 59, 998_000_000)), (0, 25_919_999));
     }
 
     #[cfg(feature = "tds73")]

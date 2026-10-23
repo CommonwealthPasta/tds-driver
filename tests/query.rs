@@ -2169,6 +2169,45 @@ where
     Ok(())
 }
 
+// A datetime holds 1/300 s ticks. The server rounds a value to the nearest
+// tick, so CAST('...00.999' AS datetime) is 01.000 and the last millisecond of
+// a day is the next day; the driver has to do the same.
+#[cfg(all(not(feature = "tds73"), feature = "chrono"))]
+#[test_on_runtimes]
+async fn naive_date_time_tds72_rounds_to_the_nearest_tick<S>(
+    mut conn: tds_driver::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    use chrono::NaiveDate;
+
+    let cases = [
+        ((0, 0, 0, 999_000_000), "2000-01-01 00:00:01.000"),
+        ((0, 0, 0, 998_300_000), "2000-01-01 00:00:00.997"),
+        ((0, 0, 0, 998_500_000), "2000-01-01 00:00:01.000"),
+        ((23, 59, 59, 999_000_000), "2000-01-02 00:00:00.000"),
+    ];
+
+    for ((h, m, s, nano), expected) in cases {
+        let dt = NaiveDate::from_ymd_opt(2000, 1, 1)
+            .unwrap()
+            .and_hms_nano_opt(h, m, s, nano)
+            .unwrap();
+
+        let row = conn
+            .query("SELECT CONVERT(varchar(23), @P1, 121)", &[&dt])
+            .await?
+            .into_row()
+            .await?
+            .unwrap();
+
+        assert_eq!(Some(expected), row.get::<&str, _>(0), "{dt}");
+    }
+
+    Ok(())
+}
+
 #[cfg(all(feature = "tds73", feature = "chrono"))]
 #[test_on_runtimes]
 async fn naive_small_date_time_tds73<S>(mut conn: tds_driver::Client<S>) -> Result<()>
@@ -2459,6 +2498,41 @@ where
     let row = stream.into_row().await?.unwrap();
 
     assert_eq!(Some(dt), row.get(0));
+
+    Ok(())
+}
+
+// See naive_date_time_tds72_rounds_to_the_nearest_tick.
+#[cfg(all(not(feature = "tds73"), feature = "time"))]
+#[test_on_runtimes]
+async fn primitive_date_time_tds72_rounds_to_the_nearest_tick<S>(
+    mut conn: tds_driver::Client<S>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let cases = [
+        ((0, 0, 0, 999_000_000), "2000-01-01 00:00:01.000"),
+        ((0, 0, 0, 998_300_000), "2000-01-01 00:00:00.997"),
+        ((0, 0, 0, 998_500_000), "2000-01-01 00:00:01.000"),
+        ((23, 59, 59, 999_000_000), "2000-01-02 00:00:00.000"),
+    ];
+
+    for ((h, m, s, nano), expected) in cases {
+        let dt = time::Date::from_calendar_date(2000, time::Month::January, 1)
+            .unwrap()
+            .with_hms_nano(h, m, s, nano)
+            .unwrap();
+
+        let row = conn
+            .query("SELECT CONVERT(varchar(23), @P1, 121)", &[&dt])
+            .await?
+            .into_row()
+            .await?
+            .unwrap();
+
+        assert_eq!(Some(expected), row.get::<&str, _>(0), "{dt}");
+    }
 
     Ok(())
 }
