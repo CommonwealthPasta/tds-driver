@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 of [`tiberius`](https://github.com/prisma/tiberius). The entries for 0.13.1 and
 earlier are that history, under those names; up to 0.12.3 it is upstream's.
 
-## [Unreleased]
+## [0.2.0] - 2026-10-29
 
 ### Breaking
 
@@ -913,7 +913,8 @@ has completely settled on Tokio 1.0.
 - Support for many more types
 - Async/await, futures 0.3
 
-[Unreleased]: https://github.com/CommonwealthPasta/tds-driver/compare/62a93ca3f58beefa57e953d54fe02d69bebb135d...main
+[Unreleased]: https://github.com/CommonwealthPasta/tds-driver/compare/ac060d26a3554cc0b891da72a7ceb470d134aa30...main
+[0.2.0]: https://github.com/CommonwealthPasta/tds-driver/compare/62a93ca3f58beefa57e953d54fe02d69bebb135d...ac060d26a3554cc0b891da72a7ceb470d134aa30
 [0.1.2]: https://github.com/CommonwealthPasta/tds-driver/compare/3f5767cab63bf5a8f4221c84cebc56073503c345...62a93ca3f58beefa57e953d54fe02d69bebb135d
 [0.1.1]: https://github.com/CommonwealthPasta/tds-driver/compare/c4558192e166e5a8940c34be3ca33f745c19b048...3f5767cab63bf5a8f4221c84cebc56073503c345
 [0.1.0]: https://github.com/CommonwealthPasta/tds-driver/compare/435b72d...c4558192e166e5a8940c34be3ca33f745c19b048
